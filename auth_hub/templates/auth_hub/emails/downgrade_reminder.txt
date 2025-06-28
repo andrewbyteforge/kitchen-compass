@@ -1,0 +1,38 @@
+Subscription Change Reminder
+
+Hi {{ user.first_name }},
+
+{% if days_until_downgrade == 1 %}⚠️ URGENT: Your subscription downgrade happens TOMORROW!
+
+This is your final reminder that your KitchenCompass subscription will change tomorrow.{% elif days_until_downgrade == 3 %}This is a reminder that your KitchenCompass subscription will change in 3 days.{% else %}This is a reminder that your KitchenCompass subscription will change in {{ days_until_downgrade }} days.{% endif %}
+
+============================================
+{% if days_until_downgrade == 1 %}1 DAY LEFT{% else %}{{ days_until_downgrade }} DAYS LEFT{% endif %}
+============================================
+
+SCHEDULED CHANGE:
+From: {{ current_tier.name }} (${{ current_tier.price }}/month)
+To: {{ new_tier.name }} (${{ new_tier.price }}/month)
+Change Date: {{ downgrade_date|date:"F d, Y" }}
+
+WHAT THIS MEANS FOR YOU:
+{% if current_tier.max_recipes == -1 and new_tier.max_recipes != -1 %}- Your recipe limit will change from unlimited to {{ new_tier.max_recipes }} recipes
+{% endif %}{% if current_tier.max_menus == -1 and new_tier.max_menus != -1 %}- Your meal plan limit will change from unlimited to {{ new_tier.max_menus }} meal plans
+{% endif %}{% if current_tier.tier_type != 'FREE' and new_tier.tier_type == 'FREE' %}- You will lose access to menu sharing features
+{% endif %}- Premium features will no longer be available
+
+{% if days_until_downgrade <= 3 %}🎯 Still want to keep your {{ current_tier.name }} benefits? You can cancel this downgrade right now and continue enjoying all your current features.{% endif %}
+
+TO KEEP YOUR CURRENT PLAN, visit:
+{{ cancel_url }}
+
+If you take no action, your subscription will automatically change to {{ new_tier.name }} on {{ downgrade_date|date:"F d, Y" }}.
+
+Questions? We're here to help! Simply reply to this email or visit our support center.
+
+Best regards,
+The KitchenCompass Team
+
+--
+You're receiving this email because you have a pending subscription change scheduled.
+© {% now "Y" %} KitchenCompass. All rights reserved.

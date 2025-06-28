@@ -1,0 +1,805 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{% if is_update %}Edit{% else %}Create{% endif %} Recipe - KitchenCompass{% endblock %}
+
+{% block extra_css %}
+<style>
+    .has-errors {
+        border-left: 4px solid #dc3545;
+        padding-left: 1rem;
+        margin-left: -1rem;
+        background-color: #fdf2f2;
+    }
+    
+    .form-control.is-invalid,
+    .form-select.is-invalid {
+        border-color: #dc3545;
+    }
+    
+    .invalid-feedback {
+        color: #dc3545;
+        font-size: 0.875rem;
+        margin-top: 0.25rem;
+    }
+    
+    .alert-warning {
+        background-color: #fff3cd;
+        border-color: #ffeaa7;
+    }
+    
+    .formset-row {
+        border: 1px solid #dee2e6;
+        border-radius: 0.375rem;
+        padding: 1rem;
+        padding-top: 2.5rem;
+        margin-bottom: 1rem;
+        position: relative;
+    }
+    .formset-row.deleted {
+        opacity: 0.5;
+        background-color: #f8d7da;
+    }
+    .delete-row {
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        z-index: 10;
+    }
+    .add-row {
+        cursor: pointer;
+    }
+    .drag-handle {
+        position: absolute;
+        top: 0.5rem;
+        left: 0.5rem;
+        cursor: move;
+        color: #6c757d;
+        font-size: 1.2rem;
+        z-index: 10;
+    }
+    .sortable-ghost {
+        opacity: 0.4;
+        background-color: #f8f9fa;
+    }
+    
+    .form-check {
+        padding-left: 1.5em;
+        min-height: 1.5em;
+    }
+    
+    .form-check-input {
+        margin-left: -1.5em;
+        margin-top: 0.25em;
+        float: left;
+    }
+    
+    .form-check-label {
+        display: block;
+        margin-bottom: 0;
+        cursor: pointer;
+    }
+    
+    .formset-row .row {
+        margin-top: 0.5rem;
+    }
+    
+    .error-summary {
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+        padding: 1rem;
+        border-radius: 0.375rem;
+        margin-bottom: 1rem;
+    }
+    
+    .error-summary ul {
+        margin-bottom: 0;
+        padding-left: 1.5rem;
+    }
+    
+    /* NEW STYLES FOR MEAL TYPES */
+    .meal-types-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        margin-top: 0.5rem;
+    }
+    
+    .meal-type-card {
+        flex: 1;
+        min-width: 120px;
+        border: 2px solid #e9ecef;
+        border-radius: 12px;
+        padding: 1rem;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        position: relative;
+        background: white;
+    }
+    
+    .meal-type-card:hover {
+        border-color: #007bff;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    
+    .meal-type-card.selected {
+        border-color: #28a745;
+        background-color: #f8fff9;
+        box-shadow: 0 4px 12px rgba(40, 167, 69, 0.2);
+    }
+    
+    .meal-type-card .icon {
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
+        display: block;
+    }
+    
+    .meal-type-card .name {
+        font-weight: 600;
+        color: #495057;
+        font-size: 0.9rem;
+    }
+    
+    .meal-type-card input[type="checkbox"] {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+    }
+    
+    .meal-type-breakfast .icon { color: #28a745; }
+    .meal-type-lunch .icon { color: #ffc107; }
+    .meal-type-dinner .icon { color: #dc3545; }
+    .meal-type-snack .icon { color: #6c757d; }
+    
+    .category-group {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+    }
+    
+    .category-group .form-check {
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 6px;
+        padding: 0.5rem 0.75rem;
+        margin: 0;
+        transition: all 0.2s ease;
+    }
+    
+    .category-group .form-check:hover {
+        background: #e9ecef;
+        border-color: #007bff;
+    }
+    
+    .category-group .form-check-input:checked + .form-check-label {
+        color: #007bff;
+        font-weight: 500;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="mb-0">
+                        {% if form.instance.pk %}
+                            <i class="bi bi-pencil"></i> Edit Recipe
+                        {% else %}
+                            <i class="bi bi-plus-circle"></i> Create New Recipe
+                        {% endif %}
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <form method="post" enctype="multipart/form-data" novalidate id="recipeForm">
+                        {% csrf_token %}
+                        
+                        <!-- Main Recipe Fields -->
+                        <h4 class="mb-3">Recipe Details</h4>
+                        
+                        {% if form.non_field_errors %}
+                            <div class="alert alert-danger">
+                                {{ form.non_field_errors }}
+                            </div>
+                        {% endif %}
+                        
+                        <!-- Title -->
+                        <div class="mb-3">
+                            <label for="{{ form.title.id_for_label }}" class="form-label">
+                                Recipe Title <span class="text-danger">*</span>
+                            </label>
+                            {{ form.title }}
+                            {% if form.title.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {{ form.title.errors.0 }}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Slug -->
+                        <div class="mb-3">
+                            <label for="{{ form.slug.id_for_label }}" class="form-label">
+                                URL Slug
+                            </label>
+                            {{ form.slug }}
+                            <div class="form-text">Leave blank to auto-generate from title</div>
+                            {% if form.slug.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {{ form.slug.errors.0 }}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Description -->
+                        <div class="mb-3">
+                            <label for="{{ form.description.id_for_label }}" class="form-label">
+                                Description <span class="text-danger">*</span>
+                            </label>
+                            {{ form.description }}
+                            {% if form.description.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {{ form.description.errors.0 }}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Categories -->
+                        <div class="mb-3">
+                            <label class="form-label">
+                                <i class="bi bi-tags"></i> Recipe Categories
+                            </label>
+                            <div class="category-group">
+                                {% for checkbox in form.categories %}
+                                    <div class="form-check">
+                                        {{ checkbox.tag }}
+                                        <label class="form-check-label" for="{{ checkbox.id_for_label }}">
+                                            {{ checkbox.choice_label }}
+                                        </label>
+                                    </div>
+                                {% empty %}
+                                    <p class="text-muted"><small>No categories available. Contact administrator.</small></p>
+                                {% endfor %}
+                            </div>
+                            <div class="form-text">Select cuisines and recipe types that apply</div>
+                            {% if form.categories.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {{ form.categories.errors.0 }}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- NEW: Meal Types -->
+                        <div class="mb-3">
+                            <label class="form-label">
+                                <i class="bi bi-clock"></i> Suitable for which meals?
+                            </label>
+                            <div class="meal-types-group">
+                                {% for checkbox in form.meal_types %}
+                                    <div class="meal-type-card {% if checkbox.choice_label == 'Breakfast' %}meal-type-breakfast{% elif checkbox.choice_label == 'Lunch' %}meal-type-lunch{% elif checkbox.choice_label == 'Dinner' %}meal-type-dinner{% elif checkbox.choice_label == 'Snack' %}meal-type-snack{% endif %}" 
+                                         onclick="toggleMealType(this, '{{ checkbox.id_for_label }}')">
+                                        {{ checkbox.tag }}
+                                        <span class="icon">
+                                            {% if checkbox.choice_label == 'Breakfast' %}
+                                                <i class="bi bi-sunrise"></i>
+                                            {% elif checkbox.choice_label == 'Lunch' %}
+                                                <i class="bi bi-sun"></i>
+                                            {% elif checkbox.choice_label == 'Dinner' %}
+                                                <i class="bi bi-moon"></i>
+                                            {% elif checkbox.choice_label == 'Snack' %}
+                                                <i class="bi bi-cup-straw"></i>
+                                            {% else %}
+                                                <i class="bi bi-egg-fried"></i>
+                                            {% endif %}
+                                        </span>
+                                        <span class="name">{{ checkbox.choice_label }}</span>
+                                    </div>
+                                {% empty %}
+                                    <div class="col-12">
+                                        <div class="alert alert-info">
+                                            <i class="bi bi-info-circle"></i>
+                                            <strong>Meal types not configured.</strong><br>
+                                            Run <code>python manage.py create_meal_types</code> to set up meal types, 
+                                            then refresh this page.
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                            <div class="form-text">{{ form.meal_types.help_text|default:"Select the meals this recipe is suitable for (optional but recommended for meal planning)" }}</div>
+                            {% if form.meal_types.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {{ form.meal_types.errors.0 }}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Time and Servings Row -->
+                        <div class="row">
+                            <div class="col-md-3 mb-3">
+                                <label for="{{ form.prep_time.id_for_label }}" class="form-label">
+                                    Prep Time <span class="text-danger">*</span>
+                                </label>
+                                {{ form.prep_time }}
+                                <div class="form-text">Minutes</div>
+                                {% if form.prep_time.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {{ form.prep_time.errors.0 }}
+                                    </div>
+                                {% endif %}
+                            </div>
+                            
+                            <div class="col-md-3 mb-3">
+                                <label for="{{ form.cook_time.id_for_label }}" class="form-label">
+                                    Cook Time <span class="text-danger">*</span>
+                                </label>
+                                {{ form.cook_time }}
+                                <div class="form-text">Minutes</div>
+                                {% if form.cook_time.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {{ form.cook_time.errors.0 }}
+                                    </div>
+                                {% endif %}
+                            </div>
+                            
+                            <div class="col-md-3 mb-3">
+                                <label for="{{ form.servings.id_for_label }}" class="form-label">
+                                    Servings <span class="text-danger">*</span>
+                                </label>
+                                {{ form.servings }}
+                                {% if form.servings.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {{ form.servings.errors.0 }}
+                                    </div>
+                                {% endif %}
+                            </div>
+                            
+                            <div class="col-md-3 mb-3">
+                                <label for="{{ form.difficulty.id_for_label }}" class="form-label">
+                                    Difficulty
+                                </label>
+                                {{ form.difficulty }}
+                                {% if form.difficulty.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {{ form.difficulty.errors.0 }}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        <!-- Image -->
+                        <div class="mb-3">
+                            <label for="{{ form.image.id_for_label }}" class="form-label">
+                                Recipe Image
+                            </label>
+                            {{ form.image }}
+                            {% if form.image.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {{ form.image.errors.0 }}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Public -->
+                        <div class="mb-3">
+                            <div class="form-check">
+                                {{ form.is_public }}
+                                <label class="form-check-label" for="{{ form.is_public.id_for_label }}">
+                                    Make this recipe public
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <hr class="my-4">
+                        
+                        <!-- Ingredients Formset -->
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4 class="mb-0">Ingredients</h4>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="add-ingredient">
+                                <i class="bi bi-plus"></i> Add Ingredient
+                            </button>
+                        </div>
+                        
+                        {{ ingredient_formset.management_form }}
+                        
+                        {% if ingredient_formset.non_form_errors %}
+                            <div class="alert alert-danger">
+                                {{ ingredient_formset.non_form_errors }}
+                            </div>
+                        {% endif %}
+                        
+                        <div id="ingredient-formset">
+                            {% for form in ingredient_formset %}
+                                <div class="formset-row ingredient-form">
+                                    <div class="drag-handle">
+                                        <i class="bi bi-grip-vertical"></i>
+                                    </div>
+                                    
+                                    {% for hidden in form.hidden_fields %}
+                                        {{ hidden }}
+                                    {% endfor %}
+                                    
+                                    <div class="row">
+                                        <div class="col-md-5">
+                                            {{ form.name }}
+                                            {% if form.name.errors %}
+                                                <div class="invalid-feedback d-block">
+                                                    {{ form.name.errors.0 }}
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="col-md-2">
+                                            {{ form.quantity }}
+                                        </div>
+                                        <div class="col-md-2">
+                                            {{ form.unit }}
+                                        </div>
+                                        <div class="col-md-3">
+                                            {{ form.notes }}
+                                        </div>
+                                    </div>
+                                    
+                                    <button type="button" class="btn btn-sm btn-outline-danger delete-row" title="Remove ingredient">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                    
+                                    {% if form.DELETE %}
+                                        {{ form.DELETE }}
+                                    {% endif %}
+                                </div>
+                            {% endfor %}
+                        </div>
+                        
+                        <hr class="my-4">
+                        
+                        <!-- Instructions Formset -->
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4 class="mb-0">Instructions</h4>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="add-instruction">
+                                <i class="bi bi-plus"></i> Add Step
+                            </button>
+                        </div>
+                        
+                        {{ instruction_formset.management_form }}
+                        
+                        {% if instruction_formset.non_form_errors %}
+                            <div class="alert alert-danger">
+                                {{ instruction_formset.non_form_errors }}
+                            </div>
+                        {% endif %}
+                        
+                        <div id="instruction-formset">
+                            {% for form in instruction_formset %}
+                                <div class="formset-row instruction-form">
+                                    <div class="drag-handle">
+                                        <i class="bi bi-grip-vertical"></i>
+                                    </div>
+                                    
+                                    {% for hidden in form.hidden_fields %}
+                                        {{ hidden }}
+                                    {% endfor %}
+                                    
+                                    <div class="mb-2">
+                                        <strong class="step-number">Step {{ forloop.counter }}</strong>
+                                    </div>
+                                    
+                                    {{ form.instruction }}
+                                    {% if form.instruction.errors %}
+                                        <div class="invalid-feedback d-block">
+                                            {{ form.instruction.errors.0 }}
+                                        </div>
+                                    {% endif %}
+                                    
+                                    <div class="row mt-2">
+                                        <div class="col-md-4">
+                                            <label>Time (optional):</label>
+                                            {{ form.time_minutes }}
+                                        </div>
+                                    </div>
+                                    
+                                    <button type="button" class="btn btn-sm btn-outline-danger delete-row" title="Remove step">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                    
+                                    {% if form.DELETE %}
+                                        {{ form.DELETE }}
+                                    {% endif %}
+                                </div>
+                            {% endfor %}
+                        </div>
+                        
+                        <hr class="my-4">
+                        
+                        <!-- Submit Buttons -->
+                        <div class="d-flex justify-content-between">
+                            <a href="{% url 'recipe_hub:user_recipes' %}" class="btn btn-secondary">
+                                <i class="bi bi-arrow-left"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-success">
+                                <i class="bi bi-check-circle"></i> 
+                                {% if form.instance.pk %}Update{% else %}Create{% endif %} Recipe
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+<script>
+// Meal type toggle functionality
+function toggleMealType(card, checkboxId) {
+    const checkbox = document.getElementById(checkboxId);
+    checkbox.checked = !checkbox.checked;
+    
+    if (checkbox.checked) {
+        card.classList.add('selected');
+    } else {
+        card.classList.remove('selected');
+    }
+}
+
+// Initialize meal type cards on page load
+document.addEventListener('DOMContentLoaded', function() {
+    // Set initial state for meal type cards
+    document.querySelectorAll('.meal-type-card input[type="checkbox"]').forEach(checkbox => {
+        const card = checkbox.closest('.meal-type-card');
+        if (checkbox.checked) {
+            card.classList.add('selected');
+        }
+    });
+    
+    // Simple formset management that maintains required fields
+    function updateFormsetIndices(formsetId, prefix) {
+        const forms = document.querySelectorAll(`#${formsetId} .formset-row:not(.deleted)`);
+        const totalForms = document.getElementById(`id_${prefix}-TOTAL_FORMS`);
+        
+        forms.forEach((form, index) => {
+            // Update data attribute for tracking
+            form.setAttribute('data-form-index', index);
+            
+            // Update all input names and ids
+            form.querySelectorAll('input, select, textarea').forEach(input => {
+                const name = input.name;
+                const id = input.id;
+                
+                if (name && name.includes('-')) {
+                    const parts = name.split('-');
+                    if (parts.length >= 2) {
+                        parts[1] = index.toString();
+                        input.name = parts.join('-');
+                    }
+                }
+                if (id && id.includes('-')) {
+                    const parts = id.split('-');
+                    if (parts.length >= 2) {
+                        parts[1] = index.toString();
+                        input.id = parts.join('-');
+                    }
+                }
+            });
+            
+            // Update labels
+            form.querySelectorAll('label').forEach(label => {
+                const forAttr = label.getAttribute('for');
+                if (forAttr && forAttr.includes('-')) {
+                    const parts = forAttr.split('-');
+                    if (parts.length >= 2) {
+                        parts[1] = index.toString();
+                        label.setAttribute('for', parts.join('-'));
+                    }
+                }
+            });
+            
+            // Update step numbers for instructions
+            if (formsetId === 'instruction-formset') {
+                const stepNumber = form.querySelector('.step-number');
+                if (stepNumber) {
+                    stepNumber.textContent = `Step ${index + 1}`;
+                }
+            }
+        });
+        
+        totalForms.value = forms.length;
+    }
+    
+    // Add new form with proper field initialization
+    function addForm(formsetId, prefix) {
+        const formset = document.getElementById(formsetId);
+        const totalForms = document.getElementById(`id_${prefix}-TOTAL_FORMS`);
+        const newFormIndex = parseInt(totalForms.value);
+        
+        // Get template from the last existing form
+        const existingForms = document.querySelectorAll(`#${formsetId} .formset-row`);
+        if (existingForms.length === 0) return;
+        
+        const templateForm = existingForms[existingForms.length - 1];
+        const newForm = templateForm.cloneNode(true);
+        
+        // Clear values and update indices
+        newForm.classList.remove('deleted', 'has-errors');
+        newForm.setAttribute('data-form-index', newFormIndex);
+        newForm.querySelectorAll('.alert').forEach(alert => alert.remove());
+        newForm.querySelectorAll('.invalid-feedback').forEach(feedback => feedback.remove());
+        
+        newForm.querySelectorAll('input, select, textarea').forEach(input => {
+            input.classList.remove('is-invalid');
+            
+            // Clear values for visible fields, keep hidden field structure
+            if (input.type !== 'hidden') {
+                input.value = '';
+            }
+            
+            // Update names and IDs
+            const name = input.name;
+            const id = input.id;
+            
+            if (name && name.includes('-')) {
+                const parts = name.split('-');
+                if (parts.length >= 2) {
+                    parts[1] = newFormIndex.toString();
+                    input.name = parts.join('-');
+                }
+            }
+            if (id && id.includes('-')) {
+                const parts = id.split('-');
+                if (parts.length >= 2) {
+                    parts[1] = newFormIndex.toString();
+                    input.id = parts.join('-');
+                }
+            }
+            
+            // Set initial values for hidden fields
+            if (input.name) {
+                if (input.name.endsWith('-DELETE')) {
+                    input.value = '';
+                } else if (input.name.endsWith('-id')) {
+                    input.value = '';
+                } else if (input.name.endsWith('-step_number')) {
+                    // Don't set step_number - let the formset handle it
+                    input.value = '';
+                }
+            }
+        });
+        
+        // Update labels
+        newForm.querySelectorAll('label').forEach(label => {
+            const forAttr = label.getAttribute('for');
+            if (forAttr && forAttr.includes('-')) {
+                const parts = forAttr.split('-');
+                if (parts.length >= 2) {
+                    parts[1] = newFormIndex.toString();
+                    label.setAttribute('for', parts.join('-'));
+                }
+            }
+        });
+        
+        // Update step number display for instructions
+        if (formsetId === 'instruction-formset') {
+            const stepNumber = newForm.querySelector('.step-number');
+            if (stepNumber) {
+                stepNumber.textContent = `Step ${newFormIndex + 1}`;
+            }
+        }
+        
+        // Append to formset
+        formset.appendChild(newForm);
+        totalForms.value = newFormIndex + 1;
+        
+        // Focus on the first input of the new form
+        const firstInput = newForm.querySelector('input:not([type="hidden"]), select, textarea');
+        if (firstInput) {
+            firstInput.focus();
+        }
+    }
+    
+    // Delete form - properly handle both new and existing forms
+    function deleteForm(button) {
+        const form = button.closest('.formset-row');
+        const deleteInput = form.querySelector('input[name$="-DELETE"]');
+        const idInput = form.querySelector('input[name$="-id"]');
+        
+        // If the form has an ID (existing record), mark for deletion
+        if (idInput && idInput.value) {
+            deleteInput.value = '1';
+            form.classList.add('deleted');
+            form.style.display = 'none';
+        } else {
+            // If it's a new form, remove it completely
+            form.remove();
+        }
+        
+        // Update indices
+        const formsetId = form.parentElement.id;
+        const prefix = formsetId.replace('-formset', '');
+        updateFormsetIndices(formsetId, prefix);
+    }
+    
+    // Event listeners
+    document.getElementById('add-ingredient')?.addEventListener('click', function() {
+        addForm('ingredient-formset', 'ingredients');
+    });
+    
+    document.getElementById('add-instruction')?.addEventListener('click', function() {
+        addForm('instruction-formset', 'instructions');
+    });
+    
+    document.addEventListener('click', function(e) {
+        if (e.target.closest('.delete-row')) {
+            e.preventDefault();
+            deleteForm(e.target.closest('.delete-row'));
+        }
+    });
+    
+    // Make formsets sortable
+    if (document.getElementById('ingredient-formset')) {
+        new Sortable(document.getElementById('ingredient-formset'), {
+            handle: '.drag-handle',
+            animation: 150,
+            ghostClass: 'sortable-ghost',
+            onEnd: function() {
+                updateFormsetIndices('ingredient-formset', 'ingredients');
+            }
+        });
+    }
+    
+    if (document.getElementById('instruction-formset')) {
+        new Sortable(document.getElementById('instruction-formset'), {
+            handle: '.drag-handle',
+            animation: 150,
+            ghostClass: 'sortable-ghost',
+            onEnd: function() {
+                updateFormsetIndices('instruction-formset', 'instructions');
+            }
+        });
+    }
+    
+    // Form submission - clean up empty forms
+    document.getElementById('recipeForm').addEventListener('submit', function(e) {
+        // Remove empty forms before submission to prevent validation errors
+        const allForms = document.querySelectorAll('.formset-row:not(.deleted)');
+        allForms.forEach(form => {
+            let hasContent = false;
+            
+            // Check if form has any meaningful content
+            const inputs = form.querySelectorAll('input:not([type="hidden"]), select, textarea');
+            inputs.forEach(input => {
+                if (input.value && input.value.trim()) {
+                    hasContent = true;
+                }
+            });
+            
+            // If no content, mark for deletion or remove
+            if (!hasContent) {
+                const deleteInput = form.querySelector('input[name$="-DELETE"]');
+                const idInput = form.querySelector('input[name$="-id"]');
+                
+                if (idInput && idInput.value) {
+                    // Existing record - mark for deletion
+                    deleteInput.value = '1';
+                    form.style.display = 'none';
+                } else {
+                    // New empty form - remove completely
+                    form.remove();
+                }
+            }
+        });
+        
+        // Update form counts after cleanup
+        const remainingIngredients = document.querySelectorAll('#ingredient-formset .formset-row:not([style*="display: none"])').length;
+        const remainingInstructions = document.querySelectorAll('#instruction-formset .formset-row:not([style*="display: none"])').length;
+        
+        document.getElementById('id_ingredients-TOTAL_FORMS').value = remainingIngredients;
+        document.getElementById('id_instructions-TOTAL_FORMS').value = remainingInstructions;
+    });
+});
+</script>
+{% endblock %}

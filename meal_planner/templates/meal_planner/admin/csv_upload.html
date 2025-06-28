@@ -1,0 +1,315 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Upload Recipe CSV - Admin{% endblock %}
+
+{% block extra_css %}
+<style>
+    .admin-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem 0;
+        margin-bottom: 2rem;
+    }
+    
+    .upload-zone {
+        border: 3px dashed #dee2e6;
+        border-radius: 0.5rem;
+        padding: 3rem;
+        text-align: center;
+        background-color: #f8f9fa;
+        transition: all 0.3s ease;
+    }
+    
+    .upload-zone:hover {
+        border-color: #667eea;
+        background-color: #f0f3ff;
+    }
+    
+    .upload-zone.drag-over {
+        border-color: #667eea;
+        background-color: #e7ecff;
+    }
+    
+    .file-icon {
+        font-size: 4rem;
+        color: #667eea;
+        margin-bottom: 1rem;
+    }
+    
+    .sample-section {
+        background-color: #f8f9fa;
+        border-radius: 0.5rem;
+        padding: 1.5rem;
+        margin-top: 2rem;
+    }
+    
+    .history-card {
+        transition: transform 0.2s;
+    }
+    
+    .history-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    
+    .status-badge {
+        font-size: 0.875rem;
+        padding: 0.25rem 0.75rem;
+        border-radius: 1rem;
+    }
+    
+    .status-pending { background-color: #ffeaa7; color: #2d3436; }
+    .status-processing { background-color: #74b9ff; color: #fff; }
+    .status-completed { background-color: #55efc4; color: #2d3436; }
+    .status-failed { background-color: #ff7675; color: #fff; }
+    .status-partial { background-color: #fdcb6e; color: #2d3436; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Admin Header -->
+<div class="admin-header">
+    <div class="container">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h1 class="display-5 mb-2">
+                    <i class="bi bi-file-earmark-arrow-up"></i> Recipe CSV Upload
+                </h1>
+                <p class="lead mb-0">Import multiple recipes at once from a CSV file</p>
+            </div>
+            <div class="col-md-4 text-md-end">
+                <span class="badge bg-warning text-dark">
+                    <i class="bi bi-shield-lock"></i> Admin Only
+                </span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="container">
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        {% endfor %}
+    {% endif %}
+    
+    <div class="row">
+        <div class="col-lg-8">
+            <!-- Upload Form -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h4 class="mb-0">
+                        <i class="bi bi-cloud-upload"></i> Upload CSV File
+                    </h4>
+                </div>
+                <div class="card-body">
+                    <form method="post" enctype="multipart/form-data" id="uploadForm">
+                        {% csrf_token %}
+                        
+                        <div class="upload-zone" id="uploadZone">
+                            <i class="bi bi-file-earmark-csv file-icon"></i>
+                            <h5>Drag and drop your CSV file here</h5>
+                            <p class="text-muted mb-3">or click to browse</p>
+                            
+                            {{ form.file }}
+                            
+                            <div id="fileInfo" class="mt-3" style="display: none;">
+                                <p class="mb-0">
+                                    <strong>Selected file:</strong> 
+                                    <span id="fileName"></span>
+                                </p>
+                                <p class="mb-0">
+                                    <strong>Size:</strong> 
+                                    <span id="fileSize"></span>
+                                </p>
+                            </div>
+                        </div>
+                        
+                        {% if form.file.errors %}
+                            <div class="alert alert-danger mt-3">
+                                {{ form.file.errors }}
+                            </div>
+                        {% endif %}
+                        
+                        <div class="mt-3">
+                            <label for="{{ form.notes.id_for_label }}" class="form-label">
+                                {{ form.notes.label }}
+                            </label>
+                            {{ form.notes }}
+                        </div>
+                        
+                        <div class="mt-4">
+                            <button type="submit" class="btn btn-primary" id="uploadBtn">
+                                <i class="bi bi-upload"></i> Upload and Preview
+                            </button>
+                            <a href="{{ sample_csv_url }}" class="btn btn-outline-secondary">
+                                <i class="bi bi-download"></i> Download Sample CSV
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
+            <!-- Instructions -->
+            <div class="sample-section">
+                <h5 class="mb-3">
+                    <i class="bi bi-info-circle"></i> CSV Format Requirements
+                </h5>
+                
+                <h6>Required Columns:</h6>
+                <ul>
+                    <li><code>title</code> - Recipe name</li>
+                    <li><code>description</code> - Brief description</li>
+                    <li><code>prep_time</code> - Preparation time in minutes</li>
+                    <li><code>cook_time</code> - Cooking time in minutes</li>
+                    <li><code>servings</code> - Number of servings (1-50)</li>
+                    <li><code>difficulty</code> - easy, medium, or hard</li>
+                </ul>
+                
+                <h6 class="mt-3">Optional Columns:</h6>
+                <ul>
+                    <li><code>categories</code> - Comma-separated list (e.g., "Breakfast,American")</li>
+                    <li><code>meal_types</code> - Comma-separated: Breakfast, Lunch, Dinner, Snack</li>
+                    <li><code>ingredients</code> - Format: "2 cups flour, 1 tsp salt, 3 eggs"</li>
+                    <li><code>instructions</code> - Steps separated by | (e.g., "Step 1|Step 2|Step 3")</li>
+                    <li><code>is_public</code> - true/false</li>
+                    <li><code>dietary_info</code> - JSON or comma-separated tags</li>
+                </ul>
+                
+                <div class="alert alert-info mt-3">
+                    <i class="bi bi-lightbulb"></i>
+                    <strong>Tip:</strong> Download the sample CSV to see the exact format required.
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-4">
+            <!-- Recent Uploads -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="bi bi-clock-history"></i> Recent Uploads
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% if recent_uploads %}
+                        {% for upload in recent_uploads %}
+                            <div class="history-card card mb-3">
+                                <div class="card-body p-3">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div>
+                                            <h6 class="mb-1">{{ upload.filename }}</h6>
+                                            <small class="text-muted">
+                                                {{ upload.uploaded_at|date:"M d, Y g:i A" }}
+                                            </small>
+                                        </div>
+                                        <span class="status-badge status-{{ upload.status }}">
+                                            {{ upload.get_status_display }}
+                                        </span>
+                                    </div>
+                                    
+                                    {% if upload.status == 'completed' or upload.status == 'partial' %}
+                                        <div class="mt-2">
+                                            <small>
+                                                <i class="bi bi-check-circle text-success"></i> 
+                                                {{ upload.successful_imports }} imported
+                                            </small>
+                                            {% if upload.failed_imports > 0 %}
+                                                <br>
+                                                <small>
+                                                    <i class="bi bi-x-circle text-danger"></i> 
+                                                    {{ upload.failed_imports }} failed
+                                                </small>
+                                            {% endif %}
+                                        </div>
+                                    {% endif %}
+                                    
+                                    {% if upload.status != 'pending' %}
+                                        <a href="{% url 'meal_planner:csv_result' upload.id %}" 
+                                           class="btn btn-sm btn-outline-primary mt-2">
+                                            View Results
+                                        </a>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        {% endfor %}
+                        
+                        <a href="{% url 'meal_planner:csv_history' %}" class="btn btn-sm btn-outline-secondary w-100">
+                            View All History
+                        </a>
+                    {% else %}
+                        <p class="text-muted text-center mb-0">
+                            No uploads yet
+                        </p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // File upload handling
+    const fileInput = document.getElementById('csvFileInput');
+    const uploadZone = document.getElementById('uploadZone');
+    const fileInfo = document.getElementById('fileInfo');
+    const fileName = document.getElementById('fileName');
+    const fileSize = document.getElementById('fileSize');
+    
+    // Click to browse
+    uploadZone.addEventListener('click', () => {
+        fileInput.click();
+    });
+    
+    // File selected
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            displayFileInfo(file);
+        }
+    });
+    
+    // Drag and drop
+    uploadZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadZone.classList.add('drag-over');
+    });
+    
+    uploadZone.addEventListener('dragleave', () => {
+        uploadZone.classList.remove('drag-over');
+    });
+    
+    uploadZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadZone.classList.remove('drag-over');
+        
+        const file = e.dataTransfer.files[0];
+        if (file && file.type === 'text/csv') {
+            fileInput.files = e.dataTransfer.files;
+            displayFileInfo(file);
+        } else {
+            alert('Please upload a CSV file');
+        }
+    });
+    
+    function displayFileInfo(file) {
+        fileName.textContent = file.name;
+        fileSize.textContent = formatFileSize(file.size);
+        fileInfo.style.display = 'block';
+    }
+    
+    function formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,289 @@
+{% extends 'base.html' %}
+{% load crispy_forms_tags %}
+
+{% block title %}Update Profile - KitchenCompass{% endblock %}
+
+{% block extra_css %}
+<style>
+    .profile-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 3rem 0;
+        margin-bottom: 2rem;
+        border-radius: 0 0 1rem 1rem;
+    }
+    
+    .profile-card {
+        box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+        border: none;
+        border-radius: 1rem;
+        overflow: hidden;
+    }
+    
+    .dietary-checkbox {
+        margin-bottom: 0.5rem;
+    }
+    
+    .dietary-checkbox input[type="checkbox"] {
+        margin-right: 0.5rem;
+    }
+    
+    .form-section {
+        margin-bottom: 2rem;
+        padding-bottom: 2rem;
+        border-bottom: 1px solid #e9ecef;
+    }
+    
+    .form-section:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+    }
+    
+    .section-title {
+        color: #495057;
+        font-weight: 600;
+        margin-bottom: 1.5rem;
+        display: flex;
+        align-items: center;
+    }
+    
+    .section-title i {
+        margin-right: 0.5rem;
+        color: #6c757d;
+    }
+    
+    .subscription-info {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    
+    .btn-save {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border: none;
+        padding: 0.75rem 2rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    
+    .btn-save:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 0.5rem 1rem rgba(102, 126, 234, 0.4);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="profile-header">
+    <div class="container">
+        <div class="row align-items-center">
+            <div class="col-md-12 text-center">
+                <h1 class="display-4 mb-3">Update Your Profile</h1>
+                <p class="lead mb-0">Customize your KitchenCompass experience</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card profile-card">
+                <div class="card-body p-5">
+                    <!-- Subscription Info -->
+                    <div class="subscription-info">
+                        <div class="row align-items-center">
+                            <div class="col-sm-8">
+                                <h6 class="mb-1">Current Subscription</h6>
+                                <p class="mb-0">
+                                    <strong>{{ user.profile.subscription_tier.name }}</strong>
+                                    {% if user.profile.subscription_tier.price > 0 %}
+                                        - ${{ user.profile.subscription_tier.price }}/month
+                                    {% else %}
+                                        - Free Plan
+                                    {% endif %}
+                                </p>
+                            </div>
+                            <div class="col-sm-4 text-sm-end mt-3 mt-sm-0">
+                                <a href="{% url 'auth_hub:subscription_detail' %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-arrow-up-circle me-1"></i>Manage Plan
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Profile Form -->
+                    <form method="post" novalidate>
+                        {% csrf_token %}
+                        
+                        <!-- Personal Information -->
+                        <div class="form-section">
+                            <h5 class="section-title">
+                                <i class="bi bi-person-circle"></i>
+                                Personal Information
+                            </h5>
+                            
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="{{ form.first_name.id_for_label }}" class="form-label">First Name</label>
+                                    {{ form.first_name }}
+                                    {% if form.first_name.errors %}
+                                        <div class="invalid-feedback d-block">
+                                            {{ form.first_name.errors.0 }}
+                                        </div>
+                                    {% endif %}
+                                </div>
+                                
+                                <div class="col-md-6 mb-3">
+                                    <label for="{{ form.last_name.id_for_label }}" class="form-label">Last Name</label>
+                                    {{ form.last_name }}
+                                    {% if form.last_name.errors %}
+                                        <div class="invalid-feedback d-block">
+                                            {{ form.last_name.errors.0 }}
+                                        </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="{{ form.email.id_for_label }}" class="form-label">Email Address</label>
+                                {{ form.email }}
+                                {% if form.email.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {{ form.email.errors.0 }}
+                                    </div>
+                                {% endif %}
+                                <small class="form-text text-muted">
+                                    <i class="bi bi-info-circle"></i>
+                                    Your email is used for login and notifications
+                                </small>
+                            </div>
+                        </div>
+
+                        <!-- Dietary Preferences -->
+                        <div class="form-section">
+                            <h5 class="section-title">
+                                <i class="bi bi-heart-pulse"></i>
+                                Dietary Preferences
+                            </h5>
+                            
+                            <p class="text-muted mb-3">
+                                Select any dietary restrictions or preferences you have. This helps us suggest appropriate recipes.
+                            </p>
+                            
+                            {% if form.dietary_restrictions %}
+                                <div class="row">
+                                    {% for choice in form.dietary_restrictions %}
+                                        <div class="col-md-6 dietary-checkbox">
+                                            {{ choice.tag }}
+                                            <label for="{{ choice.id_for_label }}">
+                                                {{ choice.choice_label }}
+                                            </label>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                                {% if form.dietary_restrictions.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {{ form.dietary_restrictions.errors.0 }}
+                                    </div>
+                                {% endif %}
+                            {% endif %}
+                        </div>
+
+                        <!-- Form Actions -->
+                        <div class="d-flex justify-content-between align-items-center mt-4">
+                            <a href="{% url 'auth_hub:dashboard' %}" class="btn btn-light">
+                                <i class="bi bi-arrow-left me-2"></i>Cancel
+                            </a>
+                            <button type="submit" class="btn btn-primary btn-save">
+                                <i class="bi bi-check-circle me-2"></i>Save Changes
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Additional Options -->
+            <div class="card mt-4">
+                <div class="card-body">
+                    <h5 class="card-title">Account Settings</h5>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <h6><i class="bi bi-key me-2"></i>Password</h6>
+                            <p class="text-muted mb-2">Keep your account secure with a strong password</p>
+                            <a href="{% url 'auth_hub:password_reset' %}" class="btn btn-sm btn-outline-secondary">
+                                Change Password
+                            </a>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <h6><i class="bi bi-clock-history me-2"></i>Activity Log</h6>
+                            <p class="text-muted mb-2">View your recent account activity</p>
+                            <a href="#" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#activityModal">
+                                View Activity
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Activity Log Modal -->
+<div class="modal fade" id="activityModal" tabindex="-1" aria-labelledby="activityModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="activityModalLabel">Recent Activity</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="activityLog">
+                    <p class="text-center text-muted">Loading activity...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Load activity log when modal opens
+    const activityModal = document.getElementById('activityModal');
+    activityModal.addEventListener('show.bs.modal', function() {
+        fetch('{% url "auth_hub:api_activity_log" %}')
+            .then(response => response.json())
+            .then(data => {
+                const logDiv = document.getElementById('activityLog');
+                if (data.activities && data.activities.length > 0) {
+                    let html = '<div class="list-group">';
+                    data.activities.forEach(activity => {
+                        const date = new Date(activity.created_at);
+                        html += `
+                            <div class="list-group-item">
+                                <div class="d-flex w-100 justify-content-between">
+                                    <h6 class="mb-1">${activity.action}</h6>
+                                    <small>${date.toLocaleDateString()} ${date.toLocaleTimeString()}</small>
+                                </div>
+                                ${activity.ip_address ? `<small class="text-muted">IP: ${activity.ip_address}</small>` : ''}
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                    logDiv.innerHTML = html;
+                } else {
+                    logDiv.innerHTML = '<p class="text-center text-muted">No activity found.</p>';
+                }
+            })
+            .catch(error => {
+                document.getElementById('activityLog').innerHTML = 
+                    '<p class="text-center text-danger">Error loading activity log.</p>';
+            });
+    });
+});
+</script>
+{% endblock %}

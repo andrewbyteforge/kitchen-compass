@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% load crispy_forms_tags %}
+
+{% block title %}Share Menu - KitchenCompass{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'auth_hub:dashboard' %}">Dashboard</a></li>
+                <li class="breadcrumb-item active" aria-current="page">Share Menu</li>
+            </ol>
+        </nav>
+        
+        <div class="card shadow">
+            <div class="card-body p-5">
+                {% if user.profile.can_share_menus %}
+                    {% if user.profile.remaining_shares > 0 or user.profile.remaining_shares == float('inf') %}
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            {% if user.profile.remaining_shares == float('inf') %}
+                                You have <strong>unlimited</strong> menu shares with your {{ user.profile.subscription_tier.name }} plan.
+                            {% else %}
+                                You have <strong>{{ user.profile.remaining_shares }}</strong> menu share{{ user.profile.remaining_shares|pluralize }} remaining.
+                            {% endif %}
+                        </div>
+                        
+                        {% crispy form %}
+                        
+                        <hr class="my-4">
+                        
+                        <div class="bg-light p-3 rounded">
+                            <h6><i class="bi bi-shield-check"></i> How menu sharing works:</h6>
+                            <ul class="mb-0">
+                                <li>The recipient will receive an email invitation</li>
+                                <li>They have 7 days to accept the invitation</li>
+                                <li>You can revoke access at any time from your dashboard</li>
+                                <li>Recipients need a KitchenCompass account to view shared menus</li>
+                            </ul>
+                        </div>
+                    {% else %}
+                        <div class="alert alert-warning">
+                            <h5><i class="bi bi-exclamation-triangle"></i> Sharing Limit Reached</h5>
+                            <p>You've reached your sharing limit of {{ user.profile.subscription_tier.max_shared_menus }} people.</p>
+                            <p class="mb-0">To share with more people, you can:</p>
+                            <ul class="mb-0">
+                                <li>Revoke an existing share from your <a href="{% url 'auth_hub:menu_share_list' 'sent' %}">shared menus</a></li>
+                                <li><a href="{% url 'auth_hub:subscription_upgrade' %}">Upgrade your subscription</a> for more shares</li>
+                            </ul>
+                        </div>
+                    {% endif %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-lock" style="font-size: 4rem; color: var(--secondary-color);"></i>
+                        <h3 class="mt-3">Menu Sharing is a Premium Feature</h3>
+                        <p class="text-muted">Upgrade your account to share your menus with friends and family.</p>
+                        <a href="{% url 'auth_hub:subscription_upgrade' %}" class="btn btn-primary btn-lg mt-3">
+                            <i class="bi bi-rocket-takeoff"></i> Upgrade Now
+                        </a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

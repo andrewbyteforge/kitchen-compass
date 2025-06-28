@@ -1,0 +1,303 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" class="h-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>{% block title %}KitchenCompass{% endblock %}</title>
+   
+    <!-- Bootstrap CSS -->    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+   
+    <!-- Custom CSS -->
+    <style>
+        /* Sticky footer styles */
+        body {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* Main content wrapper */
+        .main-wrapper {
+            flex: 1 0 auto;
+        }
+        
+        /* Footer styling */
+        footer {
+            flex-shrink: 0;
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 2rem 0 1rem 0; /* Taller footer */
+            margin-top: 3rem; /* Space before footer */
+        }
+        
+        /* Footer content styling */
+        footer h5 {
+            color: #3498db;
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+            font-weight: 600;
+        }
+        
+        footer a {
+            color: #bdc3c7;
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+        
+        footer a:hover {
+            color: #3498db;
+            text-decoration: none;
+        }
+        
+        footer .social-links {
+            margin-top: 1rem;
+        }
+        
+        footer .social-links a {
+            font-size: 1.5rem;
+            margin-right: 1rem;
+            color: #bdc3c7;
+            transition: color 0.3s ease;
+        }
+        
+        footer .social-links a:hover {
+            color: #3498db;
+        }
+        
+        .footer-bottom {
+            background-color: #1a252f;
+            padding: 1.1rem 0;
+            margin-top: 2rem;
+        }
+        
+        .footer-bottom p {
+            color: #95a5a6;
+            font-size: 0.9rem;
+        }
+        
+        /* Ensure container has proper spacing */
+        .container.mt-4 {
+            margin-bottom: 2rem !important;
+        }
+        
+        /* Fix for small content pages */
+        @media (min-height: 600px) {
+            .main-wrapper {
+                min-height: calc(100vh - 400px); /* Adjust based on header + footer height */
+            }
+        }
+    </style>
+
+    <!-- Favicon -->
+    <link rel="icon" href="{% static 'favicon.ico' %}">
+    
+    {% block extra_css %}{% endblock %}
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="d-flex flex-column h-100">
+    <!-- Main content wrapper -->
+    <div class="main-wrapper">
+        <!-- Navbar -->
+        <nav class="navbar navbar-expand-lg navbar-light bg-light shadow-sm">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="{% url 'auth_hub:dashboard' %}">
+                    <i class="bi bi-compass"></i> KitchenCompass
+                </a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>    
+                <div class="collapse navbar-collapse" id="navbarNav">
+                    <ul class="navbar-nav me-auto">
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'auth_hub:dashboard' %}">
+                                <i class="bi bi-house"></i> Home
+                            </a>
+                        </li>
+                        
+                        <!-- Recipes Dropdown -->
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" id="recipesDropdown" role="button" 
+                               data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="bi bi-book"></i> Recipes
+                            </a>
+                            <ul class="dropdown-menu" aria-labelledby="recipesDropdown">
+                                <li><a class="dropdown-item" href="{% url 'recipe_hub:recipe_list' %}">
+                                    <i class="bi bi-search"></i> Browse Recipes
+                                </a></li>
+                                {% if user.is_authenticated %}
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'recipe_hub:recipe_create' %}">
+                                    <i class="bi bi-plus-circle"></i> Create Recipe
+                                </a></li>
+                                <li><a class="dropdown-item" href="{% url 'recipe_hub:user_recipes' %}">
+                                    <i class="bi bi-journal-text"></i> My Recipes
+                                </a></li>
+                                <li><a class="dropdown-item" href="{% url 'recipe_hub:favorite_recipes' %}">
+                                    <i class="bi bi-heart-fill"></i> My Favorites
+                                </a></li>
+                                <li><a class="dropdown-item" href="{% url 'recipe_hub:recipe_import_csv' %}">
+                                    <i class="bi bi-file-earmark-arrow-up"></i> Import Recipes
+                                </a></li>
+                                {% endif %}
+                            </ul>
+                        </li>
+
+                        <!-- Meal Planning Dropdown -->
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" id="mealsDropdown" role="button" 
+                               data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="bi bi-calendar3"></i> Meal Plans
+                            </a>
+                            <ul class="dropdown-menu" aria-labelledby="mealsDropdown">
+                                <li><a class="dropdown-item" href="{% url 'meal_planner:calendar' %}">
+                                    <i class="bi bi-calendar-week"></i> Calendar View
+                                </a></li>
+                                <li><a class="dropdown-item" href="{% url 'meal_planner:meal_plan_list' %}">
+                                    <i class="bi bi-list-ul"></i> My Meal Plans
+                                </a></li>
+                                {% if user.is_authenticated %}
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'meal_planner:meal_plan_create' %}">
+                                    <i class="bi bi-plus-circle"></i> Create Meal Plan
+                                </a></li>
+                                <li><a class="dropdown-item" href="{% url 'meal_planner:template_list' %}">
+                                    <i class="bi bi-files"></i> Templates
+                                </a></li>
+                                {% endif %}
+                            </ul>
+                        </li>
+                    </ul>
+                    
+                    <!-- Right side of navbar -->
+                    <ul class="navbar-nav ms-auto">
+                        {% if user.is_authenticated %}
+                        <!-- User Dropdown -->
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" 
+                               data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="bi bi-person-circle"></i> {{ user.username }}
+                            </a>
+                            <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
+                                <li><a class="dropdown-item" href="{% url 'auth_hub:dashboard' %}">
+                                    <i class="bi bi-speedometer2"></i> Dashboard
+                                </a></li>
+                                <li><a class="dropdown-item" href="{% url 'auth_hub:profile_update' %}">
+                                    <i class="bi bi-person"></i> Profile
+                                </a></li>
+                                <li><a class="dropdown-item" href="{% url 'auth_hub:subscription_detail' %}">
+                                    <i class="bi bi-credit-card"></i> Subscription
+                                </a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{% url 'auth_hub:logout' %}">
+                                    <i class="bi bi-box-arrow-right"></i> Logout
+                                </a></li>
+                            </ul>
+                        </li>
+                        {% else %}
+                        <!-- Login/Register for non-authenticated users -->
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'auth_hub:login' %}">
+                                <i class="bi bi-box-arrow-in-right"></i> Login
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'auth_hub:register' %}">
+                                <i class="bi bi-person-plus"></i> Register
+                            </a>
+                        </li>
+                        {% endif %}
+                    </ul>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Messages/Alerts -->
+        {% if messages %}
+        <div class="container mt-3">
+            {% for message in messages %}
+            <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Main Content -->
+        <div class="container mt-4">
+            {% block content %}
+            {% endblock %}
+        </div>
+    </div>
+
+    <!-- Enhanced Footer -->
+    <footer class="mt-auto">
+        <div class="container">
+            <div class="row">
+                <!-- About Section -->
+                <div class="col-md-4 mb-4">
+                    <h5><i class="bi bi-compass"></i> KitchenCompass</h5>
+                    <p class="text-muted">
+                        Your personal meal planning assistant. Plan meals, sync with Outlook, 
+                        and share menus with family and friends.
+                    </p>
+                    <div class="social-links">
+                        <a href="#" title="Facebook"><i class="bi bi-facebook"></i></a>
+                        <a href="#" title="Twitter"><i class="bi bi-twitter"></i></a>
+                        <a href="#" title="Instagram"><i class="bi bi-instagram"></i></a>
+                        <a href="#" title="LinkedIn"><i class="bi bi-linkedin"></i></a>
+                    </div>
+                </div>
+                
+                <!-- Quick Links -->
+                <div class="col-md-4 mb-4">
+                    <h5>Quick Links</h5>
+                    <ul class="list-unstyled">
+                        <li class="mb-2"><a href="{% url 'auth_hub:dashboard' %}"><i class="bi bi-chevron-right"></i> Dashboard</a></li>
+                        <li class="mb-2"><a href="{% url 'meal_planner:meal_plan_list' %}"><i class="bi bi-chevron-right"></i> Meal Plans</a></li>
+                        <li class="mb-2"><a href="{% url 'meal_planner:template_list' %}"><i class="bi bi-chevron-right"></i> Templates</a></li>
+                        <li class="mb-2"><a href="{% url 'meal_planner:calendar' %}"><i class="bi bi-chevron-right"></i> Calendar</a></li>
+                    </ul>
+                </div>
+                
+                <!-- Support -->
+                <div class="col-md-4 mb-4">
+                    <h5>Support</h5>
+                    <ul class="list-unstyled">
+                        <li class="mb-2"><a href="#"><i class="bi bi-chevron-right"></i> Help Center</a></li>
+                        <li class="mb-2"><a href="#"><i class="bi bi-chevron-right"></i> Privacy Policy</a></li>
+                        <li class="mb-2"><a href="#"><i class="bi bi-chevron-right"></i> Terms of Service</a></li>
+                        <li class="mb-2"><a href="#"><i class="bi bi-chevron-right"></i> Contact Us</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Footer Bottom -->
+        <div class="footer-bottom">
+            <div class="container">
+                <div class="row">
+                    <div class="col-md-6 text-center text-md-start">
+                        <p class="mb-0">&copy; 2024 KitchenCompass. All rights reserved.</p>
+                    </div>
+                    <div class="col-md-6 text-center text-md-end">
+                        <p class="mb-0">Made with <i class="bi bi-heart-fill text-danger"></i> for food lovers</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Bootstrap JS and dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- Custom JavaScript -->
+    {% block extra_js %}{% endblock %}
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

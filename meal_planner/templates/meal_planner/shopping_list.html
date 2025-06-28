@@ -1,0 +1,364 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Shopping List - {{ meal_plan.name }} - KitchenCompass{% endblock %}
+
+{% block extra_css %}
+<style>
+    .shopping-list-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 12px;
+        margin-bottom: 2rem;
+    }
+    
+    .category-section {
+        margin-bottom: 2rem;
+    }
+    
+    .category-header {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .ingredient-item {
+        display: flex;
+        align-items: center;
+        padding: 0.75rem;
+        border-bottom: 1px solid #e9ecef;
+        transition: background-color 0.2s;
+    }
+    
+    .ingredient-item:hover {
+        background-color: #f8f9fa;
+    }
+    
+    .ingredient-item:last-child {
+        border-bottom: none;
+    }
+    
+    .ingredient-checkbox {
+        margin-right: 1rem;
+    }
+    
+    .ingredient-name {
+        flex: 1;
+        font-weight: 500;
+    }
+    
+    .ingredient-quantity {
+        margin-right: 1rem;
+        color: #6c757d;
+        min-width: 100px;
+        text-align: right;
+    }
+    
+    .ingredient-recipes {
+        font-size: 0.875rem;
+        color: #6c757d;
+    }
+    
+    .stats-card {
+        background: white;
+        border-radius: 8px;
+        padding: 1.5rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        text-align: center;
+        margin-bottom: 1rem;
+    }
+    
+    .stats-number {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #667eea;
+    }
+    
+    .action-buttons {
+        position: sticky;
+        top: 70px;
+        background: white;
+        padding: 1rem 0;
+        z-index: 10;
+        border-bottom: 1px solid #e9ecef;
+        margin-bottom: 2rem;
+    }
+    
+    .checked {
+        text-decoration: line-through;
+        opacity: 0.6;
+    }
+    
+    @media print {
+        .no-print {
+            display: none !important;
+        }
+        
+        .ingredient-checkbox {
+            border: 1px solid #000 !important;
+            width: 15px !important;
+            height: 15px !important;
+        }
+    }
+
+    .category-header {
+    background-color: #f8f9fa;
+    border-bottom: 2px solid #dee2e6;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.category-header h6 {
+    margin: 0;
+    font-weight: 600;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <!-- Header -->
+    <div class="shopping-list-header">
+        <h2 class="mb-2">
+            <i class="bi bi-cart-check"></i> Shopping List
+        </h2>
+        <h4 class="mb-3">{{ meal_plan.name }}</h4>
+        <p class="mb-0">
+            <i class="bi bi-calendar-range"></i> {{ date_range }}
+        </p>
+    </div>
+    
+    <!-- Action Buttons -->
+    <div class="action-buttons no-print">
+        <div class="row">
+            <div class="col-md-8">
+                <a href="{% url 'meal_planner:meal_plan_detail' meal_plan.pk %}" class="btn btn-outline-primary">
+                    <i class="bi bi-arrow-left"></i> Back to Meal Plan
+                </a>
+                <a href="{% url 'meal_planner:download_shopping_list' meal_plan.pk %}" class="btn btn-success">
+                    <i class="bi bi-download"></i> Download CSV
+                </a>
+                <button onclick="window.print()" class="btn btn-outline-secondary">
+                    <i class="bi bi-printer"></i> Print
+                </button>
+                <button onclick="checkAll()" class="btn btn-outline-info">
+                    <i class="bi bi-check-all"></i> Check All
+                </button>
+                <button onclick="uncheckAll()" class="btn btn-outline-warning">
+                    <i class="bi bi-x-square"></i> Uncheck All
+                </button>
+            </div>
+            <div class="col-md-4 text-md-end">
+                <span class="text-muted">
+                    Progress: <span id="checkedCount">0</span> / {{ total_ingredients }}
+                </span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Statistics -->
+    <div class="row mb-4 no-print">
+        <div class="col-md-4">
+            <div class="stats-card">
+                <div class="stats-number">{{ total_ingredients }}</div>
+                <div class="text-muted">Total Items</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stats-card">
+                <div class="stats-number">{{ categories|length }}</div>
+                <div class="text-muted">Categories</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stats-card">
+                <div class="stats-number">{{ total_recipes }}</div>
+                <div class="text-muted">Recipes</div>
+            </div>
+        </div>
+    </div>
+    
+<!-- Shopping List by Category -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0">
+            <i class="bi bi-list-check"></i> Shopping List by Category
+            <small class="text-muted float-end no-print">Click to check off items</small>
+        </h5>
+    </div>
+    <div class="card-body p-0">
+        {% if shopping_list_by_category %}
+            <div id="shoppingList">
+                {% for category_group in shopping_list_by_category %}
+                    <!-- Category Header -->
+                    <div class="category-header">
+                        <h6 class="mb-0 px-3 py-2 bg-light">
+                            <i class="bi bi-tag-fill text-primary"></i> 
+                            {{ category_group.category.name }}
+                            <span class="badge bg-secondary float-end">
+                                {{ category_group.items|length }} item{{ category_group.items|length|pluralize }}
+                            </span>
+                        </h6>
+                    </div>
+                    
+                    <!-- Category Items -->
+                    {% for item in category_group.items %}
+                        <div class="ingredient-item" data-item-id="{{ forloop.parentloop.counter }}-{{ forloop.counter }}">
+                            <div class="row align-items-center">
+                                <div class="col-auto no-print">
+                                    <input type="checkbox" 
+                                           class="ingredient-checkbox" 
+                                           id="item-{{ forloop.parentloop.counter }}-{{ forloop.counter }}"
+                                           onchange="toggleItem('{{ forloop.parentloop.counter }}-{{ forloop.counter }}')">
+                                </div>
+                                <div class="col">
+                                    <label for="item-{{ forloop.parentloop.counter }}-{{ forloop.counter }}" 
+                                           class="ingredient-name mb-0 w-100" 
+                                           style="cursor: pointer;">
+                                        {{ item.name|title }}
+                                        {% if item.quantity > 0 %}
+                                            - 
+                                            {% if item.quantity == item.quantity|floatformat:0 %}
+                                                {{ item.quantity|floatformat:0 }}
+                                            {% else %}
+                                                {{ item.quantity|floatformat:2 }}
+                                            {% endif %}
+                                            {{ item.unit }}
+                                        {% endif %}
+                                    </label>
+                                    <div class="recipe-tags">
+                                        Used in: {{ item.recipes|join:", " }}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-basket text-muted" style="font-size: 3rem;"></i>
+                <p class="text-muted mt-3">No ingredients found. Add recipes to your meal plan first.</p>
+                <a href="{% url 'meal_planner:meal_plan_detail' meal_plan.pk %}" 
+                   class="btn btn-primary">
+                    <i class="bi bi-arrow-left"></i> Back to Meal Plan
+                </a>
+            </div>
+        {% endif %}
+    </div>
+</div>
+    
+    <!-- Recipe Summary -->
+    <div class="card mt-4 no-print">
+        <div class="card-header">
+            <h5 class="mb-0">
+                <i class="bi bi-book"></i> Recipes in this Shopping List
+            </h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                {% for recipe, count in recipe_count.items %}
+                <div class="col-md-6">
+                    <span class="badge bg-primary">{{ count }}x</span> {{ recipe }}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Track checked items
+    function updateProgress() {
+        const total = document.querySelectorAll('.ingredient-checkbox').length;
+        const checked = document.querySelectorAll('.ingredient-checkbox:checked').length;
+        document.getElementById('checkedCount').textContent = checked;
+        
+        // Update visual state
+        document.querySelectorAll('.ingredient-checkbox').forEach(checkbox => {
+            const item = checkbox.closest('.ingredient-item');
+            if (checkbox.checked) {
+                item.classList.add('checked');
+            } else {
+                item.classList.remove('checked');
+            }
+        });
+        
+        // Save to localStorage
+        saveCheckboxStates();
+    }
+    
+    // Check all items
+    function checkAll() {
+        document.querySelectorAll('.ingredient-checkbox').forEach(checkbox => {
+            checkbox.checked = true;
+        });
+        updateProgress();
+    }
+    
+    // Uncheck all items
+    function uncheckAll() {
+        document.querySelectorAll('.ingredient-checkbox').forEach(checkbox => {
+            checkbox.checked = false;
+        });
+        updateProgress();
+    }
+    
+    // Save checkbox states to localStorage
+    function saveCheckboxStates() {
+        const states = {};
+        document.querySelectorAll('.ingredient-checkbox').forEach(checkbox => {
+            states[checkbox.id] = checkbox.checked;
+        });
+        localStorage.setItem('shopping_list_{{ meal_plan.pk }}', JSON.stringify(states));
+    }
+    
+    // Load checkbox states from localStorage
+    function loadCheckboxStates() {
+        const saved = localStorage.getItem('shopping_list_{{ meal_plan.pk }}');
+        if (saved) {
+            const states = JSON.parse(saved);
+            Object.keys(states).forEach(id => {
+                const checkbox = document.getElementById(id);
+                if (checkbox) {
+                    checkbox.checked = states[id];
+                }
+            });
+            updateProgress();
+        }
+    }
+    
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        loadCheckboxStates();
+        
+        // Add keyboard shortcuts
+        document.addEventListener('keydown', function(e) {
+            if (e.ctrlKey || e.metaKey) {
+                switch(e.key) {
+                    case 'a':
+                        e.preventDefault();
+                        checkAll();
+                        break;
+                    case 'd':
+                        e.preventDefault();
+                        uncheckAll();
+                        break;
+                    case 'p':
+                        e.preventDefault();
+                        window.print();
+                        break;
+                }
+            }
+        });
+    });
+</script>
+{% endblock %}

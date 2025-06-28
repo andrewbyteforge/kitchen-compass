@@ -1,0 +1,217 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}My Meal Plans - KitchenCompass{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-lg-8">
+            <h2><i class="bi bi-calendar3"></i> My Meal Plans</h2>
+            <p class="text-muted">Manage your meal planning schedules</p>
+        </div>
+        <div class="col-lg-4 text-lg-end">
+            <a href="{% url 'meal_planner:calendar' %}" class="btn btn-outline-primary me-2">
+                <i class="bi bi-calendar-week"></i> Calendar View
+            </a>
+            {% if can_create_meal_plan %}
+            <a href="{% url 'meal_planner:meal_plan_create' %}" class="btn btn-success">
+                <i class="bi bi-plus-circle"></i> New Meal Plan
+            </a>
+            {% else %}
+            <button class="btn btn-secondary" disabled>
+                <i class="bi bi-exclamation-circle"></i> Plan Limit Reached
+            </button>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Stats -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h3 class="mb-0">{{ active_count }}</h3>
+                    <small class="text-muted">Active Plans</small>
+                    {% if meal_plan_limit != -1 %}
+                    <div class="progress mt-2" style="height: 5px;">
+                        <div class="progress-bar" role="progressbar" 
+                             style="width: {% widthratio active_count meal_plan_limit 100 %}%">
+                        </div>
+                    </div>
+                    <small class="text-muted">{{ active_count }} / {{ meal_plan_limit }}</small>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Filter Form -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    {{ filter_form.search }}
+                </div>
+                <div class="col-md-3">
+                    {{ filter_form.status }}
+                </div>
+                <div class="col-md-2">
+                    {{ filter_form.date_from }}
+                </div>
+                <div class="col-md-2">
+                    {{ filter_form.date_to }}
+                </div>
+                <div class="col-md-1">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-search"></i>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Meal Plans List -->
+    {% if meal_plans %}
+    <div class="row">
+        {% for plan in meal_plans %}
+        <div class="col-md-6 col-lg-4 mb-4">
+            <div class="card h-100 {% if plan.is_current %}border-primary{% endif %}">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        {{ plan.name }}
+                        {% if plan.is_current %}
+                        <span class="badge bg-primary">Current</span>
+                        {% elif plan.is_future %}
+                        <span class="badge bg-info">Future</span>
+                        {% elif plan.is_past %}
+                        <span class="badge bg-secondary">Past</span>
+                        {% endif %}
+                    </h5>
+                    
+                    <p class="card-text text-muted">
+                        <i class="bi bi-calendar-range"></i> 
+                        {{ plan.start_date|date:"M d" }} - {{ plan.end_date|date:"M d, Y" }}
+                        <br>
+                        <i class="bi bi-clock"></i> {{ plan.duration_days }} days
+                        <br>
+                        <i class="bi bi-egg-fried"></i> {{ plan.meal_count }} meals planned
+                    </p>
+                    
+                    {% if plan.notes %}
+                    <p class="card-text small">{{ plan.notes|truncatechars:100 }}</p>
+                    {% endif %}
+                    
+                    <!-- Action Buttons -->
+                    <div class="d-flex justify-content-between">
+                        <a href="{% url 'meal_planner:meal_plan_detail' plan.pk %}" 
+                           class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                        <div class="btn-group" role="group">
+                            {% if user.microsoft_token and plan.is_active %}
+                                <button class="btn btn-sm btn-outline-success" 
+                                        onclick="quickSync({{ plan.pk }}, '{{ plan.name|escapejs }}')"
+                                        title="Sync to Outlook">
+                                    <i class="bi bi-calendar-check"></i>
+                                </button>
+                            {% endif %}
+                            <a href="{% url 'meal_planner:meal_plan_update' plan.pk %}" 
+                               class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                            <a href="{% url 'meal_planner:meal_plan_delete' plan.pk %}" 
+                               class="btn btn-sm btn-outline-danger">
+                                <i class="bi bi-trash"></i>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                {% if not plan.is_active %}
+                <div class="card-footer text-muted">
+                    <small>Inactive</small>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <!-- Pagination -->
+    {% if is_paginated %}
+    <nav aria-label="Meal plan pagination">
+        <ul class="pagination justify-content-center">
+            {% if page_obj.has_previous %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.previous_page_number }}">
+                    <i class="bi bi-chevron-left"></i> Previous
+                </a>
+            </li>
+            {% endif %}
+            
+            {% for num in page_obj.paginator.page_range %}
+                {% if page_obj.number == num %}
+                <li class="page-item active">
+                    <span class="page-link">{{ num }}</span>
+                </li>
+                {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ num }}">{{ num }}</a>
+                </li>
+                {% endif %}
+            {% endfor %}
+            
+            {% if page_obj.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.next_page_number }}">
+                    Next <i class="bi bi-chevron-right"></i>
+                </a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+    
+    {% else %}
+    <div class="text-center py-5">
+        <i class="bi bi-calendar-x text-muted" style="font-size: 4rem;"></i>
+        <h4 class="mt-3">No meal plans yet</h4>
+        <p class="text-muted">Start planning your meals for the week!</p>
+        {% if can_create_meal_plan %}
+        <a href="{% url 'meal_planner:meal_plan_create' %}" class="btn btn-primary mt-3">
+            <i class="bi bi-plus-circle"></i> Create Your First Meal Plan
+        </a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function quickSync(planId, planName) {
+    if (!confirm(`Sync "${planName}" to your Outlook calendar?`)) {
+        return;
+    }
+    
+    fetch(`/meals/plans/${planId}/sync/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('✅ ' + data.message);
+        } else {
+            alert('❌ ' + (data.error || 'Sync failed'));
+        }
+    })
+    .catch(error => {
+        alert('❌ An error occurred while syncing');
+    });
+}
+</script>
+{% endblock %}

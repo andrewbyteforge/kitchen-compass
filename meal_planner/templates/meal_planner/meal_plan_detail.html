@@ -1,0 +1,1086 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load meal_planner_tags %}
+
+{% block title %}{{ meal_plan.name }} - KitchenCompass{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Meal Slot Styling */
+    .meal-slot {
+        min-height: 120px;
+        border: 2px dashed #dee2e6;
+        border-radius: 12px;
+        padding: 15px;
+        margin-bottom: 15px;
+        transition: all 0.3s ease;
+        cursor: pointer;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .meal-slot:hover {
+        border-color: #007bff;
+        background-color: #f8f9fa;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    
+    .meal-slot.has-recipe {
+        border: 2px solid #28a745;
+        background-color: #f8fff9;
+        background-image: linear-gradient(135deg, rgba(40, 167, 69, 0.05) 0%, rgba(40, 167, 69, 0.1) 100%);
+    }
+    
+    .meal-slot.has-recipe:hover {
+        border-color: #1e7e34;
+        box-shadow: 0 6px 12px rgba(40, 167, 69, 0.2);
+    }
+    
+    .meal-type-breakfast { border-left: 5px solid #28a745; }
+    .meal-type-lunch { border-left: 5px solid #ffc107; }
+    .meal-type-dinner { border-left: 5px solid #dc3545; }
+    .meal-type-snack { border-left: 5px solid #6c757d; }
+    
+    /* Day Header Styling */
+    .day-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        text-align: center;
+        padding: 20px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    
+    /* Recipe Card Styling */
+    .recipe-card {
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 10px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        background: white;
+    }
+    
+    .recipe-card:hover {
+        border-color: #007bff;
+        background-color: #f8f9fa;
+        transform: translateY(-1px);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .recipe-card.selected {
+        border-color: #28a745;
+        background-color: #d4edda;
+    }
+    
+    .recipe-card img {
+        width: 40px;
+        height: 40px;
+        object-fit: cover;
+        border-radius: 6px;
+    }
+    
+    .recipe-placeholder {
+        width: 40px;
+        height: 40px;
+        background-color: #f8f9fa;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #6c757d;
+    }
+    
+    .recipe-meta {
+        font-size: 0.75rem;
+        color: #6c757d;
+    }
+    
+    .difficulty-easy { color: #28a745; }
+    .difficulty-medium { color: #ffc107; }
+    .difficulty-hard { color: #dc3545; }
+    
+    /* Modal Styling */
+    .modal-lg { max-width: 900px; }
+    
+    /* Search prompt styling */
+    #searchPromptMessage {
+        animation: fadeIn 0.3s ease-in;
+    }
+    
+    #searchPromptMessage .bg-light {
+        border: 1px solid #e9ecef;
+        transition: all 0.2s ease;
+    }
+    
+    #searchPromptMessage .bg-light:hover {
+        background-color: #f8f9fa !important;
+        border-color: #007bff;
+        transform: translateY(-1px);
+    }
+    
+    /* Recipe grid improvements */
+    .recipe-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 1rem;
+        max-height: 400px;
+        overflow-y: auto;
+        animation: slideIn 0.3s ease-out;
+    }
+    
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+    
+    @keyframes slideIn {
+        from { 
+            opacity: 0; 
+            transform: translateY(10px); 
+        }
+        to { 
+            opacity: 1; 
+            transform: translateY(0); 
+        }
+    }
+    
+    .recipe-grid-item {
+        border: 2px solid #e9ecef;
+        border-radius: 8px;
+        padding: 0.75rem;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        background: white;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .recipe-grid-item:hover {
+        border-color: #007bff;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,123,255,0.15);
+    }
+    
+    .recipe-grid-item.selected {
+        border-color: #28a745;
+        background-color: #f8fff9;
+        box-shadow: 0 4px 12px rgba(40,167,69,0.2);
+    }
+    
+    .recipe-grid-item.selected::before {
+        content: '✓';
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        background: #28a745;
+        color: white;
+        border-radius: 50%;
+        width: 20px;
+        height: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: bold;
+    }
+    
+    .recipe-grid-item img {
+        width: 100%;
+        height: 100px;
+        object-fit: cover;
+        border-radius: 4px;
+        margin-bottom: 0.5rem;
+    }
+    
+    .recipe-grid-item .recipe-placeholder {
+        width: 100%;
+        height: 100px;
+        background-color: #f8f9fa;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 0.5rem;
+        color: #6c757d;
+        font-size: 1.5rem;
+    }
+    
+    /* Search input enhancements */
+    .recipe-search .input-group-text {
+        background-color: #f8f9fa;
+        border-color: #ced4da;
+    }
+    
+    .recipe-search input:focus {
+        border-color: #007bff;
+        box-shadow: 0 0 0 0.2rem rgba(0,123,255,0.25);
+    }
+    
+    /* Results info styling */
+    #searchResultsInfo {
+        padding: 0.5rem 0;
+        border-bottom: 1px solid #e9ecef;
+        margin-bottom: 1rem;
+    }
+    
+    /* No results message styling */
+    #noRecipesMessage {
+        animation: fadeIn 0.3s ease-in;
+    }
+    
+    /* Responsive adjustments */
+    @media (max-width: 576px) {
+        .recipe-grid {
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 0.75rem;
+        }
+        
+        .recipe-grid-item {
+            padding: 0.5rem;
+        }
+        
+        .recipe-grid-item img,
+        .recipe-grid-item .recipe-placeholder {
+            height: 80px;
+        }
+    }
+    
+    /* Smooth scrollbar for recipe grid */
+    .recipe-grid::-webkit-scrollbar {
+        width: 8px;
+    }
+    
+    .recipe-grid::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 4px;
+    }
+    
+    .recipe-grid::-webkit-scrollbar-thumb {
+        background: #c1c1c1;
+        border-radius: 4px;
+    }
+    
+    .recipe-grid::-webkit-scrollbar-thumb:hover {
+        background: #a8a8a8;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-lg-6">
+            <h2>
+                <i class="bi bi-calendar-week"></i> {{ meal_plan.name }}
+            </h2>
+            <p class="text-muted">
+                {{ meal_plan.start_date|date:"F j, Y" }} - {{ meal_plan.end_date|date:"F j, Y" }}
+                ({{ meal_plan.duration_days }} days)
+            </p>
+        </div>
+        <div class="col-lg-6">
+            <div class="d-flex flex-wrap gap-2 justify-content-lg-end">
+                <a href="{% url 'meal_planner:meal_plan_list' %}" class="btn btn-outline-primary">
+                    <i class="bi bi-arrow-left"></i> Back
+                </a>
+                <a href="{% url 'meal_planner:meal_plan_update' meal_plan.pk %}" class="btn btn-primary">
+                    <i class="bi bi-pencil"></i> Edit
+                </a>
+                <a href="{% url 'meal_planner:shopping_list' meal_plan.pk %}" class="btn btn-success">
+                    <i class="bi bi-basket"></i> Shopping List
+                </a>
+            </div>
+        </div>
+    </div>
+
+
+    <div class="row">
+        <!-- Main Content -->
+        <div class="col-lg-9">
+            {% if meal_plan_stats %}
+            <!-- Progress Stats -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-md-3">
+                            <h3 class="text-primary">{{ meal_plan_stats.total_slots }}</h3>
+                            <small class="text-muted">Total Meals</small>
+                        </div>
+                        <div class="col-md-3">
+                            <h3 class="text-success">{{ meal_plan_stats.filled_slots }}</h3>
+                            <small class="text-muted">Planned</small>
+                        </div>
+                        <div class="col-md-3">
+                            <h3 class="text-warning">{{ meal_plan_stats.empty_slots }}</h3>
+                            <small class="text-muted">Empty</small>
+                        </div>
+                        <div class="col-md-3">
+                            <h3 class="text-info">{{ meal_plan_stats.completion_percentage }}%</h3>
+                            <small class="text-muted">Complete</small>
+                        </div>
+                    </div>
+                    <div class="progress mt-3" style="height: 10px;">
+                        <div class="progress-bar bg-success" role="progressbar" 
+                             style="width: {{ meal_plan_stats.completion_percentage }}%">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Meal Plan Grid -->
+            {% for week in organized_weeks %}
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        Week of {{ week.start_date|date:"F j" }} - {{ week.end_date|date:"F j, Y" }}
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        {% for day in week.days %}
+                        <div class="col-lg-6 col-xl-4 mb-4">
+                            <div class="day-header {% if day.is_today %}bg-primary{% endif %}">
+                                <h6 class="mb-0">{{ day.date|date:"l, M j" }}</h6>
+                                {% if day.is_today %}<small>Today</small>{% endif %}
+                            </div>
+                            
+                            {% for meal_type in meal_types %}
+                                {% with found_slot=False %}
+                                    {% for slot in day.slots %}
+                                        {% if slot.meal_type == meal_type %}
+                                            <!-- Existing meal slot with or without recipe -->
+                                            <div class="meal-slot meal-type-{{ meal_type.name|lower }} {% if slot.recipe %}has-recipe{% endif %}"
+                                                 onclick="openRecipeSelectionModal(
+                                                     {{ slot.id }}, 
+                                                     '{{ day.date|date:"Y-m-d" }}', 
+                                                     '{{ meal_type.name }}',
+                                                     {{ meal_type.id }},
+                                                     {% if slot.recipe %}{{ slot.recipe.id }}{% else %}null{% endif %},
+                                                     {% if slot.recipe %}'{{ slot.recipe.title|escapejs }}'{% else %}null{% endif %},
+                                                     {{ slot.servings|default:1 }},
+                                                     '{{ slot.notes|default:""|escapejs }}'
+                                                 )">
+                                                
+                                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                                    <strong class="text-{{ meal_type.name|lower }}">
+                                                        <i class="bi {{ meal_type.name|meal_type_icon }}"></i>
+                                                        {{ meal_type.name }}
+                                                    </strong>
+                                                    {% if slot.recipe %}
+                                                    <span class="badge bg-success">Planned</span>
+                                                    {% else %}
+                                                    <span class="badge bg-secondary">Empty</span>
+                                                    {% endif %}
+                                                </div>
+                                                
+                                                {% if slot.recipe %}
+                                                    <div class="recipe-info">
+                                                        <h6 class="mb-1">{{ slot.recipe.title }}</h6>
+                                                        <div class="small text-muted">
+                                                            <i class="bi bi-clock"></i> {{ slot.recipe.total_time }} min •
+                                                            <i class="bi bi-people"></i> {{ slot.servings }} serving{{ slot.servings|pluralize }}
+                                                            {% if slot.recipe.difficulty %}
+                                                            • <span class="difficulty-{{ slot.recipe.difficulty }}">{{ slot.recipe.get_difficulty_display }}</span>
+                                                            {% endif %}
+                                                        </div>
+                                                        {% if slot.notes %}
+                                                        <div class="mt-1">
+                                                            <small class="text-muted">
+                                                                <i class="bi bi-sticky"></i> {{ slot.notes }}
+                                                            </small>
+                                                        </div>
+                                                        {% endif %}
+                                                    </div>
+                                                {% else %}
+                                                    <div class="text-center text-muted">
+                                                        <i class="bi bi-plus-circle" style="font-size: 2rem;"></i>
+                                                        <div class="mt-2">Click to add recipe</div>
+                                                    </div>
+                                                {% endif %}
+                                            </div>
+                                        {% endif %}
+                                    {% empty %}
+                                        <!-- No slots found for this day - create empty slot -->
+                                        <div class="meal-slot meal-type-{{ meal_type.name|lower }}"
+                                             onclick="openRecipeSelectionModal(
+                                                 null, 
+                                                 '{{ day.date|date:"Y-m-d" }}', 
+                                                 '{{ meal_type.name }}',
+                                                 {{ meal_type.id }},
+                                                 null, null, 1, ''
+                                             )">
+                                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                                <strong class="text-{{ meal_type.name|lower }}">
+                                                    <i class="bi {{ meal_type.name|meal_type_icon }}"></i>
+                                                    {{ meal_type.name }}
+                                                </strong>
+                                                <span class="badge bg-secondary">Empty</span>
+                                            </div>
+                                            <div class="text-center text-muted">
+                                                <i class="bi bi-plus-circle" style="font-size: 2rem;"></i>
+                                                <div class="mt-2">Click to add recipe</div>
+                                            </div>
+                                        </div>
+                                    {% endfor %}
+                                {% endwith %}
+                            {% endfor %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% empty %}
+            <div class="card">
+                <div class="card-body text-center">
+                    <i class="bi bi-calendar-x" style="font-size: 3rem; color: #6c757d;"></i>
+                    <h5 class="mt-3">No weeks to display</h5>
+                    <p class="text-muted">This meal plan doesn't have any valid date ranges.</p>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Sidebar -->
+        <div class="col-lg-3">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0">
+                        <i class="bi bi-book"></i> Your Recipes
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <input type="text" id="sidebarRecipeFilter" class="form-control form-control-sm" 
+                               placeholder="Search recipes...">
+                    </div>
+                    
+                    <div id="sidebarRecipeList" style="max-height: 400px; overflow-y: auto;">
+                        {% for recipe in user_recipes %}
+                        <div class="recipe-card" data-recipe-id="{{ recipe.id }}" data-recipe-data="{{ recipe|recipe_to_json }}">
+                            <div class="d-flex align-items-center">
+                                {% if recipe.image %}
+                                    <img src="{{ recipe.image.url }}" alt="{{ recipe.title }}">
+                                {% else %}
+                                    <div class="recipe-placeholder">
+                                        <i class="bi bi-image"></i>
+                                    </div>
+                                {% endif %}
+                                <div class="ms-2 flex-grow-1">
+                                    <div class="fw-bold small">{{ recipe.title|truncatechars:25 }}</div>
+                                    <div class="recipe-meta">
+                                        <i class="bi bi-clock"></i> {{ recipe.total_time }} min •
+                                        <span class="difficulty-{{ recipe.difficulty }}">
+                                            {{ recipe.get_difficulty_display }}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% empty %}
+                        <div class="text-center py-4">
+                            <i class="bi bi-book" style="font-size: 2rem; color: #6c757d;"></i>
+                            <p class="text-muted mt-2">No recipes found.</p>
+                            <a href="{% url 'recipe_hub:recipe_create' %}" class="btn btn-sm btn-primary">
+                                <i class="bi bi-plus"></i> Create Recipe
+                            </a>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+
+            {% if ingredients_preview %}
+            <!-- Shopping List Preview -->
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h6 class="mb-0">
+                        <i class="bi bi-basket"></i> Shopping List Preview
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <div class="small">
+                        {% for ingredient in ingredients_preview %}
+                        <div class="d-flex justify-content-between">
+                            <span>{{ ingredient.name }}</span>
+                            <span class="text-muted">{{ ingredient.quantity }} {{ ingredient.unit }}</span>
+                        </div>
+                        {% endfor %}
+                        {% if total_ingredients > ingredients_preview|length %}
+                        <div class="text-center mt-2">
+                            <small class="text-muted">
+                                +{{ total_ingredients|add:"-"|add:ingredients_preview|length }} more items
+                            </small>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Enhanced Recipe Selection Modal - Search Focused -->
+<div class="modal fade" id="recipeSelectionModal" tabindex="-1" aria-labelledby="recipeSelectionModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="recipeSelectionModalLabel">Select Recipe for <span id="modalMealInfo"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Hidden form fields -->
+                <input type="hidden" id="currentSlotId">
+                <input type="hidden" id="currentSlotDate">
+                <input type="hidden" id="currentSlotMealType">
+                <input type="hidden" id="currentSlotMealTypeId">
+                <input type="hidden" id="selectedRecipeId">
+                
+                <!-- Search Section -->
+                <div class="recipe-search mb-4">
+                    <div class="row">
+                        <div class="col-md-8">
+                            <div class="input-group">
+                                <span class="input-group-text">
+                                    <i class="bi bi-search"></i>
+                                </span>
+                                <input type="text" id="modalRecipeSearch" class="form-control" 
+                                       placeholder="Start typing to search for recipes...">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <select id="difficultyFilter" class="form-select">
+                                <option value="">All Difficulties</option>
+                                <option value="easy">Easy</option>
+                                <option value="medium">Medium</option>
+                                <option value="hard">Hard</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- Search hint -->
+                    <div class="mt-2">
+                        <small class="text-muted">
+                            <i class="bi bi-lightbulb"></i> 
+                            Try searching by recipe name or ingredient (e.g., "chicken", "pasta", "vegetarian")
+                        </small>
+                    </div>
+                </div>
+                
+                <!-- Search prompt message (shown when no search) -->
+                <div id="searchPromptMessage" class="text-center py-5">
+                    <i class="bi bi-search" style="font-size: 3rem; color: #6c757d;"></i>
+                    <h5 class="mt-3 text-muted">Search for a Recipe</h5>
+                    <p class="text-muted">Start typing in the search box above to find recipes for your meal plan.</p>
+                    <div class="mt-4">
+                        <div class="row text-center">
+                            <div class="col-4">
+                                <div class="p-2 bg-light rounded">
+                                    <i class="bi bi-clock text-success"></i>
+                                    <div class="small mt-1">Quick meals</div>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                <div class="p-2 bg-light rounded">
+                                    <i class="bi bi-heart text-danger"></i>
+                                    <div class="small mt-1">Favorites</div>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                <div class="p-2 bg-light rounded">
+                                    <i class="bi bi-star text-warning"></i>
+                                    <div class="small mt-1">Highly rated</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Search results info -->
+                <div id="searchResultsInfo" class="mb-3" style="display: none;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="text-muted small" id="resultsCount"></span>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="clearSearchAndFilters()">
+                            <i class="bi bi-x"></i> Clear
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Recipe Grid (hidden by default) -->
+                <div class="recipe-grid" id="modalRecipeGrid" style="display: none;">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+                
+                <!-- No results message -->
+                <div id="noRecipesMessage" class="text-center py-4" style="display: none;">
+                    <i class="bi bi-emoji-frown" style="font-size: 2rem; color: #6c757d;"></i>
+                    <h6 class="mt-2 text-muted">No recipes found</h6>
+                    <p class="text-muted small">Try a different search term or check your spelling.</p>
+                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="clearSearchAndFilters()">
+                        <i class="bi bi-arrow-clockwise"></i> Clear Search
+                    </button>
+                </div>
+                
+                <!-- Meal Details Section -->
+                <div class="mt-4 pt-3 border-top">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <label for="mealServings" class="form-label">Servings</label>
+                            <input type="number" id="mealServings" class="form-control" value="1" min="1" max="20">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="mealNotes" class="form-label">Notes (Optional)</label>
+                            <input type="text" id="mealNotes" class="form-control" placeholder="Special notes...">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="clearMealBtn" onclick="clearMealSlot()">
+                    <i class="bi bi-trash"></i> Clear Meal
+                </button>
+                <button type="button" class="btn btn-success" id="saveMealBtn" onclick="saveMealSlot()" disabled>
+                    <i class="bi bi-check-lg"></i> Save Meal
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast Container -->
+<div id="toastContainer" class="toast-container position-fixed bottom-0 end-0 p-3"></div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script>
+// Global variables
+let allRecipes = [];
+let filteredRecipes = [];
+let selectedRecipeId = null;
+let currentSlotId = null;
+let recipeSelectionModal = null;
+
+// Initialize when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize modal
+    recipeSelectionModal = new bootstrap.Modal(document.getElementById('recipeSelectionModal'));
+    
+    // Load recipes data
+    loadRecipesData();
+    
+    // Setup sidebar search
+    setupSidebarSearch();
+});
+
+function loadRecipesData() {
+    // Get recipes from the sidebar (already loaded by Django)
+    allRecipes = [];
+    
+    {% for recipe in user_recipes %}
+    allRecipes.push({
+        id: {{ recipe.id }},
+        title: "{{ recipe.title|escapejs }}",
+        difficulty: "{{ recipe.difficulty }}",
+        difficulty_display: "{{ recipe.get_difficulty_display }}",
+        total_time: {{ recipe.total_time }},
+        prep_time: {{ recipe.prep_time }},
+        cook_time: {{ recipe.cook_time }},
+        servings: {{ recipe.servings }},
+        image_url: {% if recipe.image %}"{{ recipe.image.url }}"{% else %}null{% endif %},
+        categories: [{% for cat in recipe.categories.all %}"{{ cat.name|escapejs }}"{% if not forloop.last %},{% endif %}{% endfor %}],
+        author: "{{ recipe.author.username }}",
+        average_rating: {{ recipe.average_rating|default:0 }},
+        description: "{{ recipe.description|escapejs|truncatechars:100 }}"
+    });
+    {% endfor %}
+    
+    // Don't render initially - wait for search
+    filteredRecipes = [];
+    
+    // Setup search functionality
+    setupSearchFilters();
+}
+
+function setupSearchFilters() {
+    const searchInput = document.getElementById('modalRecipeSearch');
+    const difficultyFilter = document.getElementById('difficultyFilter');
+    
+    // Use shorter debounce delay for better UX
+    searchInput.addEventListener('input', debounce(function() {
+        const searchTerm = searchInput.value.trim();
+        if (searchTerm.length >= 2) { // Start searching after 2 characters
+            applyFilters();
+        } else if (searchTerm.length === 0) {
+            showSearchPrompt();
+        }
+    }, 200));
+    
+    difficultyFilter.addEventListener('change', function() {
+        const searchTerm = searchInput.value.trim();
+        if (searchTerm.length >= 2) {
+            applyFilters();
+        }
+    });
+}
+
+function applyFilters() {
+    const searchTerm = document.getElementById('modalRecipeSearch').value.toLowerCase().trim();
+    const difficultyFilter = document.getElementById('difficultyFilter').value;
+    
+    // Only filter if there's a search term
+    if (searchTerm.length < 2) {
+        showSearchPrompt();
+        return;
+    }
+    
+    filteredRecipes = allRecipes.filter(recipe => {
+        // Text search in title, description, and categories
+        const matchesSearch = 
+            recipe.title.toLowerCase().includes(searchTerm) ||
+            recipe.description.toLowerCase().includes(searchTerm) ||
+            recipe.categories.some(cat => cat.toLowerCase().includes(searchTerm));
+        
+        // Difficulty filter
+        const matchesDifficulty = !difficultyFilter || recipe.difficulty === difficultyFilter;
+        
+        return matchesSearch && matchesDifficulty;
+    });
+    
+    renderRecipeGrid();
+}
+
+function renderRecipeGrid() {
+    const grid = document.getElementById('modalRecipeGrid');
+    const noResultsMsg = document.getElementById('noRecipesMessage');
+    const searchPrompt = document.getElementById('searchPromptMessage');
+    const resultsInfo = document.getElementById('searchResultsInfo');
+    const resultsCount = document.getElementById('resultsCount');
+    
+    // Hide search prompt
+    searchPrompt.style.display = 'none';
+    
+    if (filteredRecipes.length === 0) {
+        grid.style.display = 'none';
+        noResultsMsg.style.display = 'block';
+        resultsInfo.style.display = 'none';
+        return;
+    }
+    
+    // Show results
+    grid.style.display = 'grid';
+    noResultsMsg.style.display = 'none';
+    resultsInfo.style.display = 'block';
+    
+    // Update results count
+    resultsCount.textContent = `${filteredRecipes.length} recipe${filteredRecipes.length !== 1 ? 's' : ''} found`;
+    
+    grid.innerHTML = filteredRecipes.map(recipe => `
+        <div class="recipe-grid-item" data-recipe-id="${recipe.id}" onclick="selectRecipe(${recipe.id})">
+            ${recipe.image_url ? 
+                `<img src="${recipe.image_url}" alt="${recipe.title}">` :
+                `<div class="recipe-placeholder"><i class="bi bi-image"></i></div>`
+            }
+            <div class="fw-bold small mb-1">${recipe.title}</div>
+            <div class="recipe-meta">
+                <i class="bi bi-clock"></i> ${recipe.total_time}min<br>
+                <span class="difficulty-${recipe.difficulty}">${recipe.difficulty_display}</span>
+            </div>
+            ${recipe.average_rating > 0 ? 
+                `<div class="mt-1"><small>★ ${recipe.average_rating}/5</small></div>` : 
+                ''
+            }
+        </div>
+    `).join('');
+}
+
+function showSearchPrompt() {
+    const grid = document.getElementById('modalRecipeGrid');
+    const noResultsMsg = document.getElementById('noRecipesMessage');
+    const searchPrompt = document.getElementById('searchPromptMessage');
+    const resultsInfo = document.getElementById('searchResultsInfo');
+    
+    // Show search prompt, hide everything else
+    searchPrompt.style.display = 'block';
+    grid.style.display = 'none';
+    noResultsMsg.style.display = 'none';
+    resultsInfo.style.display = 'none';
+}
+
+function clearSearchAndFilters() {
+    document.getElementById('modalRecipeSearch').value = '';
+    document.getElementById('difficultyFilter').value = '';
+    showSearchPrompt();
+    
+    // Clear any selected recipe
+    selectedRecipeId = null;
+    document.getElementById('saveMealBtn').disabled = true;
+}
+
+function openRecipeSelectionModal(slotId, date, mealType, mealTypeId, recipeId, recipeTitle, servings, notes) {
+    console.log('=== OPENING MODAL DEBUG ===');
+    console.log('Parameters received:');
+    console.log('  slotId:', slotId);
+    console.log('  date:', date);
+    console.log('  mealType:', mealType);
+    console.log('  mealTypeId:', mealTypeId);
+    console.log('  recipeId:', recipeId);
+    console.log('  recipeTitle:', recipeTitle);
+    console.log('  servings:', servings);
+    console.log('  notes:', notes);
+    
+    currentSlotId = slotId;
+    
+    // Set hidden fields
+    document.getElementById('currentSlotId').value = slotId || '';
+    document.getElementById('currentSlotDate').value = date;
+    document.getElementById('currentSlotMealType').value = mealType;
+    document.getElementById('currentSlotMealTypeId').value = mealTypeId || '';
+    
+    console.log('Hidden fields set:');
+    console.log('  currentSlotId:', document.getElementById('currentSlotId').value);
+    console.log('  currentSlotDate:', document.getElementById('currentSlotDate').value);
+    console.log('  currentSlotMealType:', document.getElementById('currentSlotMealType').value);
+    console.log('  currentSlotMealTypeId:', document.getElementById('currentSlotMealTypeId').value);
+    
+    // Set meal details
+    document.getElementById('mealServings').value = servings || 1;
+    document.getElementById('mealNotes').value = notes || '';
+    
+    // Update modal title
+    const dateObj = new Date(date);
+    const formattedDate = dateObj.toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        month: 'short', 
+        day: 'numeric' 
+    });
+    document.getElementById('modalMealInfo').textContent = `${mealType} - ${formattedDate}`;
+    
+    // Pre-select recipe if exists
+    if (recipeId) {
+        selectRecipe(recipeId);
+        document.getElementById('clearMealBtn').style.display = 'inline-block';
+        
+        // If there's a current recipe, search for it to show in grid
+        const currentRecipe = allRecipes.find(r => r.id == recipeId);
+        if (currentRecipe) {
+            document.getElementById('modalRecipeSearch').value = currentRecipe.title;
+            applyFilters();
+        }
+    } else {
+        selectedRecipeId = null;
+        document.getElementById('clearMealBtn').style.display = 'none';
+        document.getElementById('saveMealBtn').disabled = true;
+        clearSearchAndFilters();
+    }
+    
+    // Focus on search input when modal opens
+    setTimeout(() => {
+        document.getElementById('modalRecipeSearch').focus();
+    }, 300);
+    
+    console.log('=== END OPENING MODAL DEBUG ===');
+    recipeSelectionModal.show();
+}
+
+function selectRecipe(recipeId) {
+    selectedRecipeId = recipeId;
+    document.getElementById('selectedRecipeId').value = recipeId;
+    
+    // Update UI
+    document.querySelectorAll('.recipe-grid-item').forEach(item => {
+        item.classList.remove('selected');
+    });
+    
+    const selectedItem = document.querySelector(`[data-recipe-id="${recipeId}"]`);
+    if (selectedItem) {
+        selectedItem.classList.add('selected');
+    }
+    
+    // Enable save button
+    document.getElementById('saveMealBtn').disabled = false;
+    
+    // Update servings based on recipe default
+    const recipe = allRecipes.find(r => r.id == recipeId);
+    if (recipe && !document.getElementById('mealServings').value > 1) {
+        document.getElementById('mealServings').value = recipe.servings;
+    }
+}
+
+function setupSidebarSearch() {
+    const sidebarSearch = document.getElementById('sidebarRecipeFilter');
+    if (sidebarSearch) {
+        sidebarSearch.addEventListener('input', function(e) {
+            const filter = e.target.value.toLowerCase();
+            document.querySelectorAll('#sidebarRecipeList .recipe-card').forEach(card => {
+                const title = card.textContent.toLowerCase();
+                card.style.display = title.includes(filter) ? 'block' : 'none';
+            });
+        });
+    }
+}
+
+function saveMealSlot() {
+    if (!selectedRecipeId) {
+        showToast('Please select a recipe first', 'error');
+        return;
+    }
+    
+    // Get the meal type ID from the hidden field
+    const mealTypeId = document.getElementById('currentSlotMealTypeId').value;
+    if (!mealTypeId) {
+        showToast('Meal type ID is missing', 'error');
+        return;
+    }
+    
+    const data = {
+        recipe_id: selectedRecipeId,
+        date: document.getElementById('currentSlotDate').value,
+        meal_type_id: mealTypeId,
+        servings: document.getElementById('mealServings').value || 1,
+        notes: document.getElementById('mealNotes').value || '',
+        meal_plan_id: {{ meal_plan.pk }}  // Always include meal plan ID from detail page
+    };
+    
+    console.log('Sending data:', data); // Debug log
+    
+    // Show loading state
+    document.getElementById('saveMealBtn').disabled = true;
+    document.getElementById('saveMealBtn').innerHTML = '<i class="bi bi-hourglass-split"></i> Saving...';
+    
+    fetch('{% url "meal_planner:create_meal_slot" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => {
+        console.log('Response status:', response.status);
+        if (!response.ok) {
+            return response.text().then(text => {
+                throw new Error(`HTTP ${response.status}: ${text}`);
+            });
+        }
+        return response.json();
+    })
+    .then(data => {
+        console.log('Response data:', data);
+        if (data.success) {
+            showToast('✅ Meal saved successfully!', 'success');
+            // Reload the page to show updated meal plan
+            window.location.reload();
+        } else {
+            showToast('❌ Error saving meal: ' + (data.error || 'Unknown error'), 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Fetch error:', error);
+        showToast('❌ Error saving meal: ' + error.message, 'error');
+    })
+    .finally(() => {
+        // Reset button state
+        document.getElementById('saveMealBtn').disabled = false;
+        document.getElementById('saveMealBtn').innerHTML = '<i class="bi bi-check-lg"></i> Save Meal';
+        recipeSelectionModal.hide();
+    });
+}
+
+function clearMealSlot() {
+    if (!currentSlotId) {
+        showToast('No meal to clear', 'error');
+        return;
+    }
+    
+    if (!confirm('Are you sure you want to clear this meal?')) {
+        return;
+    }
+    
+    fetch(`/meals/slots/${currentSlotId}/delete/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({
+            meal_slot_id: currentSlotId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showToast('✅ Meal cleared successfully!', 'success');
+            // Reload the page to show updated meal plan
+            window.location.reload();
+        } else {
+            showToast('❌ Error clearing meal: ' + (data.error || 'Unknown error'), 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast('❌ Error clearing meal', 'error');
+    })
+    .finally(() => {
+        recipeSelectionModal.hide();
+    });
+}
+
+// Utility functions
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+function showToast(message, type) {
+    const toastContainer = document.getElementById('toastContainer');
+    const toast = document.createElement('div');
+    toast.className = `toast align-items-center text-white bg-${type === 'error' ? 'danger' : 'success'} border-0`;
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">${message}</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+    toastContainer.appendChild(toast);
+    
+    const bsToast = new bootstrap.Toast(toast);
+    bsToast.show();
+    
+    // Remove toast element after it's hidden
+    toast.addEventListener('hidden.bs.toast', () => {
+        toast.remove();
+    });
+}
+</script>
+{% endblock %}

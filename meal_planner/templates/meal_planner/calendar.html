@@ -1,0 +1,800 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load meal_planner_tags %}
+
+{% block title %}Meal Planner Calendar - KitchenCompass{% endblock %}
+
+{% block extra_css %}
+<link href="https://unpkg.com/fullcalendar@6.1.8/index.global.min.css" rel="stylesheet">
+<style>
+    .recipe-card {
+        cursor: pointer;
+        transition: transform 0.2s;
+    }
+    .recipe-card:hover {
+        transform: translateY(-2px);
+    }
+    .fc-event {
+        cursor: pointer;
+    }
+    .meal-breakfast {
+        background-color: #28a745 !important;
+        border-color: #28a745 !important;
+    }
+    .meal-lunch {
+        background-color: #ffc107 !important;
+        border-color: #ffc107 !important;
+        color: #000 !important;
+    }
+    .meal-dinner {
+        background-color: #dc3545 !important;
+        border-color: #dc3545 !important;
+    }
+    .meal-snack {
+        background-color: #6c757d !important;
+        border-color: #6c757d !important;
+    }
+    
+    /* Loading state styles */
+    .btn-loading {
+        position: relative;
+        pointer-events: none;
+    }
+    
+    .btn-loading::after {
+        content: "";
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        top: 50%;
+        left: 50%;
+        margin-left: -8px;
+        margin-top: -8px;
+        border: 2px solid #ffffff;
+        border-radius: 50%;
+        border-top-color: transparent;
+        animation: spin 1s ease-in-out infinite;
+    }
+    
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card-header d-flex justify-content-between align-items-center">
+    <h4 class="mb-0">
+        <i class="bi bi-calendar3"></i> Meal Planning Calendar
+    </h4>
+    {% if user.microsoft_token %}
+        <button class="btn btn-sm btn-primary" onclick="syncAllToOutlook()">
+            <i class="bi bi-calendar-check"></i> Sync All to Outlook
+        </button>
+    {% else %}
+        <a href="{% url 'meal_planner:calendar_sync_settings' %}" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-calendar-plus"></i> Connect Outlook
+        </a>
+    {% endif %}
+</div>
+<div class="container-fluid py-4">
+    <div class="row">
+        <!-- Calendar -->
+        <div class="col-lg-9">
+            <div class="card">
+                <div class="card-header">
+                    <h4 class="mb-0">
+                        <i class="bi bi-calendar3"></i> Meal Planning Calendar
+                    </h4>
+                </div>
+                <div class="card-body">
+                    <div id="calendar"></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Recipe Selector -->
+        <div class="col-lg-3">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="bi bi-book"></i> My Recipes
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <input type="text" id="recipeSearch" class="form-control" 
+                               placeholder="Search recipes...">
+                    </div>
+                    
+                    <div id="recipeList">
+                        <!-- Recipes will be populated by JavaScript -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Legend -->
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0">Meal Types</h6>
+                </div>
+                <div class="card-body">
+                    <div class="d-flex flex-column gap-2">
+                        <div class="d-flex align-items-center">
+                            <div class="meal-breakfast" style="width: 20px; height: 20px; border-radius: 3px;"></div>
+                            <span class="ms-2">Breakfast</span>
+                        </div>
+                        <div class="d-flex align-items-center">
+                            <div class="meal-lunch" style="width: 20px; height: 20px; border-radius: 3px;"></div>
+                            <span class="ms-2">Lunch</span>
+                        </div>
+                        <div class="d-flex align-items-center">
+                            <div class="meal-dinner" style="width: 20px; height: 20px; border-radius: 3px;"></div>
+                            <span class="ms-2">Dinner</span>
+                        </div>
+                        <div class="d-flex align-items-center">
+                            <div class="meal-snack" style="width: 20px; height: 20px; border-radius: 3px;"></div>
+                            <span class="ms-2">Snack</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Meal Modal -->
+<div class="modal fade" id="addMealModal" tabindex="-1" aria-labelledby="addMealModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addMealModalLabel">Add Meal to Calendar</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addMealForm">
+                    {% csrf_token %}
+                    <input type="hidden" id="selectedDate" name="planned_date">
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Date</label>
+                        <div id="selectedDateDisplay" class="form-control-plaintext"></div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="modalRecipeSelect" class="form-label">Recipe *</label>
+                        <select class="form-select" id="modalRecipeSelect" name="recipe_id" required>
+                            <option value="">Select a recipe...</option>
+                            <!-- Will be populated by JavaScript -->
+                        </select>
+                        <div class="invalid-feedback">
+                            Please select a recipe.
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="mealType" class="form-label">Meal Type *</label>
+                        <select class="form-select" id="mealType" name="meal_type_id" required>
+                            <option value="">Select meal type...</option>
+                            <!-- Will be populated by JavaScript -->
+                        </select>
+                        <div class="invalid-feedback">
+                            Please select a meal type.
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="servings" class="form-label">Servings</label>
+                        <input type="number" class="form-control" id="servings" 
+                               name="servings" value="1" min="1" max="20">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="notes" class="form-label">Notes (Optional)</label>
+                        <textarea class="form-control" id="notes" name="notes" rows="2" 
+                                  placeholder="Any special notes for this meal..."></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="saveMealBtn">
+                    <span class="btn-text">Add to Calendar</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast Container -->
+<div id="toastContainer" class="toast-container position-fixed bottom-0 end-0 p-3"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Get data from Django context
+    const calendarEvents = {{ calendar_events|safe }};
+    const recipesData = {{ recipes_data|safe }};
+    const mealTypesData = {{ meal_types|safe }};
+    
+    console.log('Calendar events:', calendarEvents);
+    console.log('Recipes data:', recipesData);
+    console.log('Meal types:', mealTypesData);
+    
+    // Store modal instance
+    let addMealModalInstance = null;
+    
+    // Initialize modal instance
+    const addMealModalElement = document.getElementById('addMealModal');
+    if (addMealModalElement) {
+        addMealModalInstance = new bootstrap.Modal(addMealModalElement, {
+            backdrop: 'static',
+            keyboard: true
+        });
+    }
+    
+    // Populate meal type dropdown
+    const mealTypeSelect = document.getElementById('mealType');
+    if (mealTypesData && mealTypesData.length > 0) {
+        mealTypesData.forEach(mealType => {
+            const option = document.createElement('option');
+            option.value = mealType.id;
+            option.textContent = mealType.display_name || mealType.name;
+            mealTypeSelect.appendChild(option);
+        });
+    } else {
+        console.error('No meal types data available');
+        // Add default meal types if none exist
+        const defaultMealTypes = [
+            {id: 1, name: 'Breakfast'},
+            {id: 2, name: 'Lunch'},
+            {id: 3, name: 'Dinner'},
+            {id: 4, name: 'Snack'}
+        ];
+        defaultMealTypes.forEach(mealType => {
+            const option = document.createElement('option');
+            option.value = mealType.id;
+            option.textContent = mealType.name;
+            mealTypeSelect.appendChild(option);
+        });
+    }
+    
+    // Populate recipe dropdown in modal
+    const modalRecipeSelect = document.getElementById('modalRecipeSelect');
+    if (modalRecipeSelect && recipesData && recipesData.length > 0) {
+        recipesData.forEach(recipe => {
+            const option = document.createElement('option');
+            option.value = recipe.id;
+            option.textContent = recipe.title;
+            modalRecipeSelect.appendChild(option);
+        });
+    }
+    
+    // Initialize calendar
+    const calendarEl = document.getElementById('calendar');
+    const calendar = new FullCalendar.Calendar(calendarEl, {
+        initialView: 'dayGridMonth',
+        initialDate: '2025-06-01', // Start at June 2025 where your events are
+        headerToolbar: {
+            left: 'prev,next today',
+            center: 'title',
+            right: 'dayGridMonth,timeGridWeek,listWeek'
+        },
+        events: calendarEvents,
+        selectable: true,
+        selectMirror: true,
+        editable: true,
+        dayMaxEvents: true,
+        
+        // Handle date selection
+        select: function(info) {
+            showAddMealModal(info.startStr);
+        },
+        
+        // Handle event click
+        eventClick: function(info) {
+            showMealDetails(info.event);
+        },
+        
+        // Handle event drag/drop
+        eventDrop: function(info) {
+            updateMealDate(info.event, info.event.startStr);
+        }
+    });
+    
+    calendar.render();
+    
+    // Make calendar available globally for debugging
+    window.calendar = calendar;
+    
+    // Populate recipe list
+    populateRecipeList(recipesData);
+    
+    // Recipe search functionality
+    const recipeSearchInput = document.getElementById('recipeSearch');
+    if (recipeSearchInput) {
+        recipeSearchInput.addEventListener('input', function(e) {
+            filterRecipes(e.target.value);
+        });
+    }
+    
+    // Add meal form submission
+    const saveMealBtn = document.getElementById('saveMealBtn');
+    if (saveMealBtn) {
+        saveMealBtn.addEventListener('click', function() {
+            saveMeal();
+        });
+    }
+    
+    // Form validation
+    const addMealForm = document.getElementById('addMealForm');
+    if (addMealForm) {
+        addMealForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            saveMeal();
+        });
+    }
+    
+    // Functions
+    function populateRecipeList(recipes) {
+        const recipeList = document.getElementById('recipeList');
+        if (!recipeList) return;
+        
+        recipeList.innerHTML = '';
+        
+        if (recipes && recipes.length > 0) {
+            recipes.forEach(recipe => {
+                const recipeCard = createRecipeCard(recipe);
+                recipeList.appendChild(recipeCard);
+            });
+        } else {
+            recipeList.innerHTML = '<p class="text-muted text-center">No recipes found</p>';
+        }
+    }
+    
+    function createRecipeCard(recipe) {
+        const card = document.createElement('div');
+        card.className = 'recipe-card card mb-2';
+        card.dataset.recipeId = recipe.id;
+        card.dataset.recipeData = JSON.stringify(recipe);
+        
+        card.innerHTML = `
+            <div class="card-body p-2">
+                <h6 class="card-title mb-1">${recipe.title}</h6>
+                <div class="small text-muted">
+                    <i class="bi bi-clock"></i> ${recipe.total_time || 0} min •
+                    <i class="bi bi-people"></i> ${recipe.servings || 1} servings
+                </div>
+                <div class="small">
+                    <span class="badge bg-${getDifficultyClass(recipe.difficulty)}">${recipe.difficulty_display || 'Medium'}</span>
+                </div>
+            </div>
+        `;
+        
+        card.addEventListener('click', function() {
+            selectRecipe(recipe);
+        });
+        
+        return card;
+    }
+    
+    function getDifficultyClass(difficulty) {
+        const classes = {
+            'easy': 'success',
+            'medium': 'warning',
+            'hard': 'danger'
+        };
+        return classes[difficulty] || 'secondary';
+    }
+    
+    function selectRecipe(recipe) {
+        // Update hidden recipe ID field if it exists
+        const selectedRecipeIdField = document.getElementById('selectedRecipeId');
+        if (selectedRecipeIdField) {
+            selectedRecipeIdField.value = recipe.id;
+        }
+        
+        // Update recipe display if it exists
+        const selectedRecipeDisplay = document.getElementById('selectedRecipeDisplay');
+        if (selectedRecipeDisplay) {
+            selectedRecipeDisplay.innerHTML = `
+                <strong>${recipe.title}</strong><br>
+                <small>Prep: ${recipe.prep_time || 0}min • Cook: ${recipe.cook_time || 0}min • Serves: ${recipe.servings || 1}</small>
+            `;
+        }
+        
+        // Update modal recipe select if it exists
+        const modalRecipeSelect = document.getElementById('modalRecipeSelect');
+        if (modalRecipeSelect) {
+            modalRecipeSelect.value = recipe.id;
+            // Remove validation state
+            modalRecipeSelect.classList.remove('is-invalid');
+        }
+        
+        // Highlight selected card
+        document.querySelectorAll('.recipe-card').forEach(card => {
+            card.classList.remove('border-primary');
+        });
+        const selectedCard = document.querySelector(`[data-recipe-id="${recipe.id}"]`);
+        if (selectedCard) {
+            selectedCard.classList.add('border-primary');
+        }
+    }
+    
+    function showAddMealModal(dateStr) {
+        const selectedDateField = document.getElementById('selectedDate');
+        if (selectedDateField) {
+            selectedDateField.value = dateStr;
+        }
+        
+        const selectedDateDisplay = document.getElementById('selectedDateDisplay');
+        if (selectedDateDisplay) {
+            selectedDateDisplay.textContent = new Date(dateStr).toLocaleDateString();
+        }
+        
+        // Reset form
+        const addMealForm = document.getElementById('addMealForm');
+        if (addMealForm) {
+            addMealForm.reset();
+            // Remove validation states
+            addMealForm.querySelectorAll('.is-invalid').forEach(el => {
+                el.classList.remove('is-invalid');
+            });
+            // Re-set date after reset
+            if (selectedDateField) {
+                selectedDateField.value = dateStr;
+            }
+        }
+        
+        // Reset button state
+        resetSaveButton();
+        
+        // Show modal using stored instance
+        if (addMealModalInstance) {
+            addMealModalInstance.show();
+        }
+    }
+    
+    function validateForm() {
+        const form = document.getElementById('addMealForm');
+        const recipeSelect = document.getElementById('modalRecipeSelect');
+        const mealTypeSelect = document.getElementById('mealType');
+        
+        let isValid = true;
+        
+        // Validate recipe selection
+        if (!recipeSelect.value) {
+            recipeSelect.classList.add('is-invalid');
+            isValid = false;
+        } else {
+            recipeSelect.classList.remove('is-invalid');
+        }
+        
+        // Validate meal type selection
+        if (!mealTypeSelect.value) {
+            mealTypeSelect.classList.add('is-invalid');
+            isValid = false;
+        } else {
+            mealTypeSelect.classList.remove('is-invalid');
+        }
+        
+        return isValid;
+    }
+    
+    function setSaveButtonLoading(loading = true) {
+        const saveBtn = document.getElementById('saveMealBtn');
+        const btnText = saveBtn.querySelector('.btn-text');
+        
+        if (loading) {
+            saveBtn.classList.add('btn-loading');
+            saveBtn.disabled = true;
+            if (btnText) btnText.textContent = 'Saving...';
+        } else {
+            saveBtn.classList.remove('btn-loading');
+            saveBtn.disabled = false;
+            if (btnText) btnText.textContent = 'Add to Calendar';
+        }
+    }
+    
+    function resetSaveButton() {
+        setSaveButtonLoading(false);
+    }
+    
+    function saveMeal() {
+        console.log('saveMeal() called');
+
+    // helper to read the CSRF cookie
+    function getCookie(name) {
+        const match = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+        return match ? match.pop() : '';
+    }
+
+    if (!validateForm()) {
+        showToast('Please fill in all required fields', 'error');
+        return;
+    }
+    setSaveButtonLoading(true);
+
+    const formData = {
+        recipe_id: document.getElementById('modalRecipeSelect').value,
+        date: document.getElementById('selectedDate').value,
+        meal_type_id: document.getElementById('mealType').value,
+        servings: document.getElementById('servings').value || 1,
+        notes: document.getElementById('notes').value || ''
+    };
+
+    fetch('{% url "meal_planner:create_meal_slot" %}', {
+        method: 'POST',
+        credentials: 'same-origin',               // include session/csrf cookie
+        headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify(formData)
+    })
+    .then(response => {
+        console.log('Fetch complete, status:', response.status);
+        if (!response.ok) {
+            return response.text().then(txt => {
+                throw new Error(`HTTP ${response.status}: ${txt}`);
+            });
+        }
+        return response.json();
+    })
+    .then(data => {
+        resetSaveButton();
+        if (data.success) {
+            // update calendar
+            const existing = calendar.getEventById(data.meal_slot.id);
+            if (existing) existing.remove();
+            calendar.addEvent(data.meal_slot);
+            calendar.render();
+            closeModal();
+            showToast('✅ Meal added to calendar!', 'success');
+        } else {
+            showToast('❌ ' + (data.error || 'Error adding meal'), 'error');
+        }
+    })
+    .catch(err => {
+        console.error('Fetch error:', err);
+        resetSaveButton();
+        showToast('❌ Error adding meal: ' + err.message, 'error');
+    });
+}
+    
+    function closeModal() {
+        try {
+            if (addMealModalInstance) {
+                addMealModalInstance.hide();
+            }
+            
+            // Clean up any remaining modal artifacts
+            setTimeout(() => {
+                // Remove any leftover backdrops
+                document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
+                    backdrop.remove();
+                });
+                
+                // Reset body styles
+                document.body.classList.remove('modal-open');
+                document.body.style.removeProperty('padding-right');
+                document.body.style.removeProperty('overflow');
+                
+                // Reset form
+                const addMealForm = document.getElementById('addMealForm');
+                if (addMealForm) {
+                    addMealForm.reset();
+                    addMealForm.querySelectorAll('.is-invalid').forEach(el => {
+                        el.classList.remove('is-invalid');
+                    });
+                }
+                
+                // Reset button
+                resetSaveButton();
+            }, 300);
+            
+        } catch (error) {
+            console.error('Error closing modal:', error);
+        }
+    }
+    
+    function showMealDetails(event) {
+        // Function to show meal details when clicking on a calendar event
+        const extendedProps = event.extendedProps;
+        
+        const detailsHtml = `
+            <h5>${event.title}</h5>
+            <p><strong>Date:</strong> ${event.start.toLocaleDateString()}</p>
+            <p><strong>Servings:</strong> ${extendedProps.servings || 1}</p>
+            ${extendedProps.notes ? `<p><strong>Notes:</strong> ${extendedProps.notes}</p>` : ''}
+            <div class="mt-3">
+                <a href="/recipes/${extendedProps.recipeSlug}/" class="btn btn-sm btn-primary">View Recipe</a>
+                <button class="btn btn-sm btn-danger" onclick="deleteMealSlot(${event.id})">Remove</button>
+            </div>
+        `;
+        
+        // You can implement a modal or tooltip to show these details
+        // For now, we'll use a simple confirm dialog
+        if (confirm(`${event.title}\n\nWould you like to remove this meal from the calendar?`)) {
+            deleteMealSlot(event.id);
+        }
+    }
+    
+    function updateMealDate(event, newDate) {
+        // Function to update meal date when dragging/dropping
+        const mealSlotId = event.id;
+        
+        fetch(`/meals/slots/${mealSlotId}/update-date/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({ date: newDate })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Meal date updated!', 'success');
+            } else {
+                event.revert();
+                showToast(data.error || 'Error updating meal date', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            event.revert();
+            showToast('Error updating meal date', 'error');
+        });
+    }
+    
+    function deleteMealSlot(slotId) {
+        if (!confirm('Are you sure you want to remove this meal?')) {
+            return;
+        }
+        
+        fetch(`/meals/slots/${slotId}/delete/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const event = calendar.getEventById(slotId);
+                if (event) {
+                    event.remove();
+                }
+                showToast('Meal removed from calendar', 'success');
+            } else {
+                showToast(data.error || 'Error removing meal', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('Error removing meal', 'error');
+        });
+    }
+    
+    function filterRecipes(searchTerm) {
+        const cards = document.querySelectorAll('.recipe-card');
+        cards.forEach(card => {
+            const title = card.querySelector('.card-title').textContent.toLowerCase();
+            if (title.includes(searchTerm.toLowerCase())) {
+                card.style.display = 'block';
+            } else {
+                card.style.display = 'none';
+            }
+        });
+    }
+    
+    function showToast(message, type) {
+        const toast = document.createElement('div');
+        const bgClass = type === 'error' ? 'danger' : 
+                       type === 'info' ? 'info' : 
+                       type === 'warning' ? 'warning' : 'success';
+        
+        toast.className = `toast align-items-center text-white bg-${bgClass} border-0`;
+        toast.setAttribute('role', 'alert');
+        toast.setAttribute('aria-live', 'assertive');
+        toast.setAttribute('aria-atomic', 'true');
+        
+        toast.innerHTML = `
+            <div class="d-flex">
+                <div class="toast-body">${message}</div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        `;
+        
+        let container = document.getElementById('toastContainer');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'toastContainer';
+            container.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+            document.body.appendChild(container);
+        }
+        
+        container.appendChild(toast);
+        const bsToast = new bootstrap.Toast(toast, {
+            autohide: true,
+            delay: 5000
+        });
+        bsToast.show();
+        
+        toast.addEventListener('hidden.bs.toast', () => toast.remove());
+    }
+    
+    // Define syncAllToOutlook function
+    function syncAllToOutlook() {
+        if (!confirm('Sync all active meal plans to your Outlook calendar?')) {
+            return;
+        }
+        
+        const button = event.target.closest('button');
+        const originalContent = button.innerHTML;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Syncing...';
+        button.disabled = true;
+        
+        fetch('{% url "meal_planner:sync_all_meal_plans" %}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('✅ ' + data.message, 'success');
+                
+                // Show details if available
+                if (data.details) {
+                    console.log('Sync details:', data.details);
+                }
+            } else {
+                showToast('❌ ' + (data.error || 'Sync failed'), 'error');
+                
+                // Redirect if needed
+                if (data.redirect) {
+                    setTimeout(() => {
+                        window.location.href = data.redirect;
+                    }, 2000);
+                }
+            }
+            
+            button.innerHTML = originalContent;
+            button.disabled = false;
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('❌ An error occurred while syncing', 'error');
+            button.innerHTML = originalContent;
+            button.disabled = false;
+        });
+    }
+    
+    // Make functions available globally
+    window.syncAllToOutlook = syncAllToOutlook;
+    window.deleteMealSlot = deleteMealSlot;
+    window.showToast = showToast;
+    window.closeModal = closeModal;
+    
+    // Handle modal close events
+    addMealModalElement.addEventListener('hidden.bs.modal', function () {
+        // Reset form when modal is hidden
+        const addMealForm = document.getElementById('addMealForm');
+        if (addMealForm) {
+            addMealForm.reset();
+            addMealForm.querySelectorAll('.is-invalid').forEach(el => {
+                el.classList.remove('is-invalid');
+            });
+        }
+        resetSaveButton();
+    });
+});
+</script>
+{% endblock %}

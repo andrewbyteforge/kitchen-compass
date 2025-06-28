@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Upload History - Admin{% endblock %}
+
+{% block extra_css %}
+<style>
+    .admin-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem 0;
+        margin-bottom: 2rem;
+    }
+    
+    .history-table td {
+        vertical-align: middle;
+    }
+    
+    .status-badge {
+        font-size: 0.875rem;
+        padding: 0.25rem 0.75rem;
+        border-radius: 1rem;
+    }
+    
+    .status-pending { 
+        background-color: #ffeaa7; 
+        color: #2d3436; 
+    }
+    
+    .status-processing { 
+        background-color: #74b9ff; 
+        color: #fff; 
+    }
+    
+    .status-completed { 
+        background-color: #55efc4; 
+        color: #2d3436; 
+    }
+    
+    .status-failed { 
+        background-color: #ff7675; 
+        color: #fff; 
+    }
+    
+    .status-partial { 
+        background-color: #fdcb6e; 
+        color: #2d3436; 
+    }
+    
+    .stats-small {
+        font-size: 0.875rem;
+    }
+    
+    .filter-section {
+        background-color: #f8f9fa;
+        border-radius: 0.5rem;
+        padding: 1.5rem;
+        margin-bottom: 2rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Admin Header -->
+<div class="admin-header">
+    <div class="container">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h1 class="display-5 mb-2">
+                    <i class="bi bi-clock-history"></i> CSV Upload History
+                </h1>
+                <p class="lead mb-0">View all your recipe imports</p>
+            </div>
+            <div class="col-md-4 text-md-end">
+                <a href="{% url 'meal_planner:csv_upload' %}" class="btn btn-light">
+                    <i class="bi bi-upload"></i> New Upload
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="container">
+    <!-- Summary Stats -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h3 class="text-primary">{{ uploads.paginator.count }}</h3>
+                    <p class="mb-0 text-muted">Total Uploads</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h3 class="text-success">
+                        {{ uploads.object_list|dictsort:"successful_imports"|last.successful_imports|default:"0" }}
+                    </h3>
+                    <p class="mb-0 text-muted">Total Recipes Imported</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h3 class="text-warning">
+                        {% if uploads.object_list %}
+                            {{ uploads.object_list.0.uploaded_at|date:"M d" }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </h3>
+                    <p class="mb-0 text-muted">Last Upload</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h3 class="text-info">
+                        {% if uploads.object_list %}
+                            {% with completed=uploads.object_list|dictsortreversed:"success_rate"|first %}
+                                {{ completed.success_rate|default:"0" }}%
+                            {% endwith %}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </h3>
+                    <p class="mb-0 text-muted">Best Success Rate</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- History Table -->
+    {% if uploads %}
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-list-ul"></i> Upload History
+                </h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover history-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>File Name</th>
+                                <th>Uploaded</th>
+                                <th>Status</th>
+                                <th>Rows</th>
+                                <th>Success</th>
+                                <th>Failed</th>
+                                <th>Success Rate</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for upload in uploads %}
+                                <tr>
+                                    <td>
+                                        <strong>{{ upload.filename }}</strong>
+                                        {% if upload.notes %}
+                                            <br>
+                                            <small class="text-muted">{{ upload.notes|truncatewords:10 }}</small>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {{ upload.uploaded_at|date:"M d, Y" }}<br>
+                                        <small class="text-muted">{{ upload.uploaded_at|date:"g:i A" }}</small>
+                                    </td>
+                                    <td>
+                                        <span class="status-badge status-{{ upload.status }}">
+                                            {{ upload.get_status_display }}
+                                        </span>
+                                    </td>
+                                    <td>{{ upload.total_rows }}</td>
+                                    <td>
+                                        {% if upload.successful_imports > 0 %}
+                                            <span class="text-success">
+                                                <i class="bi bi-check-circle"></i> {{ upload.successful_imports }}
+                                            </span>
+                                        {% else %}
+                                            <span class="text-muted">0</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if upload.failed_imports > 0 %}
+                                            <span class="text-danger">
+                                                <i class="bi bi-x-circle"></i> {{ upload.failed_imports }}
+                                            </span>
+                                        {% else %}
+                                            <span class="text-muted">0</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="progress" style="width: 80px; height: 20px;">
+                                            <div class="progress-bar bg-success" 
+                                                 role="progressbar" 
+                                                 style="width: {{ upload.success_rate }}%"
+                                                 aria-valuenow="{{ upload.success_rate }}" 
+                                                 aria-valuemin="0" 
+                                                 aria-valuemax="100">
+                                                {{ upload.success_rate|floatformat:0 }}%
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        {% if upload.status != 'pending' %}
+                                            <a href="{% url 'meal_planner:csv_result' upload.id %}" 
+                                               class="btn btn-sm btn-outline-primary">
+                                                <i class="bi bi-eye"></i> View
+                                            </a>
+                                        {% else %}
+                                            <a href="{% url 'meal_planner:csv_preview' upload.id %}" 
+                                               class="btn btn-sm btn-outline-warning">
+                                                <i class="bi bi-hourglass"></i> Process
+                                            </a>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Pagination -->
+        {% if uploads.has_other_pages %}
+            <nav aria-label="Upload history pagination" class="mt-4">
+                <ul class="pagination justify-content-center">
+                    {% if uploads.has_previous %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ uploads.previous_page_number }}">
+                                <i class="bi bi-chevron-left"></i> Previous
+                            </a>
+                        </li>
+                    {% endif %}
+                    
+                    {% for num in uploads.paginator.page_range %}
+                        {% if uploads.number == num %}
+                            <li class="page-item active">
+                                <span class="page-link">{{ num }}</span>
+                            </li>
+                        {% else %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ num }}">{{ num }}</a>
+                            </li>
+                        {% endif %}
+                    {% endfor %}
+                    
+                    {% if uploads.has_next %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ uploads.next_page_number }}">
+                                Next <i class="bi bi-chevron-right"></i>
+                            </a>
+                        </li>
+                    {% endif %}
+                </ul>
+            </nav>
+        {% endif %}
+    {% else %}
+        <!-- No uploads yet -->
+        <div class="text-center py-5">
+            <i class="bi bi-inbox text-muted" style="font-size: 4rem;"></i>
+            <h4 class="mt-3">No uploads yet</h4>
+            <p class="text-muted">Start by uploading your first CSV file with recipes.</p>
+            <a href="{% url 'meal_planner:csv_upload' %}" class="btn btn-primary">
+                <i class="bi bi-upload"></i> Upload CSV
+            </a>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

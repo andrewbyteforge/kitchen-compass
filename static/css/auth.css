@@ -1,0 +1,160 @@
+/* Authentication and Dashboard Styles for KitchenCompass */
+
+:root {
+    --primary-color: #2c5f2d;
+    --secondary-color: #97bc62;
+    --accent-color: #ff6b6b;
+    --success-color: #28a745;
+    --warning-color: #ffc107;
+    --danger-color: #dc3545;
+}
+
+/* Card Enhancements */
+.card {
+    border-radius: 0.5rem;
+    transition: transform 0.2s ease-in-out;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+}
+
+.card.border-warning {
+    border-width: 2px;
+}
+
+.card.border-success {
+    border-width: 2px;
+}
+
+/* Dashboard Stats */
+.stat-card {
+    text-align: center;
+    padding: 1.5rem;
+}
+
+.stat-card i {
+    font-size: 2.5rem;
+    color: var(--primary-color);
+    margin-bottom: 0.5rem;
+}
+
+/* Activity Timeline */
+.activity-timeline {
+    position: relative;
+    padding-left: 20px;
+}
+
+.activity-timeline .activity-item {
+    position: relative;
+    padding-bottom: 1rem;
+}
+
+/* Subscription Badges */
+.subscription-badge {
+    display: inline-block;
+    padding: 0.25em 0.5em;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: baseline;
+    border-radius: 0.25rem;
+    margin-left: 0.5rem;
+}
+
+.subscription-free {
+    background-color: #6c757d;
+    color: white;
+}
+
+.subscription-starter {
+    background-color: var(--secondary-color);
+    color: white;
+}
+
+.subscription-premium {
+    background-color: var(--warning-color);
+    color: #333;
+}
+
+/* Form Styling */
+.form-check-input:checked {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.form-control:focus {
+    border-color: var(--secondary-color);
+    box-shadow: 0 0 0 0.2rem rgba(151, 188, 98, 0.25);
+}
+
+/* Dietary Restrictions Checkboxes */
+#div_id_dietary_restrictions .form-check {
+    display: inline-block;
+    margin-right: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+
+#div_id_dietary_restrictions .form-check-label {
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+/* Permission Radio Buttons */
+#div_id_permissions .form-check {
+    padding: 1rem;
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+    margin-bottom: 0.5rem;
+    transition: background-color 0.2s;
+}
+
+#div_id_permissions .form-check:hover {
+    background-color: #f8f9fa;
+}
+
+#div_id_permissions .form-check-input:checked ~ .form-check-label {
+    font-weight: 600;
+}
+
+/* Alert Styling */
+.alert {
+    border: none;
+    border-radius: 0.5rem;
+}
+
+/* Button Enhancements */
+.btn {
+    border-radius: 0.25rem;
+    transition: all 0.2s;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Breadcrumb Styling */
+.breadcrumb {
+    background-color: transparent;
+    padding: 0;
+    margin-bottom: 1rem;
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    .stat-card {
+        margin-bottom: 1rem;
+    }
+    
+    .card-body {
+        padding: 1.25rem;
+    }
+    
+    #div_id_dietary_restrictions .form-check {
+        display: block;
+        margin-right: 0;
+    }
+}

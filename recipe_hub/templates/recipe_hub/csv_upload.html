@@ -1,0 +1,382 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Import Recipes from CSV - KitchenCompass{% endblock %}
+
+{% block extra_css %}
+<style>
+    .import-card {
+        box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+        border: 1px solid rgba(0, 0, 0, 0.125);
+    }
+    
+    .format-example {
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 0.375rem;
+        padding: 1rem;
+        font-family: monospace;
+        font-size: 0.875rem;
+        overflow-x: auto;
+    }
+    
+    .progress-section {
+        display: none;
+    }
+    
+    .file-drop-zone {
+        border: 2px dashed #dee2e6;
+        border-radius: 0.375rem;
+        padding: 2rem;
+        text-align: center;
+        transition: border-color 0.3s;
+    }
+    
+    .file-drop-zone.dragover {
+        border-color: #007bff;
+        background-color: #f0f8ff;
+    }
+    
+    .requirements-list {
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 0.375rem;
+        padding: 1rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="import-card card">
+                <div class="card-header bg-primary text-white">
+                    <h2 class="mb-0">
+                        <i class="bi bi-file-earmark-spreadsheet"></i> Import Recipes from CSV
+                    </h2>
+                </div>
+                <div class="card-body">
+                    <p class="lead">
+                        Upload a CSV file to import multiple recipes at once. 
+                        Perfect for migrating from other recipe apps or bulk adding recipes.
+                    </p>
+                    
+                    <!-- Upload Form -->
+                    <form method="post" enctype="multipart/form-data" id="importForm">
+                        {% csrf_token %}
+                        
+                        {% if form.non_field_errors %}
+                        <div class="alert alert-danger">
+                            {{ form.non_field_errors }}
+                        </div>
+                        {% endif %}
+                        
+                        <!-- File Upload Section -->
+                        <div class="mb-4">
+                            <label for="{{ form.csv_file.id_for_label }}" class="form-label">
+                                <strong>Select CSV File</strong> <span class="text-danger">*</span>
+                            </label>
+                            
+                            <div class="file-drop-zone" id="dropZone">
+                                {{ form.csv_file }}
+                                <div class="mt-2">
+                                    <i class="bi bi-cloud-upload" style="font-size: 2rem; color: #6c757d;"></i>
+                                    <p class="mb-0">Click to select a file or drag and drop</p>
+                                    <small class="text-muted">Maximum file size: 5MB</small>
+                                </div>
+                            </div>
+                            
+                            {% if form.csv_file.errors %}
+                            <div class="text-danger mt-2">
+                                <i class="bi bi-exclamation-circle"></i> {{ form.csv_file.errors.0 }}
+                            </div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Import Options -->
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <div class="form-check mb-3">
+                                    {{ form.skip_duplicates }}
+                                    <label class="form-check-label" for="{{ form.skip_duplicates.id_for_label }}">
+                                        {{ form.skip_duplicates.label }}
+                                    </label>
+                                    <div class="form-text">{{ form.skip_duplicates.help_text }}</div>
+                                </div>
+                                
+                                <div class="form-check mb-3">
+                                    {{ form.make_public }}
+                                    <label class="form-check-label" for="{{ form.make_public.id_for_label }}">
+                                        {{ form.make_public.label }}
+                                    </label>
+                                    <div class="form-text">{{ form.make_public.help_text }}</div>
+                                </div>
+                            </div>
+                            
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="{{ form.default_category.id_for_label }}" class="form-label">
+                                        Default Category
+                                    </label>
+                                    {{ form.default_category }}
+                                    <div class="form-text">{{ form.default_category.help_text }}</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Progress Section -->
+                        <div class="progress-section mb-4" id="progressSection">
+                            <div class="alert alert-info">
+                                <div class="d-flex align-items-center">
+                                    <div class="spinner-border spinner-border-sm me-3" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                    <div>
+                                        <strong>Processing your CSV file...</strong>
+                                        <div class="small">This may take a few moments for large files.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Form Actions -->
+                        <div class="d-flex justify-content-between">
+                            <a href="{% url 'recipe_hub:user_recipes' %}" class="btn btn-secondary">
+                                <i class="bi bi-arrow-left"></i> Back to My Recipes
+                            </a>
+                            <button type="submit" class="btn btn-primary" id="submitBtn">
+                                <i class="bi bi-upload"></i> Import Recipes
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
+            <!-- CSV Format Guide -->
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h4 class="mb-0">
+                        <i class="bi bi-info-circle"></i> CSV Format Guide
+                    </h4>
+                </div>
+                <div class="card-body">
+                    <div class="requirements-list mb-4">
+                        <h5>Required Columns:</h5>
+                        <ul class="mb-0">
+                            <li><strong>title</strong> - Recipe name (minimum 3 characters)</li>
+                            <li><strong>description</strong> - Brief recipe description</li>
+                            <li><strong>prep_time</strong> - Preparation time in minutes</li>
+                            <li><strong>cook_time</strong> - Cooking time in minutes</li>
+                            <li><strong>servings</strong> - Number of servings (1-50)</li>
+                        </ul>
+                    </div>
+                    
+                    <h5>Optional Columns:</h5>
+                    <ul class="mb-3">
+                        <li><strong>difficulty</strong> - easy, medium, or hard (default: medium)</li>
+                        <li><strong>categories</strong> - Comma-separated category names</li>
+                        <li><strong>ingredients</strong> - Semicolon-separated ingredients (format: "quantity unit name")</li>
+                        <li><strong>instructions</strong> - Semicolon-separated instruction steps</li>
+                        <li><strong>vegetarian</strong> - true/false or 1/0</li>
+                        <li><strong>vegan</strong> - true/false or 1/0</li>
+                        <li><strong>gluten_free</strong> - true/false or 1/0</li>
+                        <li><strong>dairy_free</strong> - true/false or 1/0</li>
+                        <li><strong>nut_free</strong> - true/false or 1/0</li>
+                    </ul>
+                    
+                    <h5>Example CSV Format:</h5>
+                    <div class="format-example">
+title,description,prep_time,cook_time,servings,difficulty,categories,ingredients,instructions,vegetarian
+"Chocolate Chip Cookies","Classic homemade cookies",15,12,24,"easy","Desserts,Baking","2 cups flour;1 cup butter;1/2 cup sugar","Preheat oven to 375F;Mix ingredients;Bake for 12 minutes",false
+"Vegetable Stir Fry","Quick and healthy dinner",10,8,4,"easy","Dinner,Vegetarian","2 cups mixed vegetables;2 tbsp oil;1 tbsp soy sauce","Heat oil in pan;Add vegetables;Stir fry for 8 minutes",true
+                    </div>
+                    
+                    <div class="mt-3">
+                        <h6>Tips for Best Results:</h6>
+                        <ul class="small">
+                            <li>Use UTF-8 encoding for your CSV file</li>
+                            <li>Enclose text with commas or quotes in double quotes</li>
+                            <li>For ingredients, use format: "2 cups flour" or "1 large onion, diced"</li>
+                            <li>Separate multiple ingredients with semicolons (;)</li>
+                            <li>Separate instruction steps with semicolons (;)</li>
+                            <li>Category names must match existing categories exactly</li>
+                            <li>Test with a small file first to verify the format</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Download Template -->
+            <div class="card mt-4">
+                <div class="card-body text-center">
+                    <h5>Need a Template?</h5>
+                    <p class="text-muted">Download a sample CSV file to get started quickly.</p>
+                    <button class="btn btn-outline-primary" onclick="downloadTemplate()">
+                        <i class="bi bi-download"></i> Download CSV Template
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('importForm');
+    const fileInput = document.getElementById('{{ form.csv_file.id_for_label }}');
+    const dropZone = document.getElementById('dropZone');
+    const submitBtn = document.getElementById('submitBtn');
+    const progressSection = document.getElementById('progressSection');
+    
+    // File drag and drop functionality
+    dropZone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+    
+    dropZone.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+    });
+    
+    dropZone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            fileInput.files = files;
+            updateFileDisplay(files[0]);
+        }
+    });
+    
+    // File input change handler
+    fileInput.addEventListener('change', function(e) {
+        if (e.target.files.length > 0) {
+            updateFileDisplay(e.target.files[0]);
+        }
+    });
+    
+    // Update file display
+    function updateFileDisplay(file) {
+        const dropZoneContent = dropZone.querySelector('div');
+        dropZoneContent.innerHTML = `
+            <i class="bi bi-file-earmark-spreadsheet text-success" style="font-size: 2rem;"></i>
+            <p class="mb-0"><strong>${file.name}</strong></p>
+            <small class="text-muted">${formatFileSize(file.size)} • Click to change</small>
+        `;
+    }
+    
+    // Format file size
+    function formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+    
+    // Form submission handler
+    form.addEventListener('submit', function(e) {
+        // Show progress
+        progressSection.style.display = 'block';
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing...';
+        
+        // Scroll to progress section
+        progressSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    
+    // Validate file before submission
+    form.addEventListener('submit', function(e) {
+        if (!fileInput.files.length) {
+            e.preventDefault();
+            alert('Please select a CSV file to upload.');
+            return false;
+        }
+        
+        const file = fileInput.files[0];
+        
+        // Check file extension
+        if (!file.name.toLowerCase().endsWith('.csv')) {
+            e.preventDefault();
+            alert('Please select a CSV file.');
+            return false;
+        }
+        
+        // Check file size (5MB limit)
+        if (file.size > 5 * 1024 * 1024) {
+            e.preventDefault();
+            alert('File size cannot exceed 5MB.');
+            return false;
+        }
+    });
+});
+
+// Download CSV template
+function downloadTemplate() {
+    const csvContent = `title,description,prep_time,cook_time,servings,difficulty,categories,ingredients,instructions,vegetarian,vegan,gluten_free
+"Chocolate Chip Cookies","Classic homemade chocolate chip cookies",15,12,24,"easy","Desserts,Baking","2 cups all-purpose flour;1 cup butter, softened;3/4 cup brown sugar;1/2 cup white sugar;2 large eggs;2 cups chocolate chips","Preheat oven to 375°F;Cream butter and sugars;Add eggs one at a time;Mix in flour gradually;Fold in chocolate chips;Drop spoonfuls on baking sheet;Bake for 10-12 minutes",false,false,false
+"Vegetable Stir Fry","Quick and healthy vegetable stir fry",10,8,4,"easy","Dinner,Vegetarian,Quick & Easy","2 cups mixed vegetables;2 tbsp vegetable oil;2 cloves garlic, minced;1 tbsp soy sauce;1 tsp sesame oil","Heat oil in large pan or wok;Add garlic and cook for 30 seconds;Add vegetables and stir fry for 5-6 minutes;Add soy sauce and sesame oil;Stir and cook for 2 more minutes",true,true,true
+"Classic Beef Tacos","Traditional beef tacos with homemade seasoning",20,15,6,"medium","Dinner,Mexican","1 lb ground beef;1 packet taco seasoning;8 taco shells;1 cup shredded lettuce;1 cup diced tomatoes;1 cup shredded cheese","Brown ground beef in large skillet;Add taco seasoning and water according to package;Simmer for 10 minutes;Warm taco shells;Fill shells with beef mixture and toppings",false,false,true`;
+    
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'recipe_template.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}
+
+// Show toast notifications for messages
+{% if messages %}
+document.addEventListener('DOMContentLoaded', function() {
+    {% for message in messages %}
+    showToast('{{ message|escapejs }}', '{{ message.tags }}');
+    {% endfor %}
+});
+{% endif %}
+
+function showToast(message, type) {
+    // Map Django message tags to Bootstrap classes
+    const typeMap = {
+        'error': 'danger',
+        'warning': 'warning',
+        'success': 'success',
+        'info': 'info'
+    };
+    
+    const toastType = typeMap[type] || 'info';
+    
+    const toast = document.createElement('div');
+    toast.className = `toast align-items-center text-white bg-${toastType} border-0`;
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">${message}</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+    
+    let container = document.getElementById('toastContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        container.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+        document.body.appendChild(container);
+    }
+    
+    container.appendChild(toast);
+    const bsToast = new bootstrap.Toast(toast);
+    bsToast.show();
+    
+    toast.addEventListener('hidden.bs.toast', () => toast.remove());
+}
+</script>
+{% endblock %}

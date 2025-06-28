@@ -1,0 +1,157 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Apply Template - KitchenCompass{% endblock %}
+
+{% block extra_css %}
+<style>
+    .form-container {
+        max-width: 600px;
+        margin: 0 auto;
+    }
+    .card {
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .form-control:focus {
+        border-color: #28a745;
+        box-shadow: 0 0 0 0.2rem rgba(40, 167, 69, 0.25);
+    }
+    .template-preview {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="form-container">
+    <div class="card">
+        <div class="card-header bg-success text-white">
+            <h3 class="card-title mb-0">
+                <i class="bi bi-play-circle"></i> Apply Meal Plan Template
+            </h3>
+        </div>
+        <div class="card-body">
+            <form method="post" novalidate>
+                {% csrf_token %}
+                
+                <!-- Template Selection -->
+                <div class="mb-3">
+                    <label for="{{ form.template.id_for_label }}" class="form-label">
+                        <i class="bi bi-files"></i> Select Template *
+                    </label>
+                    {{ form.template }}
+                    {% if form.template.errors %}
+                        <div class="invalid-feedback d-block">
+                            {{ form.template.errors.0 }}
+                        </div>
+                    {% endif %}
+                    <div class="form-text">Choose which template to use for your new meal plan</div>
+                </div>
+
+                <!-- Meal Plan Name -->
+                <div class="mb-3">
+                    <label for="{{ form.name.id_for_label }}" class="form-label">
+                        <i class="bi bi-pencil"></i> Meal Plan Name
+                    </label>
+                    {{ form.name }}
+                    {% if form.name.errors %}
+                        <div class="invalid-feedback d-block">
+                            {{ form.name.errors.0 }}
+                        </div>
+                    {% endif %}
+                    <div class="form-text">Leave blank to use the template name with today's date</div>
+                </div>
+
+                <!-- Start Date -->
+                <div class="mb-3">
+                    <label for="{{ form.start_date.id_for_label }}" class="form-label">
+                        <i class="bi bi-calendar-event"></i> Start Date *
+                    </label>
+                    {{ form.start_date }}
+                    {% if form.start_date.errors %}
+                        <div class="invalid-feedback d-block">
+                            {{ form.start_date.errors.0 }}
+                        </div>
+                    {% endif %}
+                    <div class="form-text">When should your meal plan start?</div>
+                </div>
+
+                <!-- Form Buttons -->
+                <div class="d-flex justify-content-between">
+                    <a href="{% url 'meal_planner:template_list' %}" class="btn btn-secondary">
+                        <i class="bi bi-arrow-left"></i> Back to Templates
+                    </a>
+                    <button type="submit" class="btn btn-success">
+                        <i class="bi bi-play-circle"></i> Create Meal Plan
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Help Section -->
+    <div class="card mt-4">
+        <div class="card-body">
+            <h5 class="card-title">
+                <i class="bi bi-info-circle text-info"></i> How It Works
+            </h5>
+            <ol class="mb-0">
+                <li>Select a template that contains the meal structure you want</li>
+                <li>Choose a start date for your new meal plan</li>
+                <li>Optionally give your meal plan a custom name</li>
+                <li>The template will be applied starting from your chosen date</li>
+                <li>You can then customize individual meals as needed</li>
+            </ol>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Add Bootstrap classes to form fields
+    const formControls = document.querySelectorAll('input[type="text"], input[type="date"], select');
+    formControls.forEach(function(control) {
+        control.classList.add('form-control');
+    });
+    
+    // Template preview functionality
+    const templateSelect = document.querySelector('select[name="template"]');
+    const nameInput = document.querySelector('input[name="name"]');
+    
+    if (templateSelect && nameInput) {
+        templateSelect.addEventListener('change', function() {
+            const selectedOption = this.options[this.selectedIndex];
+            if (selectedOption.value && !nameInput.value.trim()) {
+                // Auto-fill name with template name if name field is empty
+                const templateName = selectedOption.text;
+                const startDate = document.querySelector('input[name="start_date"]').value;
+                if (startDate) {
+                    nameInput.value = `${templateName} - ${startDate}`;
+                }
+            }
+        });
+        
+        // Update name when start date changes
+        document.querySelector('input[name="start_date"]').addEventListener('change', function() {
+            const selectedOption = templateSelect.options[templateSelect.selectedIndex];
+            if (selectedOption.value && !nameInput.value.trim()) {
+                const templateName = selectedOption.text;
+                nameInput.value = `${templateName} - ${this.value}`;
+            }
+        });
+    }
+    
+    // Set minimum date to today
+    const startDateInput = document.querySelector('input[name="start_date"]');
+    if (startDateInput) {
+        const today = new Date().toISOString().split('T')[0];
+        startDateInput.min = today;
+    }
+});
+</script>
+{% endblock %}

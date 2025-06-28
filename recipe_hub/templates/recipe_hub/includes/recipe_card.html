@@ -1,0 +1,80 @@
+{% load recipe_tags %}
+
+<!-- Recipe Card Component -->
+<div class="col">
+    <div class="card h-100 shadow-sm recipe-card">
+        {% if recipe.image %}
+        <img src="{{ recipe.image.url }}" class="card-img-top" alt="{{ recipe.title }}" style="height: 200px; object-fit: cover;">
+        {% else %}
+        <div class="card-img-top bg-light d-flex align-items-center justify-content-center" style="height: 200px;">
+            <i class="bi bi-image text-muted" style="font-size: 3rem;"></i>
+        </div>
+        {% endif %}
+       
+        <div class="card-body d-flex flex-column">
+            <h5 class="card-title">
+                <a href="{% url 'recipe_hub:recipe_detail' recipe.slug %}" class="text-decoration-none text-dark">
+                    {{ recipe.title|truncatechars:50 }}
+                </a>
+            </h5>
+           
+            <p class="card-text text-muted small">
+                {{ recipe.description|truncatechars:100 }}
+            </p>
+           
+            <!-- Recipe Meta -->
+            <div class="recipe-meta mt-auto">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="badge bg-{{ recipe.difficulty|difficulty_badge_class }}">
+                        {{ recipe.get_difficulty_display }}
+                    </span>
+                    <span class="text-muted small">
+                        <i class="bi bi-clock"></i> {{ recipe.total_time|time_format }}
+                    </span>
+                </div>
+               
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="rating">
+                        <span class="text-warning">{{ recipe.average_rating|rating_stars }}</span>
+                        <span class="text-muted small">({{ recipe.rating_count }})</span>
+                    </div>
+                    <span class="text-muted small">
+                        <i class="bi bi-people"></i> {{ recipe.servings }} servings
+                    </span>
+                </div>
+               
+                <!-- Categories -->
+                {% if recipe.categories.all %}
+                <div class="categories mb-2">
+                    {% for category in recipe.categories.all|slice:":3" %}
+                    <a href="{% url 'recipe_hub:category_recipes' category.slug %}"
+                       class="badge bg-secondary text-decoration-none me-1">
+                        {{ category.name }}
+                    </a>
+                    {% endfor %}
+                    {% if recipe.categories.count > 3 %}
+                    <span class="text-muted small">+{{ recipe.categories.count|add:"-3" }} more</span>
+                    {% endif %}
+                </div>
+                {% endif %}
+               
+                <!-- Author and Actions -->
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">
+                        By <a href="{% url 'recipe_hub:recipe_list' %}?author={{ recipe.author.username }}"
+                              class="text-decoration-none">{{ recipe.author.username }}</a>
+                    </small>
+                   
+                    {% if user.is_authenticated %}
+                    <button class="btn btn-sm favorite-btn {% if is_favorited %}btn-danger{% else %}btn-outline-danger{% endif %}"
+                            data-recipe-id="{{ recipe.pk }}"
+                            data-url="{% url 'recipe_hub:toggle_favorite' recipe.pk %}"
+                            title="{% if is_favorited %}Remove from favorites{% else %}Add to favorites{% endif %}">
+                        <i class="bi {% if is_favorited %}bi-heart-fill{% else %}bi-heart{% endif %}"></i>
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

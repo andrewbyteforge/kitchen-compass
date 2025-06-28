@@ -1,0 +1,30 @@
+Your Subscription Has Been Changed
+
+Hi {{ user.first_name }},
+
+As scheduled, your KitchenCompass subscription has been changed from {{ old_tier.name }} to {{ new_tier.name }}.
+
+YOUR NEW PLAN: {{ new_tier.name }}
+Monthly Price: ${{ new_tier.price }}
+
+Features:
+{% for feature in new_tier.features %}- {{ feature }}
+{% endfor %}
+
+IMPORTANT: Some features from your previous plan may no longer be available. Please review your new plan limits:
+
+- Recipes: {% if new_tier.max_recipes == -1 %}Unlimited{% else %}{{ new_tier.max_recipes }}{% endif %}
+- Meal Plans: {% if new_tier.max_menus == -1 %}Unlimited{% else %}{{ new_tier.max_menus }}{% endif %}
+- Menu Sharing: {% if new_tier.tier_type == 'FREE' %}Not available{% elif new_tier.max_shared_menus == 0 %}Unlimited{% else %}Up to {{ new_tier.max_shared_menus }}{% endif %}
+
+If you'd like to upgrade back to a higher tier, you can do so at any time from your account settings:
+{{ settings.SITE_URL }}/auth/subscription/
+
+If you have any questions or concerns, please don't hesitate to contact our support team.
+
+Best regards,
+The KitchenCompass Team
+
+--
+This is an automated message from KitchenCompass. Please do not reply to this email.
+© {% now "Y" %} KitchenCompass. All rights reserved.

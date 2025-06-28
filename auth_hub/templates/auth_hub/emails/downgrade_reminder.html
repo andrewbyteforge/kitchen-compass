@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subscription Change Reminder</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            background-color: #fff3cd;
+            padding: 30px;
+            text-align: center;
+            border-radius: 10px 10px 0 0;
+            border: 1px solid #ffecb5;
+        }
+        .content {
+            background-color: #ffffff;
+            padding: 30px;
+            border: 1px solid #dee2e6;
+            border-radius: 0 0 10px 10px;
+        }
+        .urgent-notice {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            font-weight: bold;
+        }
+        .button-primary {
+            display: inline-block;
+            padding: 12px 30px;
+            background-color: #28a745;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin: 10px 5px;
+        }
+        .button-secondary {
+            display: inline-block;
+            padding: 12px 30px;
+            background-color: #6c757d;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin: 10px 5px;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            color: #6c757d;
+            font-size: 14px;
+        }
+        .change-details {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .countdown {
+            font-size: 24px;
+            color: #dc3545;
+            font-weight: bold;
+            text-align: center;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>⏰ Subscription Change Reminder</h1>
+    </div>
+    
+    <div class="content">
+        <p>Hi {{ user.first_name }},</p>
+        
+        {% if days_until_downgrade == 1 %}
+        <div class="urgent-notice">
+            ⚠️ URGENT: Your subscription downgrade happens TOMORROW!
+        </div>
+        <p>This is your final reminder that your KitchenCompass subscription will change <strong>tomorrow</strong>.</p>
+        {% elif days_until_downgrade == 3 %}
+        <p>This is a reminder that your KitchenCompass subscription will change in <strong>3 days</strong>.</p>
+        {% else %}
+        <p>This is a reminder that your KitchenCompass subscription will change in <strong>{{ days_until_downgrade }} days</strong>.</p>
+        {% endif %}
+        
+        <div class="countdown">
+            {% if days_until_downgrade == 1 %}
+                1 DAY LEFT
+            {% else %}
+                {{ days_until_downgrade }} DAYS LEFT
+            {% endif %}
+        </div>
+        
+        <div class="change-details">
+            <h3>Scheduled Change:</h3>
+            <p><strong>From:</strong> {{ current_tier.name }} (${{ current_tier.price }}/month)</p>
+            <p><strong>To:</strong> {{ new_tier.name }} (${{ new_tier.price }}/month)</p>
+            <p><strong>Change Date:</strong> {{ downgrade_date|date:"F d, Y" }}</p>
+        </div>
+        
+        <h3>What This Means for You:</h3>
+        <ul>
+            {% if current_tier.max_recipes == -1 and new_tier.max_recipes != -1 %}
+            <li>Your recipe limit will change from unlimited to {{ new_tier.max_recipes }} recipes</li>
+            {% endif %}
+            {% if current_tier.max_menus == -1 and new_tier.max_menus != -1 %}
+            <li>Your meal plan limit will change from unlimited to {{ new_tier.max_menus }} meal plans</li>
+            {% endif %}
+            {% if current_tier.tier_type != 'FREE' and new_tier.tier_type == 'FREE' %}
+            <li>You will lose access to menu sharing features</li>
+            {% endif %}
+            <li>Premium features will no longer be available</li>
+        </ul>
+        
+        {% if days_until_downgrade <= 3 %}
+        <p><strong>🎯 Still want to keep your {{ current_tier.name }} benefits?</strong> You can cancel this downgrade right now and continue enjoying all your current features.</p>
+        {% endif %}
+        
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="{{ cancel_url }}" class="button-primary">Keep My Current Plan</a>
+            <a href="{{ cancel_url }}" class="button-secondary">View Details</a>
+        </div>
+        
+        <p>If you take no action, your subscription will automatically change to {{ new_tier.name }} on {{ downgrade_date|date:"F d, Y" }}.</p>
+        
+        <p>Questions? We're here to help! Simply reply to this email or visit our support center.</p>
+        
+        <p>Best regards,<br>The KitchenCompass Team</p>
+    </div>
+    
+    <div class="footer">
+        <p>You're receiving this email because you have a pending subscription change scheduled.</p>
+        <p>&copy; {% now "Y" %} KitchenCompass. All rights reserved.</p>
+    </div>
+</body>
+</html>

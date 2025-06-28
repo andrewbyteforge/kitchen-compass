@@ -1,0 +1,369 @@
+{% extends 'base.html' %}
+
+{% block title %}Dashboard - KitchenCompass{% endblock %}
+
+{% block content %}
+<!-- Welcome Header with Outlook Button -->
+<div class="row gx-4 mb-4">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center">
+            <h1 class="mb-0">Welcome back, {{ user.first_name }}!</h1>
+            
+            <!-- Outlook Connection Button -->
+            <div>
+                {% if user.microsoft_token %}
+                    <div class="d-flex align-items-center">
+                        {% if user.microsoft_token.calendar_sync_enabled %}
+                            <span class="text-success me-2">
+                                <i class="bi bi-check-circle"></i> Outlook synced
+                            </span>
+                        {% endif %}
+                        <a href="{% url 'meal_planner:calendar_sync_settings' %}" 
+                           class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-calendar-check"></i> Outlook Settings
+                        </a>
+                    </div>
+                {% else %}
+                    <a href="{% url 'auth_hub:microsoft_login' %}" 
+                       class="btn btn-sm btn-primary">
+                        <i class="bi bi-link-45deg"></i> Connect Outlook
+                    </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Subscription Status -->
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card {% if profile.subscription_tier.tier_type == 'PREMIUM' %}border-warning{% elif profile.subscription_tier.tier_type == 'STARTER' %}border-success{% endif %}">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h5 class="card-title mb-1">
+                            Current Plan: {{ profile.subscription_tier.name }}
+                            {% if profile.subscription_tier.tier_type == 'PREMIUM' %}
+                                <span class="badge bg-warning text-dark">Premium</span>
+                            {% elif profile.subscription_tier.tier_type == 'STARTER' %}
+                                <span class="badge bg-success">Pro</span>
+                            {% else %}
+                                <span class="badge bg-secondary">Free</span>
+                            {% endif %}
+                        </h5>
+                        <p class="card-text text-muted mb-0">
+                            {% if profile.subscription_tier.tier_type != 'FREE' %}
+                                Status: <strong class="text-success">{{ profile.subscription_status|title }}</strong>
+                                {% if profile.subscription_end_date %}
+                                    | Renews: {{ profile.subscription_end_date|date:"M d, Y" }}
+                                {% endif %}
+                            {% else %}
+                                Upgrade to unlock more features and share your menus!
+                            {% endif %}
+                        </p>
+                    </div>
+                    <div class="col-md-4 text-md-end">
+                        {% if profile.subscription_tier.tier_type == 'FREE' %}
+                            <a href="{% url 'auth_hub:subscription_upgrade' %}" class="btn btn-primary">
+                                <i class="bi bi-rocket-takeoff"></i> Upgrade Plan
+                            </a>
+                        {% else %}
+                            <a href="{% url 'auth_hub:subscription_detail' %}" class="btn btn-outline-primary">
+                                Manage Subscription
+                            </a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% if user.is_authenticated and user.is_staff %}
+    <li class="nav-item dropdown">
+        <a class="nav-link dropdown-toggle" href="#" id="adminDropdown" role="button" data-bs-toggle="dropdown">
+            <i class="bi bi-shield-lock"></i> Admin
+        </a>
+        <ul class="dropdown-menu">
+            <li>
+                <a class="dropdown-item" href="{% url 'meal_planner:csv_upload' %}">
+                    <i class="bi bi-file-earmark-arrow-up"></i> Import Recipes
+                </a>
+            </li>
+            <li>
+                <a class="dropdown-item" href="{% url 'meal_planner:csv_history' %}">
+                    <i class="bi bi-clock-history"></i> Upload History
+                </a>
+            </li>
+        </ul>
+    </li>
+{% endif %}
+
+<!-- Stats Cards -->
+<div class="row mb-4">
+    <div class="col-md-3 mb-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <i class="bi bi-calendar-check" style="font-size: 2.5rem; color: var(--primary-color);"></i>
+                <h3 class="mt-2">{{ stats.menus_created }}</h3>
+                <p class="text-muted mb-0">Menus Created</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Planning Stats Card (replaced Outlook widget) -->
+    <div class="col-md-3 mb-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <i class="bi bi-calendar-week" style="font-size: 2.5rem; color: var(--primary-color);"></i>
+                <h3 class="mt-2">{{ stats.active_meal_plans|default:"0" }}</h3>
+                <p class="text-muted mb-0">Active Meal Plans</p>
+                {% if user.microsoft_token and user.microsoft_token.calendar_sync_enabled %}
+                    <small class="text-success">
+                        <i class="bi bi-check-circle"></i> Synced
+                    </small>
+                {% else %}
+                    <small class="text-muted">Not synced</small>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Recipe Statistics Card -->
+    <div class="col-md-3 mb-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <i class="bi bi-book" style="font-size: 2.5rem; color: var(--primary-color);"></i>
+                <h3 class="mt-2">{{ stats.recipes_saved|default:"0" }}</h3>
+                <p class="text-muted mb-0">Recipes Created</p>
+                {% if user.profile.subscription_tier.max_recipes != -1 %}
+                <small class="text-muted">
+                    Limit: {{ user.profile.subscription_tier.max_recipes }}
+                </small>
+                {% else %}
+                <small class="text-success">Unlimited</small>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <i class="bi bi-share" style="font-size: 2.5rem; color: var(--primary-color);"></i>
+                <h3 class="mt-2">{{ stats.active_shares }}</h3>
+                <p class="text-muted mb-0">Active Shares</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row gx-4">
+    <!-- Quick Actions -->
+    <div class="col-md-4 mb-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-lightning"></i> Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="#" class="btn btn-outline-primary">
+                        <i class="bi bi-calendar-plus"></i> Create New Menu
+                    </a>
+                    {% comment %}
+                    <!-- Recipe actions - uncomment when recipe_hub is properly set up -->
+                    <a href="{% url 'recipe_hub:recipe_create' %}" class="btn btn-outline-success">
+                        <i class="bi bi-plus-circle"></i> Create New Recipe
+                    </a>
+                    <a href="{% url 'recipe_hub:recipe_list' %}" class="btn btn-outline-primary">
+                        <i class="bi bi-search"></i> Browse Recipes
+                    </a>
+                    <a href="{% url 'recipe_hub:user_recipes' %}" class="btn btn-outline-primary">
+                        <i class="bi bi-journal-text"></i> My Recipes
+                    </a>
+                    {% endcomment %}
+                    {% if can_share %}
+                        <a href="{% url 'auth_hub:menu_share_create' %}" class="btn btn-outline-primary">
+                            <i class="bi bi-share"></i> Share Menu
+                            {% if remaining_shares != 'inf' %}
+                                <span class="badge bg-secondary">{{ remaining_shares }} left</span>
+                            {% endif %}
+                        </a>
+                    {% else %}
+                        <button class="btn btn-outline-secondary" disabled>
+                            <i class="bi bi-share"></i> Share Menu
+                            <span class="badge bg-secondary">Upgrade to share</span>
+                        </button>
+                    {% endif %}
+                    <a href="{% url 'auth_hub:profile_update' %}" class="btn btn-outline-primary">
+                        <i class="bi bi-person-gear"></i> Update Profile
+                    </a>
+                    <hr class="my-2">
+                    <form method="post" action="{% url 'auth_hub:logout' %}" style="display: inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-danger w-100">
+                            <i class="bi bi-box-arrow-right"></i> Logout
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Activity -->
+    <div class="col-md-8 mb-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-clock-history"></i> Recent Activity</h5>
+            </div>
+            <div class="card-body">
+                {% if recent_activities %}
+                    <div class="activity-timeline">
+                        {% for activity in recent_activities %}
+                            <div class="d-flex mb-3">
+                                <div class="flex-shrink-0">
+                                    {% if activity.action == 'login' %}
+                                        <i class="bi bi-box-arrow-in-right text-primary"></i>
+                                    {% elif activity.action == 'menu_shared' %}
+                                        <i class="bi bi-share text-success"></i>
+                                    {% elif activity.action == 'profile_updated' %}
+                                        <i class="bi bi-person-check text-info"></i>
+                                    {% elif activity.action == 'create_recipe' %}
+                                        <i class="bi bi-plus-circle text-success"></i>
+                                    {% elif activity.action == 'update_recipe' %}
+                                        <i class="bi bi-pencil text-info"></i>
+                                    {% elif activity.action == 'rate_recipe' %}
+                                        <i class="bi bi-star-fill text-warning"></i>
+                                    {% elif activity.action == 'microsoft_auth_complete' %}
+                                        <i class="bi bi-calendar-check text-success"></i>
+                                    {% elif activity.action == 'outlook_sync' %}
+                                        <i class="bi bi-arrow-repeat text-info"></i>
+                                    {% else %}
+                                        <i class="bi bi-circle text-secondary"></i>
+                                    {% endif %}
+                                </div>
+                                <div class="flex-grow-1 ms-3">
+                                    <p class="mb-0">{{ activity.get_action_display|default:activity.details }}</p>
+                                    <small class="text-muted">{{ activity.created_at|timesince }} ago</small>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted text-center mb-0">No recent activity</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Shared Menus -->
+{% if shared_by_me or shared_with_me %}
+<div class="row">
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-send"></i> Menus I've Shared
+                    <a href="{% url 'auth_hub:menu_share_list' 'sent' %}" class="btn btn-sm btn-outline-primary float-end">View All</a>
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if shared_by_me %}
+                    <div class="list-group list-group-flush">
+                        {% for share in shared_by_me %}
+                            <div class="list-group-item px-0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong>{{ share.shared_with_email }}</strong><br>
+                                        <small class="text-muted">
+                                            Status: 
+                                            {% if share.accepted_at %}
+                                                <span class="text-success">Accepted</span>
+                                            {% else %}
+                                                <span class="text-warning">Pending</span>
+                                            {% endif %}
+                                            | {{ share.created_at|date:"M d" }}
+                                        </small>
+                                    </div>
+                                    <form method="post" action="{% url 'auth_hub:menu_share_revoke' share.pk %}" class="d-inline">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" 
+                                                onclick="return confirm('Are you sure you want to revoke this share?')">
+                                            Revoke
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted mb-0">You haven't shared any menus yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-inbox"></i> Menus Shared With Me
+                    <a href="{% url 'auth_hub:menu_share_list' 'received' %}" class="btn btn-sm btn-outline-primary float-end">View All</a>
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if shared_with_me %}
+                    <div class="list-group list-group-flush">
+                        {% for share in shared_with_me %}
+                            <div class="list-group-item px-0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong>{{ share.owner.get_full_name }}</strong><br>
+                                        <small class="text-muted">
+                                            Access: 
+                                            {% if share.can_edit %}Edit{% else %}View{% endif %}
+                                            | Accepted {{ share.accepted_at|date:"M d" }}
+                                        </small>
+                                    </div>
+                                    <a href="#" class="btn btn-sm btn-outline-primary">View Menu</a>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted mb-0">No menus have been shared with you.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<style>
+.activity-timeline {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+/* Outlook button styling */
+.btn-sm.btn-primary i,
+.btn-sm.btn-outline-primary i {
+    margin-right: 0.25rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 576px) {
+    /* Stack header elements on mobile */
+    .row.gx-4.mb-4 .d-flex {
+        flex-direction: column;
+        align-items: start !important;
+        gap: 1rem;
+    }
+    
+    /* Full width button on mobile */
+    .btn-sm {
+        width: 100%;
+    }
+}
+</style>
+{% endblock %}

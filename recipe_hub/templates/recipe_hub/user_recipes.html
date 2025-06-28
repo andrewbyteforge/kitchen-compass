@@ -1,0 +1,266 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load recipe_tags %}
+
+{% block title %}My Recipes - KitchenCompass{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-lg-8">
+            <h2><i class="bi bi-journal-text"></i> My Recipes</h2>
+            <p class="text-muted">Manage your recipe collection</p>
+        </div>
+        <div class="col-lg-4 text-lg-end">
+            {% if can_add_recipe %}
+            <div class="btn-group" role="group">
+                <a href="{% url 'recipe_hub:recipe_create' %}" class="btn btn-success">
+                    <i class="bi bi-plus-circle"></i> Create Recipe
+                </a>
+                <button type="button" class="btn btn-success dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown">
+                    <span class="visually-hidden">Toggle Dropdown</span>
+                </button>
+                <ul class="dropdown-menu">
+                    <li>
+                        <a class="dropdown-item" href="{% url 'recipe_hub:recipe_create' %}">
+                            <i class="bi bi-plus-circle"></i> Create New Recipe
+                        </a>
+                    </li>
+                    <li>
+                        <a class="dropdown-item" href="{% url 'recipe_hub:recipe_import_csv' %}">
+                            <i class="bi bi-file-earmark-spreadsheet"></i> Import from CSV
+                        </a>
+                    </li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li>
+                        <a class="dropdown-item" href="{% url 'recipe_hub:recipe_import' %}">
+                            <i class="bi bi-link-45deg"></i> Import from URL
+                        </a>
+                    </li>
+                </ul>
+            </div>
+            {% else %}
+            <button class="btn btn-secondary" disabled>
+                <i class="bi bi-exclamation-circle"></i> Recipe Limit Reached
+            </button>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Recipe Stats -->
+    <div class="row mb-4">
+        <div class="col-md-3 col-6 mb-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h3 class="mb-0">{{ recipe_count }}</h3>
+                    <small class="text-muted">Total Recipes</small>
+                    {% if recipe_limit != -1 %}
+                    <div class="progress mt-2" style="height: 5px;">
+                        <div class="progress-bar {% if recipe_count >= recipe_limit %}bg-danger{% else %}bg-success{% endif %}" 
+                             role="progressbar" 
+                             style="width: {% recipe_limit_percentage user %}%">
+                        </div>
+                    </div>
+                    <small class="text-muted">{{ recipe_count }} / {{ recipe_limit }}</small>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-6 mb-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h3 class="mb-0">{{ total_ratings }}</h3>
+                    <small class="text-muted">Total Reviews</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-6 mb-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h3 class="mb-0">{{ total_favorites }}</h3>
+                    <small class="text-muted">Times Favorited</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-6 mb-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h3 class="mb-0">{{ user.userprofile.subscription_tier.name }}</h3>
+                    <small class="text-muted">Subscription</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Actions for Empty State -->
+    {% if not recipes and can_add_recipe %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card border-primary">
+                <div class="card-body text-center">
+                    <h5 class="card-title">
+                        <i class="bi bi-lightbulb text-primary"></i> Get Started with Your Recipe Collection
+                    </h5>
+                    <p class="card-text">Choose how you'd like to add your first recipes:</p>
+                    <div class="d-flex flex-wrap justify-content-center gap-3">
+                        <a href="{% url 'recipe_hub:recipe_create' %}" class="btn btn-primary">
+                            <i class="bi bi-plus-circle"></i> Create from Scratch
+                        </a>
+                        <a href="{% url 'recipe_hub:recipe_import_csv' %}" class="btn btn-outline-primary">
+                            <i class="bi bi-file-earmark-spreadsheet"></i> Import CSV File
+                        </a>
+                        <a href="{% url 'recipe_hub:recipe_import' %}" class="btn btn-outline-secondary">
+                            <i class="bi bi-link-45deg"></i> Import from URL
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Recipe List -->
+    {% if recipes %}
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>Recipe</th>
+                    <th>Categories</th>
+                    <th>Created</th>
+                    <th>Rating</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for recipe in recipes %}
+                <tr>
+                    <td>
+                        <a href="{% url 'recipe_hub:recipe_detail' recipe.slug %}" 
+                           class="text-decoration-none">
+                            <strong>{{ recipe.title }}</strong>
+                        </a>
+                        <br>
+                        <small class="text-muted">
+                            <i class="bi bi-clock"></i> {{ recipe.total_time|time_format }} |
+                            <i class="bi bi-people"></i> {{ recipe.servings }} servings
+                        </small>
+                    </td>
+                    <td>
+                        {% for category in recipe.categories.all|slice:":2" %}
+                        <span class="badge bg-secondary">{{ category.name }}</span>
+                        {% endfor %}
+                        {% if recipe.categories.count > 2 %}
+                        <small class="text-muted">+{{ recipe.categories.count|add:"-2" }}</small>
+                        {% endif %}
+                    </td>
+                    <td>{{ recipe.created_at|date:"M d, Y" }}</td>
+                    <td>
+                        {% if recipe.average_rating %}
+                        <span class="text-warning">{{ recipe.average_rating|rating_stars }}</span>
+                        <br>
+                        <small class="text-muted">({{ recipe.rating_count }})</small>
+                        {% else %}
+                        <span class="text-muted">No ratings</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if recipe.is_public %}
+                        <span class="badge bg-success">Public</span>
+                        {% else %}
+                        <span class="badge bg-warning">Private</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="btn-group btn-group-sm" role="group">
+                            <a href="{% url 'recipe_hub:recipe_detail' recipe.slug %}" 
+                               class="btn btn-outline-primary" title="View">
+                                <i class="bi bi-eye"></i>
+                            </a>
+                            <a href="{% url 'recipe_hub:recipe_update' recipe.slug %}" 
+                               class="btn btn-outline-secondary" title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                            <a href="{% url 'recipe_hub:recipe_delete' recipe.slug %}" 
+                               class="btn btn-outline-danger" title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Pagination -->
+    {% if is_paginated %}
+    <nav aria-label="Recipe pagination">
+        <ul class="pagination justify-content-center">
+            {% if page_obj.has_previous %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.previous_page_number }}">
+                    <i class="bi bi-chevron-left"></i> Previous
+                </a>
+            </li>
+            {% endif %}
+            
+            {% for num in page_obj.paginator.page_range %}
+                {% if page_obj.number == num %}
+                <li class="page-item active">
+                    <span class="page-link">{{ num }}</span>
+                </li>
+                {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ num }}">{{ num }}</a>
+                </li>
+                {% endif %}
+            {% endfor %}
+            
+            {% if page_obj.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.next_page_number }}">
+                    Next <i class="bi bi-chevron-right"></i>
+                </a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+    
+    {% else %}
+    <div class="text-center py-5">
+        <i class="bi bi-journal-x text-muted" style="font-size: 4rem;"></i>
+        <h4 class="mt-3">No recipes yet</h4>
+        <p class="text-muted">Start building your recipe collection!</p>
+        {% if can_add_recipe %}
+        <div class="d-flex flex-wrap justify-content-center gap-3 mt-4">
+            <a href="{% url 'recipe_hub:recipe_create' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> Create Your First Recipe
+            </a>
+            <a href="{% url 'recipe_hub:recipe_import_csv' %}" class="btn btn-outline-primary">
+                <i class="bi bi-file-earmark-spreadsheet"></i> Import from CSV
+            </a>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+    
+    <!-- Recipe Limit Warning -->
+    {% if recipe_limit != -1 and recipe_count >= recipe_limit|add:"-2" %}
+    <div class="alert alert-warning mt-4">
+        <h5 class="alert-heading">
+            <i class="bi bi-exclamation-triangle"></i> Approaching Recipe Limit
+        </h5>
+        <p class="mb-0">
+            You have {{ recipe_limit|add:recipe_count|add:"-1" }} recipe{{ recipe_limit|add:recipe_count|add:"-1"|pluralize }} 
+            remaining in your {{ user.userprofile.subscription_tier.name }} plan.
+            <a href="{% url 'auth_hub:subscription_detail' %}" class="alert-link">Upgrade now</a> 
+            for unlimited recipes!
+        </p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

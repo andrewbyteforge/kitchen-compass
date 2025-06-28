@@ -1,0 +1,266 @@
+{% extends 'base.html' %}
+
+{% block title %}Subscription - KitchenCompass{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'auth_hub:dashboard' %}">Dashboard</a></li>
+                <li class="breadcrumb-item active" aria-current="page">Subscription</li>
+            </ol>
+        </nav>
+        
+        <h1 class="mb-4">Your Subscription</h1>
+    </div>
+</div>
+
+<!-- Pending Downgrade Alert -->
+{% if profile.pending_subscription_tier %}
+<div class="alert alert-warning d-flex align-items-center mb-4" role="alert">
+    <i class="bi bi-exclamation-triangle-fill me-3 fs-4"></i>
+    <div class="flex-grow-1">
+        <h5 class="alert-heading mb-1">Pending Downgrade</h5>
+        <p class="mb-2">
+            Your subscription will change to <strong>{{ profile.pending_subscription_tier.name }}</strong> 
+            on <strong>{{ profile.pending_tier_change_date|date:"F d, Y" }}</strong>.
+        </p>
+        <p class="mb-0">
+            You'll continue to have access to all {{ profile.subscription_tier.name }} features until then.
+        </p>
+    </div>
+    <form method="post" action="{% url 'auth_hub:subscription_cancel_downgrade' %}" class="ms-3">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-warning">
+            <i class="bi bi-x-circle me-2"></i>Cancel Downgrade
+        </button>
+    </form>
+</div>
+{% endif %}
+
+<!-- Current Plan -->
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card {% if current_tier.tier_type == 'PREMIUM' %}border-warning{% elif current_tier.tier_type == 'STARTER' %}border-success{% endif %}">
+            <div class="card-header">
+                <h5 class="mb-0">Current Plan</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-8">
+                        <h3>{{ current_tier.name }}</h3>
+                        <p class="text-muted">
+                            {% if current_tier.price > 0 %}
+                                ${{ current_tier.price }}/month
+                            {% else %}
+                                Free Forever
+                            {% endif %}
+                        </p>
+                        
+                        {% if profile.subscription_status == 'active' and profile.subscription_end_date %}
+                            <p><strong>Status:</strong> <span class="text-success">Active</span></p>
+                            <p><strong>Renews:</strong> {{ profile.subscription_end_date|date:"F d, Y" }}</p>
+                        {% endif %}
+                        
+                        <h6 class="mt-3">Your Plan Features:</h6>
+                        <ul class="list-unstyled">
+                            {% for feature in current_tier.features %}
+                                <li><i class="bi bi-check-circle text-success"></i> {{ feature }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    <div class="col-md-4 text-center">
+                        {% if current_tier.tier_type == 'PREMIUM' %}
+                            <i class="bi bi-award" style="font-size: 5rem; color: gold;"></i>
+                            <p class="mt-2"><strong>Master Chef</strong></p>
+                        {% elif current_tier.tier_type == 'STARTER' %}
+                            <i class="bi bi-star" style="font-size: 5rem; color: var(--secondary-color);"></i>
+                            <p class="mt-2"><strong>Sous Chef</strong></p>
+                        {% else %}
+                            <i class="bi bi-house" style="font-size: 5rem; color: var(--primary-color);"></i>
+                            <p class="mt-2"><strong>Home Cook</strong></p>
+                        {% endif %}
+                        
+                        <a href="{% url 'auth_hub:subscription_upgrade' %}" class="btn btn-primary mt-3">
+                            <i class="bi bi-arrow-up-circle me-2"></i>Change Plan
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Available Plans -->
+<div class="row">
+    <div class="col-12">
+        <h2 class="mb-4">
+            {% if current_tier.tier_type == 'FREE' %}
+                Upgrade Your Plan
+            {% else %}
+                All Available Plans
+            {% endif %}
+        </h2>
+    </div>
+</div>
+
+<div class="row">
+    {% for tier in all_tiers %}
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 {% if tier == current_tier %}border-primary{% endif %}">
+                {% if tier == current_tier %}
+                    <div class="card-header bg-primary text-white text-center">
+                        <strong>Current Plan</strong>
+                    </div>
+                {% elif tier.name == 'Sous Chef' %}
+                    <div class="card-header bg-info text-white text-center">
+                        <strong>Most Popular</strong>
+                    </div>
+                {% endif %}
+                <div class="card-body d-flex flex-column">
+                    <h4 class="card-title text-center">{{ tier.name }}</h4>
+                    <p class="text-center">
+                        {% if tier.price > 0 %}
+                            <span class="display-6">${{ tier.price }}</span>
+                            <span class="text-muted">/month</span>
+                        {% else %}
+                            <span class="display-6">Free</span>
+                        {% endif %}
+                    </p>
+                    
+                    <ul class="list-unstyled flex-grow-1">
+                        {% for feature in tier.features %}
+                            <li class="mb-2">
+                                <i class="bi bi-check text-success"></i> {{ feature }}
+                            </li>
+                        {% endfor %}
+                        <li class="mb-2">
+                            <i class="bi bi-check text-success"></i> 
+                            {% if tier.tier_type == 'FREE' %}
+                                No menu sharing
+                            {% elif tier.max_shared_menus == 0 %}
+                                Unlimited menu sharing
+                            {% else %}
+                                Share with up to {{ tier.max_shared_menus }} people
+                            {% endif %}
+                        </li>
+                        <li class="mb-2">
+                            <i class="bi bi-check text-success"></i> 
+                            {{ tier.max_menu_days }}-day menu planning
+                        </li>
+                        <li class="mb-2">
+                            <i class="bi bi-check text-success"></i>
+                            {% if tier.max_recipes == -1 %}
+                                Unlimited recipes
+                            {% else %}
+                                Up to {{ tier.max_recipes }} recipes
+                            {% endif %}
+                        </li>
+                        <li class="mb-2">
+                            <i class="bi bi-check text-success"></i>
+                            {% if tier.max_menus == -1 %}
+                                Unlimited meal plans
+                            {% else %}
+                                Up to {{ tier.max_menus }} meal plans
+                            {% endif %}
+                        </li>
+                    </ul>
+                    
+                    <div class="mt-auto">
+                        {% if tier == current_tier %}
+                            <button class="btn btn-secondary w-100" disabled>Current Plan</button>
+                        {% else %}
+                            <a href="{% url 'auth_hub:subscription_upgrade' %}" class="btn btn-primary w-100">
+                                {% if tier.price < current_tier.price %}
+                                    <i class="bi bi-arrow-down-circle me-2"></i>Downgrade
+                                {% else %}
+                                    <i class="bi bi-arrow-up-circle me-2"></i>Upgrade
+                                {% endif %}
+                                to {{ tier.name }}
+                            </a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    {% endfor %}
+</div>
+
+<!-- Usage Stats -->
+<div class="row mt-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Usage Statistics</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-3">
+                        <h4>{{ profile.menus_created }}</h4>
+                        <p class="text-muted">Menus Created</p>
+                        {% if current_tier.max_menus != -1 %}
+                            <div class="progress">
+                                <div class="progress-bar" role="progressbar" style="width: {% widthratio profile.menus_created current_tier.max_menus 100 %}%"></div>
+                            </div>
+                            <small class="text-muted">{{ profile.menus_created }} / {{ current_tier.max_menus }}</small>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-3">
+                        <h4>{{ profile.recipes_saved }}</h4>
+                        <p class="text-muted">Recipes Saved</p>
+                        {% if current_tier.max_recipes != -1 %}
+                            <div class="progress">
+                                <div class="progress-bar" role="progressbar" style="width: {% widthratio profile.recipes_saved current_tier.max_recipes 100 %}%"></div>
+                            </div>
+                            <small class="text-muted">{{ profile.recipes_saved }} / {{ current_tier.max_recipes }}</small>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-3">
+                        <h4>{{ profile.shared_menus.count }}</h4>
+                        <p class="text-muted">Active Shares</p>
+                        {% if current_tier.tier_type == 'FREE' %}
+                            <small class="text-muted">Upgrade to share</small>
+                        {% elif current_tier.max_shared_menus > 0 %}
+                            <div class="progress">
+                                <div class="progress-bar" role="progressbar" style="width: {% widthratio profile.shared_menus.count current_tier.max_shared_menus 100 %}%"></div>
+                            </div>
+                            <small class="text-muted">{{ profile.shared_menus.count }} / {{ current_tier.max_shared_menus }}</small>
+                        {% else %}
+                            <small class="text-muted">Unlimited</small>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-3">
+                        <h4>{{ current_tier.max_menu_days }}</h4>
+                        <p class="text-muted">Days of Planning</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Billing Information (if applicable) -->
+{% if current_tier.price > 0 %}
+<div class="row mt-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Billing Information</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Billing Period:</strong> Monthly</p>
+                <p><strong>Next Billing Date:</strong> {{ profile.subscription_end_date|date:"F d, Y" }}</p>
+                <p><strong>Payment Method:</strong> **** **** **** 4242 (Update in Stripe Dashboard)</p>
+                
+                <div class="mt-3">
+                    <button class="btn btn-outline-danger" onclick="if(confirm('Are you sure you want to cancel your subscription? You will lose access to premium features at the end of your billing period.')) { alert('Please contact support to cancel your subscription.'); }">
+                        <i class="bi bi-x-circle me-2"></i>Cancel Subscription
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

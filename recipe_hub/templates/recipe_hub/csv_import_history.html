@@ -1,0 +1,105 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}CSV Import History - KitchenCompass{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-10">
+            <!-- Header -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2><i class="bi bi-clock-history"></i> CSV Import History</h2>
+                <div>
+                    <li><a class="dropdown-item" href="{% url 'recipe_hub:csv_upload' %}">
+                        <i class="bi bi-upload"></i> New Import
+                    </a>
+                    <a href="{% url 'recipe_hub:user_recipes' %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left"></i> Back to Recipes
+                    </a>
+                </div>
+            </div>
+            
+            {% if activities %}
+            <!-- History Table -->
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Date & Time</th>
+                                    <th>Import Details</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for activity in activities %}
+                                <tr>
+                                    <td>
+                                        <i class="bi bi-calendar-event"></i> 
+                                        {{ activity.created_at|date:"M d, Y" }}<br>
+                                        <small class="text-muted">
+                                            <i class="bi bi-clock"></i> 
+                                            {{ activity.created_at|time:"g:i A" }}
+                                        </small>
+                                    </td>
+                                    <td>{{ activity.details }}</td>
+                                    <td>
+                                        <span class="badge bg-success">
+                                            <i class="bi bi-check-circle"></i> Completed
+                                        </span>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Summary Stats -->
+            <div class="card mt-4">
+                <div class="card-body">
+                    <h5 class="card-title">Import Statistics</h5>
+                    <div class="row text-center">
+                        <div class="col-md-4">
+                            <h3 class="text-primary">{{ activities.count }}</h3>
+                            <p class="text-muted mb-0">Total Imports</p>
+                        </div>
+                        <div class="col-md-4">
+                            <h3 class="text-success">
+                                {% with total_imported=activities|length %}
+                                    {{ total_imported }}
+                                {% endwith %}
+                            </h3>
+                            <p class="text-muted mb-0">Batches Processed</p>
+                        </div>
+                        <div class="col-md-4">
+                            <h3 class="text-info">
+                                {% if activities %}
+                                    {{ activities.first.created_at|date:"M d, Y" }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </h3>
+                            <p class="text-muted mb-0">Last Import</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <!-- No History -->
+            <div class="text-center py-5">
+                <i class="bi bi-clock-history text-muted" style="font-size: 4rem;"></i>
+                <h4 class="mt-3">No Import History</h4>
+                <p class="text-muted">You haven't imported any recipes via CSV yet.</p>
+                <li><a class="dropdown-item" href="{% url 'recipe_hub:csv_upload' %}">
+                    <i class="bi bi-upload"></i> Import Your First Batch
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

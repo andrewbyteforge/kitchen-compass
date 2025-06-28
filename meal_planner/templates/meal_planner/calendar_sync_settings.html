@@ -1,0 +1,317 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Calendar Sync Settings - KitchenCompass{% endblock %}
+
+{% block extra_css %}
+<style>
+    .sync-card {
+        border-radius: 15px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    
+    .outlook-icon {
+        width: 48px;
+        height: 48px;
+    }
+    
+    .sync-status {
+        padding: 1rem;
+        border-radius: 10px;
+        background: #f8f9fa;
+    }
+    
+    .stat-card {
+        text-align: center;
+        padding: 1.5rem;
+        border-radius: 10px;
+        transition: transform 0.2s;
+    }
+    
+    .stat-card:hover {
+        transform: translateY(-5px);
+    }
+    
+    .connect-button {
+        background: #0078d4;
+        border-color: #0078d4;
+        padding: 0.75rem 2rem;
+        font-size: 1.1rem;
+    }
+    
+    .connect-button:hover {
+        background: #106ebe;
+        border-color: #106ebe;
+    }
+    
+    .account-info {
+        background: #e3f2fd;
+        border-left: 4px solid #0078d4;
+        padding: 1rem;
+        border-radius: 0 10px 10px 0;
+    }
+    
+    .switch-account-btn {
+        font-size: 0.875rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row">
+        <div class="col-lg-8 mx-auto">
+            <!-- Header -->
+            <div class="text-center mb-5">
+                <h2>
+                    <i class="bi bi-calendar-check"></i> Outlook Calendar Sync
+                </h2>
+                <p class="lead text-muted">
+                    Automatically sync your meal plans to your Outlook calendar
+                </p>
+            </div>
+            
+            <!-- Connected Account Info (if connected) -->
+            {% if microsoft_connected %}
+            <div class="account-info mb-4">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong><i class="bi bi-person-circle"></i> Connected Account:</strong>
+                        <span id="connectedEmail" class="ms-2">
+                            <span class="spinner-border spinner-border-sm"></span> Loading...
+                        </span>
+                    </div>
+                    <a href="{% url 'meal_planner:microsoft_switch_account' %}" 
+                       class="btn btn-sm btn-outline-primary switch-account-btn">
+                        <i class="bi bi-arrow-repeat"></i> Switch Account
+                    </a>
+                </div>
+            </div>
+            {% endif %}
+            
+            <!-- Connection Status -->
+            <div class="sync-card card mb-4">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-auto">
+                            <img src="{% static 'images/outlook-icon.png' %}" 
+                                 alt="Outlook" class="outlook-icon"
+                                 onerror="this.style.display='none'">
+                        </div>
+                        <div class="col">
+                            {% if microsoft_connected %}
+                                <h5 class="mb-1 text-success">
+                                    <i class="bi bi-check-circle"></i> Microsoft Account Connected
+                                </h5>
+                                <p class="text-muted mb-0">
+                                    Your Outlook calendar is linked to KitchenCompass
+                                </p>
+                            {% else %}
+                                <h5 class="mb-1">Connect Your Microsoft Account</h5>
+                                <p class="text-muted mb-0">
+                                    Link your Microsoft account to sync meal plans to Outlook
+                                </p>
+                            {% endif %}
+                        </div>
+                        <div class="col-auto">
+                            {% if microsoft_connected %}
+                                <a href="{% url 'auth_hub:microsoft_disconnect' %}" 
+                                   class="btn btn-outline-danger"
+                                   onclick="return confirm('Are you sure you want to disconnect your Microsoft account?');">
+                                    <i class="bi bi-x-circle"></i> Disconnect
+                                </a>
+                            {% else %}
+                                <a href="{% url 'auth_hub:microsoft_login' %}" 
+                                   class="btn btn-primary connect-button">
+                                    <i class="bi bi-box-arrow-in-right"></i> Connect Microsoft
+                                </a>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            {% if microsoft_connected %}
+            <!-- Sync Settings -->
+            <div class="sync-card card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="bi bi-gear"></i> Sync Settings
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <form method="post">
+                        {% csrf_token %}
+                        
+                        <div class="sync-status mb-4">
+                            <div class="row align-items-center">
+                                <div class="col">
+                                    <h6 class="mb-1">Automatic Sync</h6>
+                                    <p class="text-muted mb-0">
+                                        {% if sync_enabled %}
+                                            <span class="text-success">
+                                                <i class="bi bi-check-circle"></i> Enabled
+                                            </span>
+                                            - Your meal plans will automatically sync to Outlook
+                                        {% else %}
+                                            <span class="text-danger">
+                                                <i class="bi bi-x-circle"></i> Disabled
+                                            </span>
+                                            - Meal plans will not sync to your calendar
+                                        {% endif %}
+                                    </p>
+                                </div>
+                                <div class="col-auto">
+                                    {% if sync_enabled %}
+                                        <button type="submit" name="action" value="disable" 
+                                                class="btn btn-outline-secondary">
+                                            <i class="bi bi-pause"></i> Disable Sync
+                                        </button>
+                                    {% else %}
+                                        <button type="submit" name="action" value="enable" 
+                                                class="btn btn-success">
+                                            <i class="bi bi-play"></i> Enable Sync
+                                        </button>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {% if sync_enabled %}
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                {% if last_sync %}
+                                    <small class="text-muted">
+                                        Last synced: {{ last_sync|date:"M j, Y g:i A" }}
+                                    </small>
+                                {% else %}
+                                    <small class="text-muted">Never synced</small>
+                                {% endif %}
+                            </div>
+                            <button type="submit" name="action" value="sync_now" 
+                                    class="btn btn-primary btn-sm">
+                                <i class="bi bi-arrow-clockwise"></i> Sync Now
+                            </button>
+                        </div>
+                        {% endif %}
+                    </form>
+                </div>
+            </div>
+            
+            <!-- Sync Statistics -->
+            {% if sync_enabled %}
+            <div class="sync-card card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="bi bi-graph-up"></i> Sync Statistics
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <div class="stat-card bg-success text-white">
+                                <h3 class="mb-0">{{ synced_events }}</h3>
+                                <small>Synced Events</small>
+                            </div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <div class="stat-card bg-warning text-white">
+                                <h3 class="mb-0">{{ pending_events }}</h3>
+                                <small>Pending Sync</small>
+                            </div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <div class="stat-card bg-danger text-white">
+                                <h3 class="mb-0">{{ error_events }}</h3>
+                                <small>Sync Errors</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+            
+            {% endif %}
+            
+            <!-- Troubleshooting Section -->
+            <div class="alert alert-warning mt-4">
+                <h6><i class="bi bi-lightbulb"></i> Having trouble with the wrong account?</h6>
+                <ol class="mb-0">
+                    <li>Click "Disconnect" or "Switch Account"</li>
+                    <li>When reconnecting, you'll see a Microsoft account selection screen</li>
+                    <li>Choose "Use another account" if your desired account isn't listed</li>
+                    <li>Sign in with the account you want to sync with KitchenCompass</li>
+                </ol>
+                <hr>
+                <p class="mb-0">
+                    <strong>Tip:</strong> Use an incognito/private browser window if you continue to have issues with the wrong account being selected.
+                </p>
+            </div>
+            
+            <!-- Information Section -->
+            <div class="mt-5">
+                <h5><i class="bi bi-info-circle"></i> How Calendar Sync Works</h5>
+                <ul class="list-unstyled">
+                    <li class="mb-2">
+                        <i class="bi bi-check text-success"></i>
+                        Meal plans are automatically added to your Outlook calendar
+                    </li>
+                    <li class="mb-2">
+                        <i class="bi bi-check text-success"></i>
+                        Each meal appears as a calendar event with recipe details
+                    </li>
+                    <li class="mb-2">
+                        <i class="bi bi-check text-success"></i>
+                        Updates to meal plans sync automatically when enabled
+                    </li>
+                    <li class="mb-2">
+                        <i class="bi bi-check text-success"></i>
+                        Get reminders 30 minutes before each meal
+                    </li>
+                    <li class="mb-2">
+                        <i class="bi bi-check text-success"></i>
+                        Your calendar data stays private and secure
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Add loading state to sync button
+    const syncButton = document.querySelector('button[value="sync_now"]');
+    if (syncButton) {
+        syncButton.addEventListener('click', function() {
+            this.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Syncing...';
+            this.disabled = true;
+        });
+    }
+    
+    // Fetch and display connected account if connected
+    {% if microsoft_connected %}
+    fetch('{% url "meal_planner:get_connected_account" %}')
+        .then(response => response.json())
+        .then(data => {
+            const emailElement = document.getElementById('connectedEmail');
+            if (data.email) {
+                emailElement.innerHTML = `<strong>${data.email}</strong>`;
+                if (data.name) {
+                    emailElement.innerHTML += ` (${data.name})`;
+                }
+            } else {
+                emailElement.innerHTML = '<span class="text-danger">Unable to fetch account info</span>';
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching account info:', error);
+            document.getElementById('connectedEmail').innerHTML = 
+                '<span class="text-danger">Error loading account</span>';
+        });
+    {% endif %}
+});
+</script>
+{% endblock %}

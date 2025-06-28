@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}CSV Preview - Admin{% endblock %}
+
+{% block extra_css %}
+<style>
+    .admin-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem 0;
+        margin-bottom: 2rem;
+    }
+    
+    .preview-table {
+        font-size: 0.875rem;
+    }
+    
+    .preview-table th {
+        background-color: #f8f9fa;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.75rem;
+        letter-spacing: 0.5px;
+    }
+    
+    .preview-table td {
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    
+    .preview-table td:hover {
+        overflow: visible;
+        white-space: normal;
+        word-break: break-word;
+    }
+    
+    .stats-card {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        border: none;
+    }
+    
+    .stats-card .card-body {
+        padding: 1.5rem;
+    }
+    
+    .stat-number {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #667eea;
+    }
+    
+    .confirm-section {
+        background-color: #f8f9fa;
+        border-radius: 0.5rem;
+        padding: 2rem;
+        margin-top: 2rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Admin Header -->
+<div class="admin-header">
+    <div class="container">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h1 class="display-5 mb-2">
+                    <i class="bi bi-eye"></i> CSV Preview
+                </h1>
+                <p class="lead mb-0">Review recipes before importing</p>
+            </div>
+            <div class="col-md-4 text-md-end">
+                <a href="{% url 'meal_planner:csv_upload' %}" class="btn btn-light">
+                    <i class="bi bi-arrow-left"></i> Back to Upload
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="container">
+    {% if errors %}
+        <div class="alert alert-danger">
+            <h5><i class="bi bi-exclamation-triangle"></i> Errors Found</h5>
+            <ul class="mb-0">
+                {% for error in errors %}
+                    <li>{{ error }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+    
+    <!-- File Info -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stats-card card">
+                <div class="card-body text-center">
+                    <i class="bi bi-file-earmark-text text-muted mb-2" style="font-size: 2rem;"></i>
+                    <h6 class="text-muted mb-1">File Name</h6>
+                    <p class="mb-0">{{ csv_upload.filename }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card card">
+                <div class="card-body text-center">
+                    <div class="stat-number">{{ csv_upload.total_rows }}</div>
+                    <h6 class="text-muted mb-0">Total Recipes</h6>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card card">
+                <div class="card-body text-center">
+                    <div class="stat-number">{{ preview_data|length }}</div>
+                    <h6 class="text-muted mb-0">Preview Rows</h6>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card card">
+                <div class="card-body text-center">
+                    <div class="stat-number">{{ column_count }}</div>
+                    <h6 class="text-muted mb-0">Columns</h6>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Preview Table -->
+    {% if preview_data %}
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-table"></i> Preview (First 10 Recipes)
+                </h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover preview-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                {% for key in preview_data.0.keys %}
+                                    <th>{{ key }}</th>
+                                {% endfor %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in preview_data %}
+                                <tr>
+                                    <td>{{ forloop.counter }}</td>
+                                    {% for value in row.values %}
+                                        <td title="{{ value }}">{{ value|default:"-" }}</td>
+                                    {% endfor %}
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Confirm Import -->
+        <div class="confirm-section">
+            <h4 class="mb-3">
+                <i class="bi bi-check-circle"></i> Confirm Import
+            </h4>
+            
+            <div class="alert alert-warning">
+                <i class="bi bi-exclamation-triangle"></i>
+                <strong>Important:</strong> This will create {{ csv_upload.total_rows }} new recipes in the database.
+                Make sure the preview looks correct before proceeding.
+            </div>
+            
+            <form method="post">
+                {% csrf_token %}
+                {{ form.upload_id }}
+                
+                <div class="form-check mb-3">
+                    {{ form.confirm }}
+                    <label class="form-check-label" for="{{ form.confirm.id_for_label }}">
+                        {{ form.confirm.label }}
+                    </label>
+                </div>
+                
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-database-add"></i> Import Recipes
+                </button>
+                <a href="{% url 'meal_planner:csv_upload' %}" class="btn btn-secondary">
+                    Cancel
+                </a>
+            </form>
+        </div>
+    {% else %}
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i> No preview data available.
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

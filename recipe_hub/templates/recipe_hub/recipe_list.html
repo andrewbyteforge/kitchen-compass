@@ -1,0 +1,272 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load recipe_tags %}
+
+{% block title %}Browse Recipes - KitchenCompass{% endblock %}
+
+{% block extra_css %}
+<style>
+    .recipe-card {
+        transition: transform 0.2s;
+    }
+    .recipe-card:hover {
+        transform: translateY(-5px);
+    }
+    .filter-section {
+        background-color: #f8f9fa;
+        border-radius: 0.5rem;
+        padding: 1.5rem;
+    }
+    .category-pills .form-check {
+        display: inline-block;
+        margin-right: 1rem;
+        margin-bottom: 0.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <!-- Filters Sidebar -->
+        <div class="col-lg-3 mb-4">
+            <div class="filter-section">
+                <h5 class="mb-3">
+                    <i class="bi bi-funnel"></i> Filter Recipes
+                </h5>
+                
+                <form method="get" id="filterForm">
+                    <!-- Search -->
+                    <div class="mb-3">
+                        <label for="{{ search_form.query.id_for_label }}" class="form-label">Search</label>
+                        {{ search_form.query }}
+                    </div>
+                    
+                    <!-- Category -->
+                    <div class="mb-3">
+                        <label for="{{ search_form.category.id_for_label }}" class="form-label">Category</label>
+                        {{ search_form.category }}
+                    </div>
+                    
+                    <!-- Difficulty -->
+                    <div class="mb-3">
+                        <label for="{{ search_form.difficulty.id_for_label }}" class="form-label">Difficulty</label>
+                        {{ search_form.difficulty }}
+                    </div>
+                    
+                    <!-- Max Time -->
+                    <div class="mb-3">
+                        <label for="{{ search_form.max_time.id_for_label }}" class="form-label">Max Time (minutes)</label>
+                        {{ search_form.max_time }}
+                    </div>
+                    
+                    <!-- Dietary Restrictions -->
+                    <div class="mb-3">
+                        <label class="form-label">Dietary Restrictions</label>
+                        <div class="category-pills">
+                            {% for choice in search_form.dietary %}
+                            <div class="form-check">
+                                {{ choice.tag }}
+                                <label class="form-check-label" for="{{ choice.id_for_label }}">
+                                    {{ choice.choice_label }}
+                                </label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    
+                    <!-- Sort By -->
+                    <div class="mb-3">
+                        <label for="{{ search_form.sort_by.id_for_label }}" class="form-label">Sort By</label>
+                        {{ search_form.sort_by }}
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-search"></i> Apply Filters
+                    </button>
+                    <a href="{% url 'recipe_hub:recipe_list' %}" class="btn btn-outline-secondary w-100 mt-2">
+                        <i class="bi bi-x-circle"></i> Clear Filters
+                    </a>
+                </form>
+            </div>
+            
+            <!-- Featured Recipes -->
+            {% if featured_recipes %}
+            <div class="mt-4">
+                <h5 class="mb-3">
+                    <i class="bi bi-star-fill text-warning"></i> Featured Recipes
+                </h5>
+                <div class="list-group">
+                    {% for recipe in featured_recipes %}
+                    <a href="{% url 'recipe_hub:recipe_detail' recipe.slug %}" 
+                       class="list-group-item list-group-item-action">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h6 class="mb-1">{{ recipe.title|truncatechars:30 }}</h6>
+                        </div>
+                        <small class="text-muted">By {{ recipe.author.username }}</small>
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- Recipe Grid -->
+        <div class="col-lg-9">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2>
+                    <i class="bi bi-book"></i> Browse Recipes
+                    {% if search_form.query.value %}
+                    <small class="text-muted">"{{ search_form.query.value }}"</small>
+                    {% endif %}
+                </h2>
+                <div>
+                    <span class="text-muted">{{ total_recipes }} recipe{{ total_recipes|pluralize }}</span>
+                    {% if user.is_authenticated %}
+                    <a href="{% url 'recipe_hub:recipe_create' %}" class="btn btn-success ms-3">
+                        <i class="bi bi-plus-circle"></i> Add Recipe
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+            
+            {% if recipes %}
+            <div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-4">
+                {% for recipe in recipes %}
+                    {% recipe_card recipe user=request.user %}
+                {% endfor %}
+            </div>
+            
+            <!-- Pagination -->
+            {% if is_paginated %}
+            <nav aria-label="Recipe pagination" class="mt-4">
+                <ul class="pagination justify-content-center">
+                    {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{% query_string page=page_obj.previous_page_number %}">
+                            <i class="bi bi-chevron-left"></i> Previous
+                        </a>
+                    </li>
+                    {% endif %}
+                    
+                    {% for num in page_obj.paginator.page_range %}
+                        {% if page_obj.number == num %}
+                        <li class="page-item active">
+                            <span class="page-link">{{ num }}</span>
+                        </li>
+                        {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+                        <li class="page-item">
+                            <a class="page-link" href="?{% query_string page=num %}">{{ num }}</a>
+                        </li>
+                        {% endif %}
+                    {% endfor %}
+                    
+                    {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{% query_string page=page_obj.next_page_number %}">
+                            Next <i class="bi bi-chevron-right"></i>
+                        </a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox text-muted" style="font-size: 4rem;"></i>
+                <h4 class="mt-3">No recipes found</h4>
+                <p class="text-muted">Try adjusting your filters or search terms.</p>
+                {% if user.is_authenticated %}
+                <a href="{% url 'recipe_hub:recipe_create' %}" class="btn btn-primary mt-3">
+                    <i class="bi bi-plus-circle"></i> Create Your First Recipe
+                </a>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle favorite buttons
+    document.querySelectorAll('.favorite-btn').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            const button = this;
+            const recipeId = button.dataset.recipeId;
+            const url = button.dataset.url;
+            
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}',
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.is_favorited) {
+                    button.classList.remove('btn-outline-danger');
+                    button.classList.add('btn-danger');
+                    button.querySelector('i').classList.remove('bi-heart');
+                    button.querySelector('i').classList.add('bi-heart-fill');
+                    button.title = 'Remove from favorites';
+                } else {
+                    button.classList.remove('btn-danger');
+                    button.classList.add('btn-outline-danger');
+                    button.querySelector('i').classList.remove('bi-heart-fill');
+                    button.querySelector('i').classList.add('bi-heart');
+                    button.title = 'Add to favorites';
+                }
+                
+                // Show toast notification
+                showToast(data.message, 'success');
+            })
+            .catch(error => {
+                showToast('Error updating favorite status', 'danger');
+            });
+        });
+    });
+    
+    // Auto-submit form on select changes
+    document.querySelectorAll('#filterForm select').forEach(select => {
+        select.addEventListener('change', function() {
+            document.getElementById('filterForm').submit();
+        });
+    });
+});
+
+function showToast(message, type) {
+    // Create toast element
+    const toast = document.createElement('div');
+    toast.className = `toast align-items-center text-white bg-${type} border-0`;
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">${message}</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+    
+    // Add to toast container (create if doesn't exist)
+    let container = document.getElementById('toastContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        container.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+        document.body.appendChild(container);
+    }
+    
+    container.appendChild(toast);
+    const bsToast = new bootstrap.Toast(toast);
+    bsToast.show();
+    
+    // Remove after hidden
+    toast.addEventListener('hidden.bs.toast', () => toast.remove());
+}
+</script>
+{% endblock %}
