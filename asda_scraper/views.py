@@ -7,6 +7,7 @@ providing functionality to manage crawl sessions and monitor progress.
 
 import logging
 import json
+import threading
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib import messages
@@ -19,7 +20,6 @@ from django.core.paginator import Paginator
 from django.db.models import Q, Count
 from django.utils import timezone
 from .models import AsdaCategory, AsdaProduct, CrawlSession
-from .scraper import AsdaScraper
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def is_admin_user(user):
     """
     # Replace with your actual admin email
     ADMIN_EMAILS = [
-        'acartwright39@hotmail.com',  # Replace with your real email
+        'acartwright39@hotmail.com',  # Your actual email
     ]
     return user.is_authenticated and (user.email in ADMIN_EMAILS or user.is_superuser)
 
@@ -91,15 +91,52 @@ def scraper_dashboard(request):
         return redirect('auth_hub:dashboard')
 
 
+def run_selenium_scraper(session):
+    """
+    Run the Selenium scraper in a separate thread.
+    
+    Args:
+        session: CrawlSession object
+    """
+    try:
+        from .selenium_scraper import SeleniumAsdaScraper
+        
+        logger.info(f"Starting Selenium scraper for session {session.pk}")
+        
+        # Create and run scraper
+        scraper = SeleniumAsdaScraper(session, headless=False)  # Set to True to hide browser
+        scraper.start_crawl()
+        
+        logger.info(f"Selenium scraper completed for session {session.pk}")
+        
+    except ImportError as e:
+        logger.error(f"Failed to import Selenium scraper: {str(e)}")
+        session.mark_failed(f"Selenium not available: {str(e)}")
+        
+        # Fallback to regular scraper
+        try:
+            from .scraper import AsdaScraper
+            logger.info(f"Falling back to regular scraper for session {session.pk}")
+            scraper = AsdaScraper(session)
+            scraper.start_crawl()
+        except Exception as fallback_error:
+            logger.error(f"Fallback scraper also failed: {str(fallback_error)}")
+            session.mark_failed(f"All scrapers failed: {str(fallback_error)}")
+            
+    except Exception as e:
+        logger.error(f"Error in Selenium scraper: {str(e)}")
+        session.mark_failed(f"Selenium scraper error: {str(e)}")
+
+
 @login_required
 @user_passes_test(is_admin_user)
 @require_http_methods(["POST"])
 def start_crawl(request):
     """
-    Start a new ASDA crawl session.
+    Start a new ASDA crawl session using Selenium.
     
-    Creates a new CrawlSession and starts the scraping process
-    in the background.
+    Creates a new CrawlSession and starts the Selenium scraping process
+    in a background thread.
     
     Args:
         request: Django HttpRequest object
@@ -121,9 +158,10 @@ def start_crawl(request):
         
         # Get crawl settings from request
         settings = {
-            'max_products_per_category': int(request.POST.get('max_products', 100)),
-            'delay_between_requests': float(request.POST.get('delay', 1.0)),
+            'max_products_per_category': int(request.POST.get('max_products', 10)),  # Reduced for testing
+            'delay_between_requests': float(request.POST.get('delay', 2.0)),  # Increased delay
             'categories_to_crawl': request.POST.getlist('categories'),
+            'use_selenium': True,  # Flag to indicate Selenium usage
         }
         
         # Create new crawl session
@@ -133,26 +171,33 @@ def start_crawl(request):
             crawl_settings=settings
         )
         
-        # Start the scraper (this would typically be done with Celery or similar)
-        # For now, we'll create a placeholder that can be extended
+        logger.info(f"Created crawl session {session.pk} for user {request.user.username}")
+        
+        # Start the Selenium scraper in a background thread
         try:
-            scraper = AsdaScraper(session)
-            # This would normally be: scraper.start_async()
-            # For now, we'll just mark it as running
-            session.status = 'RUNNING'
-            session.save()
+            # Run scraper in background thread so the response can return immediately
+            scraper_thread = threading.Thread(
+                target=run_selenium_scraper,
+                args=(session,),
+                daemon=True
+            )
+            scraper_thread.start()
             
-            logger.info(f"Crawl session {session.pk} started by user {request.user.username}")
+            logger.info(f"Selenium scraper thread started for session {session.pk}")
             
             return JsonResponse({
                 'success': True,
-                'message': f'Crawl session {session.pk} started successfully.',
+                'message': f'Selenium crawl session {session.pk} started successfully. Watch the browser window for progress.',
                 'session_id': session.pk
             })
             
         except Exception as scraper_error:
+            logger.error(f"Error starting Selenium scraper: {str(scraper_error)}")
             session.mark_failed(str(scraper_error))
-            raise scraper_error
+            return JsonResponse({
+                'success': False,
+                'message': f'Failed to start Selenium scraper: {str(scraper_error)}'
+            })
             
     except Exception as e:
         logger.error(f"Error starting crawl session: {str(e)}")
@@ -168,6 +213,10 @@ def start_crawl(request):
 def stop_crawl(request):
     """
     Stop the current running crawl session.
+    
+    Note: This will mark the session as cancelled in the database,
+    but the Selenium browser may continue running until it completes
+    the current operation.
     
     Args:
         request: Django HttpRequest object
@@ -200,7 +249,7 @@ def stop_crawl(request):
         
         return JsonResponse({
             'success': True,
-            'message': f'Crawl session {session.pk} stopped successfully.'
+            'message': f'Crawl session {session.pk} marked as cancelled. The browser may continue until the current operation completes.'
         })
         
     except Exception as e:
@@ -241,6 +290,7 @@ def crawl_status(request):
                 'products_found': current_session.products_found,
                 'products_updated': current_session.products_updated,
                 'duration': str(current_session.get_duration()) if current_session.get_duration() else None,
+                'using_selenium': current_session.crawl_settings.get('use_selenium', False),
             }
         else:
             data = {
