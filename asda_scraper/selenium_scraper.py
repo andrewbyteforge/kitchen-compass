@@ -714,79 +714,306 @@ class SeleniumAsdaScraper:
     
 
     def _determine_product_category(self, product_data, scraped_from_category):
-        """
-        Determine the correct category for a product based on its name and characteristics.
-        
-        Args:
-            product_data: Dictionary of product information
-            scraped_from_category: The category page it was scraped from
+            """
+            Determine the correct category for a product based on its name and characteristics.
+            Automatically discovers and creates new categories when needed.
             
-        Returns:
-            AsdaCategory object - the most appropriate category
-        """
-        product_name = product_data['name'].lower()
+            Args:
+                product_data: Dictionary of product information
+                scraped_from_category: The category page it was scraped from
+                
+            Returns:
+                AsdaCategory object - the most appropriate category
+            """
+            product_name = product_data['name'].lower()
+            
+            # Map keywords to the actual numeric category codes in your database
+            category_keywords = {
+                # Core Food Categories (Priority 1)
+                '1215686352935': [  # Fruit, Veg & Flowers
+                    'banana', 'apple', 'orange', 'grape', 'tomato', 'cucumber', 
+                    'lettuce', 'carrot', 'onion', 'potato', 'avocado', 'melon',
+                    'berry', 'cherry', 'plum', 'spinach', 'broccoli', 'pepper',
+                    'fruit', 'vegetable', 'veg', 'salad', 'herbs', 'flowers'
+                ],
+                '1215135760597': [  # Meat, Poultry & Fish
+                    'chicken', 'beef', 'pork', 'lamb', 'turkey', 'bacon', 'ham',
+                    'sausage', 'mince', 'steak', 'chop', 'breast', 'thigh', 'wing',
+                    'fish', 'salmon', 'cod', 'tuna', 'meat', 'poultry'
+                ],
+                '1215660378320': [  # Chilled Food
+                    'milk', 'cheese', 'yogurt', 'butter', 'cream', 'egg', 'dairy',
+                    'fresh', 'organic', 'free range', 'chilled', 'refrigerated'
+                ],
+                '1215338621416': [  # Frozen Food
+                    'frozen', 'ice cream', 'ice', 'freezer', 'sorbet', 'gelato',
+                    'frozen meal', 'frozen pizza', 'frozen vegetables'
+                ],
+                '1215337189632': [  # Food Cupboard
+                    'pasta', 'rice', 'flour', 'sugar', 'oil', 'vinegar', 'sauce',
+                    'tin', 'can', 'jar', 'packet', 'cereal', 'biscuit', 'crisp',
+                    'canned', 'dried', 'instant', 'cooking', 'seasoning', 'spice'
+                ],
+                '1215686354843': [  # Bakery
+                    'bread', 'roll', 'bun', 'cake', 'pastry', 'croissant', 'bagel',
+                    'bakery', 'baked', 'loaf', 'sandwich', 'toast', 'muffin', 'scone'
+                ],
+                '1215135760614': [  # Drinks
+                    'water', 'juice', 'soft drink', 'tea', 'coffee', 'squash',
+                    'drink', 'beverage', 'cola', 'lemonade', 'smoothie', 'energy drink'
+                ],
+                
+                # Household & Personal Care (Priority 2)
+                '1215135760665': [  # Laundry & Household
+                    'cleaning', 'cleaner', 'toilet', 'kitchen', 'bathroom', 'washing up',
+                    'detergent', 'bleach', 'disinfectant', 'sponge', 'cloth', 'foil',
+                    'cling film', 'bag', 'bin', 'tissue', 'paper', 'household', 'laundry'
+                ],
+                '1215135760648': [  # Toiletries & Beauty
+                    'toothpaste', 'shampoo', 'soap', 'deodorant', 'moisturiser',
+                    'makeup', 'skincare', 'hair', 'dental', 'beauty', 'cosmetic',
+                    'toiletries', 'personal care', 'hygiene'
+                ],
+                '1215686353929': [  # Health & Wellness
+                    'vitamin', 'supplement', 'medicine', 'health', 'wellness',
+                    'pharmacy', 'medical', 'first aid', 'pain relief'
+                ],
+                
+                # Specialty Categories (Priority 3) - Now we'll create these if needed
+                '1215686356579': [  # Sweets, Treats & Snacks
+                    'chocolate', 'sweet', 'candy', 'snack', 'crisp', 'nuts',
+                    'treat', 'biscuit', 'cookie', 'confectionery'
+                ],
+                '1215135760631': [  # Baby, Toddler & Kids
+                    'baby', 'toddler', 'child', 'kids', 'infant', 'nappy',
+                    'formula', 'baby food', 'children'
+                ],
+                '1215662103573': [  # Pet Food & Accessories
+                    'pet', 'dog', 'cat', 'animal', 'pet food', 'dog food', 'cat food'
+                ],
+                '1215686351451': [  # World Food
+                    'world', 'international', 'ethnic', 'asian', 'indian',
+                    'chinese', 'mexican', 'italian', 'foreign'
+                ],
+                '1215686355606': [  # Dietary & Lifestyle
+                    'organic', 'gluten free', 'vegan', 'vegetarian', 'healthy',
+                    'diet', 'low fat', 'sugar free', 'free from'
+                ]
+            }
+            
+            # Map category codes to their names for creating missing categories
+            category_names = {
+                '1215686352935': 'Fruit, Veg & Flowers',
+                '1215135760597': 'Meat, Poultry & Fish',
+                '1215660378320': 'Chilled Food',
+                '1215338621416': 'Frozen Food',
+                '1215337189632': 'Food Cupboard',
+                '1215686354843': 'Bakery',
+                '1215135760614': 'Drinks',
+                '1215135760665': 'Laundry & Household',
+                '1215135760648': 'Toiletries & Beauty',
+                '1215686353929': 'Health & Wellness',
+                '1215686356579': 'Sweets, Treats & Snacks',
+                '1215135760631': 'Baby, Toddler & Kids',
+                '1215662103573': 'Pet Food & Accessories',
+                '1215686351451': 'World Food',
+                '1215686355606': 'Dietary & Lifestyle'
+            }
+            
+            # Get or refresh active categories cache
+            self._refresh_category_cache()
+            
+            # Check each category for keyword matches
+            best_category_code = None
+            best_score = 0
+            
+            for category_code, keywords in category_keywords.items():
+                score = sum(1 for keyword in keywords if keyword in product_name)
+                if score > best_score:
+                    best_score = score
+                    best_category_code = category_code
+            
+            # If we found a keyword match, get or create that category
+            if best_category_code and best_score > 0:
+                category = self._get_or_create_category(best_category_code, category_names)
+                if category:
+                    logger.info(f"📝 Reassigned '{product_data['name'][:30]}...' to '{category.name}' (score: {best_score})")
+                    return category
+            
+            # Fallback to the category it was scraped from
+            logger.debug(f"📍 Keeping '{product_data['name'][:30]}...' in '{scraped_from_category.name}' (no match)")
+            return scraped_from_category
         
-        # Category mapping based on product names/keywords
-        category_keywords = {
-            'fruit-vegetables': [
-                'banana', 'apple', 'orange', 'grape', 'tomato', 'cucumber', 
-                'lettuce', 'carrot', 'onion', 'potato', 'avocado', 'melon',
-                'berry', 'cherry', 'plum', 'spinach', 'broccoli', 'pepper'
-            ],
-            'meat-poultry': [
-                'chicken', 'beef', 'pork', 'lamb', 'turkey', 'bacon', 'ham',
-                'sausage', 'mince', 'steak', 'chop', 'breast', 'thigh', 'wing'
-            ],
-            'fresh-food-dairy': [
-                'milk', 'cheese', 'yogurt', 'butter', 'cream', 'egg', 'dairy',
-                'fresh', 'organic', 'free range'
-            ],
-            'frozen': [
-                'frozen', 'ice cream', 'ice', 'freezer', 'sorbet'
-            ],
-            'food-cupboard': [
-                'pasta', 'rice', 'flour', 'sugar', 'oil', 'vinegar', 'sauce',
-                'tin', 'can', 'jar', 'packet', 'cereal', 'biscuit', 'crisp'
-            ],
-            'household': [
-                'cleaning', 'cleaner', 'toilet', 'kitchen', 'bathroom', 'washing up',
-                'detergent', 'bleach', 'disinfectant', 'sponge', 'cloth', 'foil',
-                'cling film', 'bag', 'bin', 'tissue', 'paper'
-            ],
-            'health-beauty': [
-                'toothpaste', 'shampoo', 'soap', 'deodorant', 'moisturiser',
-                'makeup', 'skincare', 'hair', 'dental', 'beauty', 'cosmetic'
-            ],
-            'bakery': [
-                'bread', 'roll', 'bun', 'cake', 'pastry', 'croissant', 'bagel'
-            ],
-            'drinks': [
-                'water', 'juice', 'soft drink', 'tea', 'coffee', 'squash'
-            ]
-        }
-        
-        # Check each category for keyword matches
-        best_category = None
-        best_score = 0
-        
-        for category_code, keywords in category_keywords.items():
-            score = sum(1 for keyword in keywords if keyword in product_name)
-            if score > best_score:
-                best_score = score
-                best_category = category_code
-        
-        # If we found a keyword match, try to get that category
-        if best_category and best_score > 0:
+        def _get_or_create_category(self, category_code, category_names):
+            """
+            Get an existing category or create a new one if it doesn't exist.
+            
+            Args:
+                category_code: The numeric category code
+                category_names: Dictionary mapping codes to names
+                
+            Returns:
+                AsdaCategory object or None if creation fails
+            """
             try:
-                category = AsdaCategory.objects.get(url_code=best_category, is_active=True)
-                logger.info(f"📝 Reassigned '{product_data['name']}' to '{category.name}' (keyword match)")
-                return category
-            except AsdaCategory.DoesNotExist:
-                logger.warning(f"⚠️ Keyword category '{best_category}' not found in database")
+                # First check if it exists in our cache
+                if category_code in self._active_categories_cache:
+                    return self._active_categories_cache[category_code]
+                
+                # Try to get from database
+                try:
+                    category = AsdaCategory.objects.get(url_code=category_code, is_active=True)
+                    # Add to cache
+                    self._active_categories_cache[category_code] = category
+                    return category
+                except AsdaCategory.DoesNotExist:
+                    pass
+                
+                # Category doesn't exist, so create it
+                if category_code in category_names:
+                    category_name = category_names[category_code]
+                    
+                    # Check if we should create this category (validate it first)
+                    if self._should_create_category(category_code, category_name):
+                        category = self._create_new_category(category_code, category_name)
+                        if category:
+                            # Add to cache
+                            self._active_categories_cache[category_code] = category
+                            logger.info(f"🆕 Created new category: {category.name} ({category_code})")
+                            return category
+                    else:
+                        logger.debug(f"🚫 Skipped creating category: {category_name} (validation failed)")
+                
+                return None
+                
+            except Exception as e:
+                logger.error(f"❌ Error getting/creating category {category_code}: {str(e)}")
+                return None
         
-        # Fallback to the category it was scraped from
-        logger.info(f"📍 Keeping '{product_data['name']}' in '{scraped_from_category.name}' (no keyword match)")
-        return scraped_from_category
+        def _should_create_category(self, category_code, category_name):
+            """
+            Determine if we should create a new category by testing if it's valid on ASDA.
+            
+            Args:
+                category_code: The numeric category code
+                category_name: The category name
+                
+            Returns:
+                bool: True if category should be created
+            """
+            try:
+                # Get the URL slug mapping for testing
+                category_url_map = {
+                    '1215686352935': 'fruit-veg-flowers',
+                    '1215135760597': 'meat-poultry-fish',
+                    '1215660378320': 'chilled-food',
+                    '1215338621416': 'frozen-food',
+                    '1215337189632': 'food-cupboard',
+                    '1215686354843': 'bakery',
+                    '1215135760614': 'drinks',
+                    '1215135760665': 'laundry-household',
+                    '1215135760648': 'toiletries-beauty',
+                    '1215686353929': 'health-wellness',
+                    '1215686356579': 'sweets-treats-snacks',
+                    '1215135760631': 'baby-toddler-kids',
+                    '1215662103573': 'pet-food-accessories',
+                    '1215686351451': 'world-food',
+                    '1215686355606': 'dietary-lifestyle',
+                }
+                
+                url_slug = category_url_map.get(category_code)
+                if not url_slug:
+                    logger.debug(f"🤔 No URL slug found for category {category_code}, skipping validation")
+                    return False
+                
+                # Test the category URL to make sure it's valid
+                test_url = f"https://groceries.asda.com/cat/{url_slug}/{category_code}"
+                logger.debug(f"🧪 Validating new category: {category_name} → {test_url}")
+                
+                current_url = self.driver.current_url
+                self.driver.get(test_url)
+                time.sleep(2)
+                
+                # Check if page loaded successfully
+                page_title = self.driver.title.lower()
+                loaded_url = self.driver.current_url
+                
+                # Navigate back to the original page
+                self.driver.get(current_url)
+                time.sleep(1)
+                
+                is_valid = ('404' not in page_title and 
+                        'error' not in page_title and 
+                        'not found' not in page_title and
+                        url_slug in loaded_url)
+                
+                if is_valid:
+                    logger.info(f"✅ Category validation successful: {category_name}")
+                else:
+                    logger.warning(f"❌ Category validation failed: {category_name}")
+                
+                return is_valid
+                
+            except Exception as e:
+                logger.error(f"❌ Error validating category {category_name}: {str(e)}")
+                return False
+        
+        def _create_new_category(self, category_code, category_name):
+            """
+            Create a new category in the database.
+            
+            Args:
+                category_code: The numeric category code
+                category_name: The category name
+                
+            Returns:
+                AsdaCategory object or None if creation fails
+            """
+            try:
+                category, created = AsdaCategory.objects.get_or_create(
+                    url_code=category_code,
+                    defaults={
+                        'name': category_name,
+                        'is_active': True
+                    }
+                )
+                
+                if created:
+                    logger.info(f"🎉 Successfully created new category: {category.name}")
+                    
+                    # Update session statistics
+                    if hasattr(self.session, 'categories_discovered'):
+                        self.session.categories_discovered += 1
+                    else:
+                        self.session.categories_discovered = 1
+                    self.session.save()
+                    
+                return category
+                
+            except Exception as e:
+                logger.error(f"❌ Error creating category {category_name}: {str(e)}")
+                return None
+        
+        def _refresh_category_cache(self):
+            """Refresh the category cache from the database."""
+            try:
+                self._active_categories_cache = {
+                    cat.url_code: cat for cat in AsdaCategory.objects.filter(is_active=True)
+                }
+                logger.debug(f"🔄 Refreshed category cache: {len(self._active_categories_cache)} categories")
+            except Exception as e:
+                logger.error(f"❌ Error refreshing category cache: {str(e)}")
+                if not hasattr(self, '_active_categories_cache'):
+                    self._active_categories_cache = {}
+        
+        def _clear_category_cache(self):
+            """Clear the category cache when categories change."""
+            if hasattr(self, '_active_categories_cache'):
+                delattr(self, '_active_categories_cache')
+                logger.debug("🗑️ Cleared category cache")
+        
+
+
 
 
 
@@ -806,6 +1033,222 @@ class SeleniumAsdaScraper:
                 logger.info("WebDriver cleanup complete")
             except Exception as e:
                 logger.error(f"Error during cleanup: {str(e)}")
+
+    def _extract_products_from_current_page(self, category):
+        """
+        Extract products from the current page using Selenium and BeautifulSoup.
+        
+        This method handles the actual product extraction from ASDA category pages,
+        including pagination and different product layouts.
+        
+        Args:
+            category: AsdaCategory object representing the category being scraped
+            
+        Returns:
+            int: Number of products found and saved
+        """
+        try:
+            products_found = 0
+            max_products = self.session.crawl_settings.get('max_products_per_category', 100)
+            
+            logger.info(f"🔍 Extracting products from {category.name} page")
+            
+            # Wait for products to load
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((
+                        By.CSS_SELECTOR, 
+                        'div.co-product, div[class*="co-product"], div[class*="product-tile"]'
+                    ))
+                )
+            except TimeoutException:
+                logger.warning(f"⏰ Timeout waiting for products to load on {category.name}")
+                return 0
+            
+            # Extract products from all pages (with pagination)
+            page_num = 1
+            max_pages = 5  # Limit to prevent infinite loops
+            
+            while page_num <= max_pages and products_found < max_products:
+                logger.info(f"📄 Processing page {page_num} of {category.name}")
+                
+                # Get page source and parse with BeautifulSoup
+                page_source = self.driver.page_source
+                soup = BeautifulSoup(page_source, 'html.parser')
+                
+                # Find product containers
+                product_containers = self._find_product_containers(soup)
+                
+                if not product_containers:
+                    logger.warning(f"❌ No product containers found on page {page_num} of {category.name}")
+                    break
+                
+                logger.info(f"🛍️ Found {len(product_containers)} product containers on page {page_num}")
+                
+                # Extract data from each product
+                page_products = 0
+                for container in product_containers:
+                    if products_found >= max_products:
+                        logger.info(f"🔢 Reached maximum products limit ({max_products}) for {category.name}")
+                        break
+                    
+                    try:
+                        product_data = self.extract_product_data(container, category)
+                        
+                        if product_data:
+                            # Save product to database
+                            saved = self.save_product_data(product_data, category)
+                            if saved:
+                                products_found += 1
+                                page_products += 1
+                                
+                                # Update session statistics
+                                self.session.products_found = products_found
+                                self.session.save()
+                                
+                                logger.debug(f"✅ Saved product: {product_data['name'][:50]}...")
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Error extracting product data: {str(e)}")
+                        continue
+                
+                logger.info(f"📊 Page {page_num}: {page_products} products extracted")
+                
+                # Try to navigate to next page
+                if page_products > 0 and products_found < max_products:
+                    if not self._navigate_to_next_page():
+                        logger.info(f"🔚 No more pages available for {category.name}")
+                        break
+                    page_num += 1
+                    time.sleep(2)  # Add delay between pages
+                else:
+                    break
+            
+            logger.info(f"🎯 Total products extracted from {category.name}: {products_found}")
+            return products_found
+            
+        except Exception as e:
+            logger.error(f"❌ Error extracting products from {category.name}: {str(e)}")
+            return 0
+
+    def _navigate_to_next_page(self):
+        """
+        Navigate to the next page of products if pagination exists.
+        
+        Returns:
+            bool: True if successfully navigated to next page, False otherwise
+        """
+        try:
+            # Look for "Next" or pagination buttons
+            next_selectors = [
+                'a[aria-label="Next"]',
+                'a.pagination-next',
+                'a[class*="next"]',
+                'button[aria-label="Next"]',
+                'button.pagination-next',
+                'button[class*="next"]'
+            ]
+            
+            for selector in next_selectors:
+                try:
+                    next_button = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    
+                    # Check if button is enabled
+                    if next_button.is_enabled() and next_button.is_displayed():
+                        # Scroll to button and click
+                        self.driver.execute_script("arguments[0].scrollIntoView(true);", next_button)
+                        time.sleep(1)
+                        next_button.click()
+                        
+                        # Wait for page to load
+                        time.sleep(3)
+                        logger.debug(f"✅ Navigated to next page using selector: {selector}")
+                        return True
+                        
+                except (NoSuchElementException, Exception):
+                    continue
+            
+            # Alternative: Look for page numbers and click the next one
+            try:
+                page_links = self.driver.find_elements(By.CSS_SELECTOR, 'a[class*="pagination"], a[class*="page"]')
+                
+                for link in page_links:
+                    link_text = link.text.strip()
+                    if link_text.isdigit() and link.is_enabled():
+                        # Found a numeric page link, try to click it
+                        self.driver.execute_script("arguments[0].scrollIntoView(true);", link)
+                        time.sleep(1)
+                        link.click()
+                        time.sleep(3)
+                        logger.debug(f"✅ Navigated to page: {link_text}")
+                        return True
+                        
+            except Exception as e:
+                logger.debug(f"Could not find numeric pagination: {str(e)}")
+            
+            logger.debug("🔚 No next page button found or enabled")
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Error navigating to next page: {str(e)}")
+            return False
+
+    def _scroll_to_load_products(self):
+        """
+        Scroll down the page to trigger lazy loading of products.
+        
+        Many modern websites load products dynamically as you scroll.
+        """
+        try:
+            # Get initial height
+            last_height = self.driver.execute_script("return document.body.scrollHeight")
+            
+            scroll_attempts = 0
+            max_scrolls = 5
+            
+            while scroll_attempts < max_scrolls:
+                # Scroll down to bottom
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                
+                # Wait for new content to load
+                time.sleep(2)
+                
+                # Calculate new scroll height and compare to last height
+                new_height = self.driver.execute_script("return document.body.scrollHeight")
+                
+                if new_height == last_height:
+                    break  # No more content loaded
+                    
+                last_height = new_height
+                scroll_attempts += 1
+                
+            logger.debug(f"📜 Completed {scroll_attempts} scroll attempts to load products")
+            
+        except Exception as e:
+            logger.error(f"❌ Error during scroll loading: {str(e)}")
+
+    def _wait_for_page_load(self, timeout=10):
+        """
+        Wait for page to fully load including JavaScript.
+        
+        Args:
+            timeout: Maximum time to wait in seconds
+        """
+        try:
+            # Wait for document ready state
+            WebDriverWait(self.driver, timeout).until(
+                lambda driver: driver.execute_script("return document.readyState") == "complete"
+            )
+            
+            # Additional wait for AJAX requests (if any)
+            time.sleep(2)
+            
+            logger.debug("✅ Page fully loaded")
+            
+        except TimeoutException:
+            logger.warning(f"⏰ Page load timeout after {timeout} seconds")
+        except Exception as e:
+            logger.error(f"❌ Error waiting for page load: {str(e)}")
 
 
 
@@ -1038,6 +1481,9 @@ class SeleniumAsdaScraper:
             logger.info("✅ Enhanced crawler integration available")
         else:
             logger.info("ℹ️ Enhanced crawler integration not available - running standalone")
+
+
+    
 
 
     """
