@@ -49,7 +49,7 @@ class AsdaLinkCrawler:
     
     def discover_page_links(self, current_url=None):
         """
-        Discover all relevant links on the current page.
+        Discover all relevant links on the current page with comprehensive logging.
         
         Args:
             current_url: Current page URL (if not provided, gets from driver)
@@ -61,11 +61,19 @@ class AsdaLinkCrawler:
             if not current_url:
                 current_url = self.driver.current_url
             
-            logger.info(f"🔍 Discovering links on: {current_url}")
+            logger.info("="*80)
+            logger.info(f"🔍 LINK DISCOVERY STARTED")
+            logger.info(f"📍 Current URL: {current_url}")
+            logger.info("="*80)
             
             # Get page source and parse
             page_source = self.driver.page_source
             soup = BeautifulSoup(page_source, 'html.parser')
+            
+            # Log page title for context
+            page_title = soup.find('title')
+            if page_title:
+                logger.info(f"📄 Page Title: {page_title.text.strip()}")
             
             # Categorize links
             categorized_links = {
@@ -80,24 +88,62 @@ class AsdaLinkCrawler:
             
             # Find all links
             all_links = soup.find_all('a', href=True)
-            logger.info(f"📊 Found {len(all_links)} total links on page")
+            logger.info(f"📊 Found {len(all_links)} total <a> tags with href on page")
             
-            for link in all_links:
+            # Also specifically look for produce taxonomy buttons
+            produce_buttons = soup.find_all('a', class_=re.compile(r'produce-taxo-btn'))
+            logger.info(f"🌿 Found {len(produce_buttons)} produce taxonomy buttons specifically")
+            
+            # Log examples of produce buttons found
+            if produce_buttons:
+                logger.info("🌿 Produce button examples:")
+                for btn in produce_buttons[:5]:  # Log first 5
+                    btn_text = btn.get_text(strip=True)
+                    btn_href = btn.get('href', 'NO HREF')
+                    btn_classes = ' '.join(btn.get('class', []))
+                    logger.info(f"   - Text: '{btn_text}' | Classes: '{btn_classes}'")
+                    logger.info(f"     URL: {btn_href}")
+            
+            # Track statistics
+            link_stats = {
+                'total_processed': 0,
+                'invalid_domain': 0,
+                'already_processed': 0,
+                'no_href': 0,
+                'classified': 0,
+                'errors': 0
+            }
+            
+            # Process each link
+            for idx, link in enumerate(all_links):
                 try:
                     href = link.get('href', '')
                     if not href:
+                        link_stats['no_href'] += 1
                         continue
+                    
+                    link_stats['total_processed'] += 1
                     
                     # Make absolute URL
                     absolute_url = urljoin(current_url, href)
                     
+                    # Log every 50th link to avoid log spam
+                    if idx % 50 == 0 and idx > 0:
+                        logger.debug(f"  Progress: Processed {idx}/{len(all_links)} links...")
+                    
                     # Skip if not ASDA domain or invalid
                     if not self._is_valid_asda_url(absolute_url):
+                        link_stats['invalid_domain'] += 1
                         continue
                     
                     # Skip if already processed
                     if absolute_url in self.processed_links:
+                        link_stats['already_processed'] += 1
                         continue
+                    
+                    # Get link details for logging
+                    link_text = link.get_text(strip=True)[:50]  # First 50 chars
+                    link_classes = ' '.join(link.get('class', []))
                     
                     # Classify the link
                     link_info = self._classify_link(link, absolute_url)
@@ -105,25 +151,75 @@ class AsdaLinkCrawler:
                         link_type = link_info['type']
                         categorized_links[link_type].append(link_info)
                         self.discovered_links.add(absolute_url)
+                        link_stats['classified'] += 1
+                        
+                        # Log important discoveries (categories and subcategories)
+                        if link_type in ['categories', 'subcategories']:
+                            logger.info(f"🎯 FOUND {link_type.upper()}: '{link_text}' | Classes: '{link_classes}'")
+                            logger.info(f"   URL: {absolute_url}")
+                            if 'special' in link_info:
+                                logger.info(f"   Special Type: {link_info['special']}")
                 
                 except Exception as e:
-                    logger.debug(f"Error processing link: {str(e)}")
+                    link_stats['errors'] += 1
+                    logger.error(f"❌ Error processing link #{idx}: {str(e)}")
                     continue
             
-            # Log discovery results
+            # Log comprehensive statistics
+            logger.info("-"*80)
+            logger.info("📊 LINK DISCOVERY STATISTICS:")
+            logger.info(f"  Total <a> tags found: {len(all_links)}")
+            logger.info(f"  Links processed: {link_stats['total_processed']}")
+            logger.info(f"  Links with no href: {link_stats['no_href']}")
+            logger.info(f"  Invalid domain links: {link_stats['invalid_domain']}")
+            logger.info(f"  Already processed links: {link_stats['already_processed']}")
+            logger.info(f"  Successfully classified: {link_stats['classified']}")
+            logger.info(f"  Processing errors: {link_stats['errors']}")
+            logger.info("-"*80)
+            
+            # Log categorized results
+            logger.info("🎯 CATEGORIZED LINKS SUMMARY:")
+            total_categorized = 0
             for link_type, links in categorized_links.items():
                 if links:
-                    logger.info(f"🎯 Found {len(links)} {link_type} links")
+                    logger.info(f"  {link_type.upper()}: {len(links)} links")
+                    total_categorized += len(links)
+                    
+                    # Log first 3 examples of each type
+                    for i, link in enumerate(links[:3]):
+                        logger.info(f"    Example {i+1}: '{link['text'][:40]}...' -> {link['url'][:80]}...")
+            
+            logger.info(f"  TOTAL CATEGORIZED: {total_categorized} links")
+            
+            # Special check for category pages without subcategories
+            if '/dept/' in current_url and not categorized_links['subcategories']:
+                logger.warning("⚠️ WARNING: On a category page but found NO subcategory links!")
+                logger.warning("  This might indicate a problem with link detection.")
+                
+                # Debug: Log some raw HTML to see what's on the page
+                logger.debug("  Checking for links containing 'fruit', 'vegetable', etc...")
+                for link in all_links[:20]:  # Check first 20 links
+                    text = link.get_text(strip=True).lower()
+                    if any(word in text for word in ['fruit', 'vegetable', 'salad', 'flower', 'nuts']):
+                        logger.debug(f"    Potential subcategory: '{link.get_text(strip=True)}'")
+                        logger.debug(f"    Classes: {link.get('class', [])}")
+                        logger.debug(f"    Href: {link.get('href', 'NO HREF')}")
+            
+            logger.info("="*80)
+            logger.info("🔍 LINK DISCOVERY COMPLETED")
+            logger.info("="*80)
             
             return categorized_links
             
         except Exception as e:
-            logger.error(f"❌ Error discovering page links: {str(e)}")
+            logger.error(f"❌ CRITICAL ERROR in discover_page_links: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {}
-    
+
     def _classify_link(self, link_element, url):
         """
-        Classify a link based on its URL, text, and context.
+        Classify a link based on its URL, text, and context with detailed debug logging.
         
         Args:
             link_element: BeautifulSoup link element
@@ -151,108 +247,228 @@ class AsdaLinkCrawler:
                 'type': 'other'
             }
             
+            # Debug logging for classification process
+            logger.debug(f"\n🔍 CLASSIFYING LINK:")
+            logger.debug(f"  Text: '{text[:50]}...'")
+            logger.debug(f"  Classes: '{classes}'")
+            logger.debug(f"  URL path: '{path}'")
+            
             # Classification logic based on URL patterns and content
             
-            # Department links (main categories)
-            if (('/dept/' in path or '/department/' in path) and 
-                any(keyword in classes.lower() for keyword in ['dept', 'department', 'main-cat'])):
-                link_info['type'] = 'departments'
-                link_info['priority'] = 1
-                
-            # Category links (like the produce taxonomy in your example)
-            elif (('/dept/' in path or '/cat/' in path) and 
-                  any(keyword in classes.lower() for keyword in ['taxo', 'category', 'produce'])):
-                link_info['type'] = 'categories'
-                link_info['priority'] = 2
-                
-            # Subcategory links
-            elif ('/dept/' in path and len(path.split('/')) > 4):
+            # IMPORTANT: Check for special produce taxonomy buttons FIRST
+            if 'produce-taxo-btn' in classes:
                 link_info['type'] = 'subcategories'
-                link_info['priority'] = 3
-                
+                link_info['priority'] = 2
+                link_info['special'] = 'produce_taxonomy'
+                logger.info(f"🌿 PRODUCE TAXONOMY BUTTON FOUND: '{text}' -> subcategories")
+                logger.debug(f"  Full classes: {classes}")
+                logger.debug(f"  Full URL: {url}")
+            
             # Product links
             elif '/product/' in path:
                 link_info['type'] = 'products'
                 link_info['priority'] = 5
+                logger.debug(f"  → Classified as: products (contains '/product/')")
                 
             # Pagination links
             elif (any(keyword in classes.lower() for keyword in ['page', 'next', 'prev', 'pagination']) or
-                  any(keyword in text.lower() for keyword in ['next', 'previous', 'page', 'more'])):
+                any(keyword in text.lower() for keyword in ['next', 'previous', 'page', 'more'])):
                 link_info['type'] = 'pagination'
                 link_info['priority'] = 4
+                logger.debug(f"  → Classified as: pagination")
                 
             # Navigation links
             elif any(keyword in classes.lower() for keyword in ['nav', 'menu', 'breadcrumb']):
                 link_info['type'] = 'navigation'
                 link_info['priority'] = 6
+                logger.debug(f"  → Classified as: navigation")
                 
-            # Special handling for produce taxonomy buttons (from your example)
-            elif 'produce-taxo-btn' in classes:
+            # Department/Category links - check URL structure more carefully
+            elif '/dept/' in path:
+                # Count the number of category codes in the URL (13-digit numbers)
+                category_codes = re.findall(r'\d{13}', path)
+                logger.debug(f"  Found {len(category_codes)} category codes: {category_codes}")
+                
+                # Also check if this might be a subcategory based on text content
+                is_subcategory_text = any(word in text.lower() for word in [
+                    'fruit', 'vegetables', 'salad', 'flowers', 'nuts', 'seeds',
+                    'bananas', 'apples', 'potatoes', 'tomatoes', 'berries'
+                ])
+                
+                if is_subcategory_text and len(category_codes) >= 2:
+                    # This is likely a subcategory even if not marked with special class
+                    link_info['type'] = 'subcategories'
+                    link_info['priority'] = 3
+                    logger.info(f"🎯 SUBCATEGORY DETECTED (by content): '{text}' -> subcategories")
+                    logger.debug(f"  Detected by text content and URL structure")
+                
+                elif len(category_codes) == 1:
+                    # Single category code = main department
+                    link_info['type'] = 'departments'
+                    link_info['priority'] = 1
+                    logger.debug(f"  → Classified as: departments (1 category code)")
+                
+                elif len(category_codes) == 2:
+                    # Two category codes = category
+                    link_info['type'] = 'categories'
+                    link_info['priority'] = 2
+                    logger.debug(f"  → Classified as: categories (2 category codes)")
+                
+                elif len(category_codes) >= 3:
+                    # Three or more category codes = subcategory
+                    link_info['type'] = 'subcategories'
+                    link_info['priority'] = 3
+                    logger.debug(f"  → Classified as: subcategories (3+ category codes)")
+                
+                else:
+                    # URL path depth check as fallback
+                    path_parts = [p for p in path.split('/') if p and p != 'dept']
+                    logger.debug(f"  Path parts: {path_parts} (count: {len(path_parts)})")
+                    
+                    if len(path_parts) <= 2:
+                        link_info['type'] = 'departments'
+                        link_info['priority'] = 1
+                    elif len(path_parts) == 3:
+                        link_info['type'] = 'categories'
+                        link_info['priority'] = 2
+                    else:
+                        link_info['type'] = 'subcategories'
+                        link_info['priority'] = 3
+                    
+                    logger.debug(f"  → Classified as: {link_info['type']} (by path depth)")
+                        
+            # Check for category links that might not have /dept/ in them
+            elif any(keyword in classes.lower() for keyword in ['category', 'cat-link', 'dept-link']):
                 link_info['type'] = 'categories'
                 link_info['priority'] = 2
-                link_info['special'] = 'produce_taxonomy'
+                logger.debug(f"  → Classified as: categories (by class names)")
+            
+            # Final classification
+            else:
+                logger.debug(f"  → Classified as: other (no matching patterns)")
                 
-            # Extract category codes if present
-            category_code_match = re.search(r'(\d{13})', url)
-            if category_code_match:
-                link_info['category_code'] = category_code_match.group(1)
+            # Extract category codes if present (for tracking)
+            category_code_matches = re.findall(r'(\d{13})', url)
+            if category_code_matches:
+                link_info['category_codes'] = category_code_matches
+                # Use the last category code as the primary one
+                link_info['category_code'] = category_code_matches[-1]
+                logger.debug(f"  Category codes found: {category_code_matches}")
+            
+            # Log final classification
+            if link_info['type'] != 'other':
+                logger.debug(f"✅ FINAL CLASSIFICATION: {link_info['type']} (priority: {link_info.get('priority', 'N/A')})")
             
             return link_info
             
         except Exception as e:
-            logger.debug(f"Error classifying link: {str(e)}")
+            logger.error(f"❌ Error classifying link: {str(e)}")
+            logger.debug(f"  Link text: {link_element.get_text(strip=True)[:50]}")
+            logger.debug(f"  URL: {url}")
             return None
-    
+
+
+
+
+
+
+
+
+
+
+
     def crawl_discovered_links(self, categorized_links, max_depth=3, current_depth=0):
         """
-        Crawl discovered links in priority order.
+        Crawl discovered links in priority order with detailed logging.
         
         Args:
             categorized_links: Dictionary of categorized links
             max_depth: Maximum crawling depth
-            current_depth: Current depth level
-            
-        Returns:
-            int: Number of links successfully crawled
+            current_depth: Current depth in crawling tree
         """
         try:
+            logger.info("="*80)
+            logger.info(f"🚀 CRAWL DISCOVERED LINKS STARTED")
+            logger.info(f"📊 Current Depth: {current_depth} / Max Depth: {max_depth}")
+            logger.info("="*80)
+            
+            # Count total links to process
+            total_links = sum(len(links) for links in categorized_links.values())
+            logger.info(f"📦 Total links to potentially crawl: {total_links}")
+            
             if current_depth >= max_depth:
-                logger.info(f"🔒 Reached maximum depth ({max_depth}), stopping")
-                return 0
+                logger.warning(f"⚠️ Maximum depth reached ({current_depth} >= {max_depth}). Stopping recursion.")
+                return
             
-            crawled_count = 0
+            # Sort links by priority
+            prioritized_links = []
+            for link_type, links in categorized_links.items():
+                for link in links:
+                    link['link_type'] = link_type  # Add type for logging
+                    prioritized_links.append(link)
             
-            # Define crawling priority
-            priority_order = ['departments', 'categories', 'subcategories', 'pagination']
+            prioritized_links.sort(key=lambda x: x.get('priority', 999))
             
-            for link_type in priority_order:
-                links = categorized_links.get(link_type, [])
-                if not links:
+            logger.info(f"🔢 Links sorted by priority. Processing order:")
+            for i, link in enumerate(prioritized_links[:10]):  # Show first 10
+                logger.info(f"  {i+1}. [{link['link_type']}] Priority {link.get('priority', 999)}: '{link['text'][:40]}...'")
+            
+            # Process links
+            processed_count = 0
+            skipped_count = 0
+            error_count = 0
+            
+            for idx, link_info in enumerate(prioritized_links):
+                url = link_info.get('url', '')
+                link_type = link_info.get('link_type', 'unknown')
+                
+                # Check if already processed
+                if url in self.processed_links:
+                    skipped_count += 1
+                    logger.debug(f"⏭️ Skipping already processed URL: {url}")
                     continue
                 
-                logger.info(f"🚀 Crawling {len(links)} {link_type} links at depth {current_depth}")
+                # Log what we're about to crawl
+                logger.info("-"*60)
+                logger.info(f"🔗 CRAWLING LINK {idx+1}/{len(prioritized_links)}")
+                logger.info(f"  Type: {link_type}")
+                logger.info(f"  Text: '{link_info.get('text', 'NO TEXT')}'")
+                logger.info(f"  URL: {url}")
+                logger.info(f"  Priority: {link_info.get('priority', 'N/A')}")
+                if 'special' in link_info:
+                    logger.info(f"  Special: {link_info['special']}")
+                logger.info("-"*60)
                 
-                for link_info in links:
-                    try:
-                        if self._should_crawl_link(link_info, current_depth):
-                            success = self._crawl_single_link(link_info, current_depth)
-                            if success:
-                                crawled_count += 1
-                            
-                            # Add delay between links
-                            time.sleep(self.session.crawl_settings.get('delay_between_requests', 2.0))
-                        
-                    except Exception as e:
-                        logger.error(f"❌ Error crawling link {link_info.get('url', 'unknown')}: {str(e)}")
-                        continue
+                # Crawl the link
+                success = self._crawl_single_link(link_info, current_depth)
+                
+                if success:
+                    processed_count += 1
+                    logger.info(f"✅ Successfully crawled link {idx+1}")
+                else:
+                    error_count += 1
+                    logger.error(f"❌ Failed to crawl link {idx+1}")
+                
+                # Add small delay between crawls
+                time.sleep(0.5)
             
-            logger.info(f"✅ Successfully crawled {crawled_count} links at depth {current_depth}")
-            return crawled_count
+            # Summary statistics
+            logger.info("="*80)
+            logger.info(f"📊 CRAWL SUMMARY FOR DEPTH {current_depth}:")
+            logger.info(f"  Total links found: {total_links}")
+            logger.info(f"  Links processed: {processed_count}")
+            logger.info(f"  Links skipped (already processed): {skipped_count}")
+            logger.info(f"  Links failed: {error_count}")
+            logger.info("="*80)
             
         except Exception as e:
-            logger.error(f"❌ Error in link crawling: {str(e)}")
-            return 0
-    
+            logger.error(f"❌ CRITICAL ERROR in crawl_discovered_links: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+
+
+
+
     def _should_crawl_link(self, link_info, current_depth):
         """
         Determine if a link should be crawled based on various criteria.
@@ -311,7 +527,7 @@ class AsdaLinkCrawler:
     
     def _crawl_single_link(self, link_info, current_depth):
         """
-        Crawl a single link and extract information.
+        Crawl a single link with comprehensive logging.
         
         Args:
             link_info: Link information dictionary
@@ -324,24 +540,49 @@ class AsdaLinkCrawler:
         link_type = link_info.get('type', 'other')
         
         try:
-            logger.info(f"🔗 Crawling {link_type}: {url}")
+            logger.info("*"*60)
+            logger.info(f"🎯 NAVIGATING TO LINK")
+            logger.info(f"  Type: {link_type}")
+            logger.info(f"  URL: {url}")
+            logger.info(f"  Depth: {current_depth}")
+            logger.info("*"*60)
+            
+            # Store current URL for navigation back
+            original_url = self.driver.current_url
+            logger.info(f"📍 Current location before navigation: {original_url}")
             
             # Navigate to the link
-            original_url = self.driver.current_url
+            logger.info(f"🚗 Navigating to: {url}")
             self.driver.get(url)
-            time.sleep(2)
+            logger.info(f"✅ Navigation command sent")
             
             # Wait for page load
+            logger.info(f"⏳ Waiting for page to load...")
+            time.sleep(2)
             self._wait_for_page_load()
+            logger.info(f"✅ Page loaded")
+            
+            # Verify we actually navigated
+            new_url = self.driver.current_url
+            logger.info(f"📍 New location after navigation: {new_url}")
+            
+            if new_url == original_url:
+                logger.warning(f"⚠️ WARNING: URL didn't change after navigation!")
+                logger.warning(f"  Expected: {url}")
+                logger.warning(f"  Still at: {original_url}")
             
             # Handle popups
+            logger.info(f"🔍 Checking for popups...")
             self.scraper._handle_popups()
+            logger.info(f"✅ Popup check complete")
             
             # Mark as processed
             self.processed_links.add(url)
+            logger.info(f"✅ Marked URL as processed. Total processed: {len(self.processed_links)}")
             
             # Process based on link type
             success = False
+            logger.info(f"🔄 Processing as {link_type} page...")
             
             if link_type in ['departments', 'categories', 'subcategories']:
                 success = self._process_category_page(link_info, current_depth)
@@ -351,24 +592,59 @@ class AsdaLinkCrawler:
                 success = self._process_product_page(link_info, current_depth)
             else:
                 # For other types, just discover more links
+                logger.info(f"📋 Processing as generic page (type: {link_type})")
                 new_links = self.discover_page_links(url)
                 success = len(new_links) > 0
+                logger.info(f"  Found {sum(len(links) for links in new_links.values())} new links")
             
             # Navigate back if needed
             if self.driver.current_url != original_url:
+                logger.info(f"🔙 Navigating back to: {original_url}")
                 self.driver.get(original_url)
                 time.sleep(1)
+                logger.info(f"✅ Returned to original page")
             
+            logger.info(f"{'✅ SUCCESS' if success else '❌ FAILED'}: Completed processing {link_type} link")
             return success
             
         except Exception as e:
-            logger.error(f"❌ Error crawling single link {url}: {str(e)}")
+            logger.error(f"❌ ERROR crawling single link {url}: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             self.failed_links.add(url)
+            
+            # Try to navigate back on error
+            try:
+                if 'original_url' in locals() and self.driver.current_url != original_url:
+                    logger.info(f"🔙 Attempting to navigate back after error...")
+                    self.driver.get(original_url)
+            except:
+                logger.error(f"❌ Failed to navigate back after error")
+            
             return False
-    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     def _process_category_page(self, link_info, current_depth):
         """
         Process a category/department page.
+        
+        Enhanced to ensure subcategory links are properly discovered and crawled.
         
         Args:
             link_info: Link information dictionary
@@ -379,31 +655,86 @@ class AsdaLinkCrawler:
         """
         try:
             url = link_info.get('url', '')
+            logger.info(f"📂 Processing category page at depth {current_depth}: {url}")
             
             # Try to create/update category if it has a category code
             category_code = link_info.get('category_code')
             if category_code:
                 category_name = link_info.get('text', 'Unknown Category')
                 self._ensure_category_exists(category_code, category_name)
+                logger.info(f"✅ Created/updated category: {category_name} ({category_code})")
             
-            # Discover and crawl subcategories/products
+            # Discover links on this category page
             page_links = self.discover_page_links(url)
             
-            # Process products on this page
+            # Log what we found
+            total_links = sum(len(links) for links in page_links.values())
+            logger.info(f"📊 Category page analysis complete. Found {total_links} total links:")
+            
+            # Detailed breakdown
+            for link_type, links in page_links.items():
+                if links:
+                    logger.info(f"  - {link_type}: {len(links)} links")
+            
+            # Process products on this page (if depth allows)
             if current_depth < 3:  # Only extract products at reasonable depth
+                logger.info(f"🛒 Extracting products from category page...")
                 products_found = self.scraper._extract_products_from_current_page_by_url(url)
                 logger.info(f"📦 Found {products_found} products on category page")
+            else:
+                logger.info(f"⏭️ Skipping product extraction (depth {current_depth} >= 3)")
             
-            # Recursively crawl subcategories
+            # Recursively crawl discovered links if depth allows
             if current_depth < 2:  # Limit recursion depth
-                self.crawl_discovered_links(page_links, max_depth=3, current_depth=current_depth + 1)
+                logger.info(f"🔄 Recursively crawling discovered links (depth {current_depth} < 2)...")
+                
+                # Prioritize subcategories first
+                subcategory_links = page_links.get('subcategories', [])
+                if subcategory_links:
+                    logger.info(f"🎯 Processing {len(subcategory_links)} subcategory links first...")
+                    for subcat_link in subcategory_links:
+                        logger.info(f"  ➡️ Following subcategory: {subcat_link['text']} - {subcat_link['url']}")
+                        self._crawl_single_link(subcat_link, current_depth + 1)
+                else:
+                    logger.warning(f"⚠️ No subcategory links found to follow on this category page")
+                
+                # Then process other category links
+                category_links = page_links.get('categories', [])
+                if category_links and current_depth < 1:
+                    logger.info(f"📂 Processing {len(category_links)} category links...")
+                    for cat_link in category_links[:5]:  # Limit to prevent too much recursion
+                        self._crawl_single_link(cat_link, current_depth + 1)
+                
+                # Process pagination if products were found
+                pagination_links = page_links.get('pagination', [])
+                if pagination_links and products_found > 0:
+                    logger.info(f"📄 Processing pagination links...")
+                    for page_link in pagination_links[:3]:  # Limit pagination depth
+                        if 'next' in page_link.get('text', '').lower():
+                            self._crawl_single_link(page_link, current_depth)  # Same depth for pagination
+            else:
+                logger.info(f"⏹️ Stopping recursion (depth {current_depth} >= 2)")
             
             return True
             
         except Exception as e:
             logger.error(f"❌ Error processing category page: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return False
-    
+
+
+
+
+
+
+
+
+
+
+
+
+
     def _process_pagination_page(self, link_info, current_depth):
         """
         Process a pagination link.

@@ -651,6 +651,348 @@ class ProductExtractor:
         except Exception as e:
             logger.error(f"❌ Error extracting products from {category.name}: {e}")
             return 0
+
+    def _extract_products_from_current_page_by_url(self, url=None):
+        """
+        Extract products from the current page without requiring a category object.
+        This method is used by the link crawler when processing discovered links.
+        
+        Args:
+            url: Optional URL (for logging purposes, doesn't navigate)
+            
+        Returns:
+            int: Number of products found and saved
+        """
+        logger.info("="*80)
+        logger.info("🛒 PRODUCT EXTRACTION STARTED (BY URL)")
+        if url:
+            logger.info(f"📍 Called for URL: {url}")
+        logger.info(f"📍 Current page URL: {self.driver.current_url}")
+        logger.info("="*80)
+        
+        products_found = 0
+        products_saved = 0
+        products_skipped = 0
+        products_errors = 0
+        
+        try:
+            # Wait for products to load
+            logger.info("⏳ Waiting for product elements to load...")
+            
+            # Try multiple selectors for products
+            product_selectors = [
+                "div.co-product",
+                "div[class*='co-product']",
+                "article[class*='product-tile']",
+                "div[class*='product-item']",
+                "div[class*='productListing']",
+                "li[class*='product']",
+                "[data-testid*='product']"
+            ]
+            
+            product_elements = []
+            for selector in product_selectors:
+                try:
+                    # Use find_elements to avoid exceptions
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    if elements:
+                        logger.info(f"✅ Found {len(elements)} products using selector: {selector}")
+                        product_elements = elements
+                        break
+                    else:
+                        logger.debug(f"  No products with selector: {selector}")
+                except Exception as e:
+                    logger.debug(f"  Error with selector {selector}: {str(e)}")
+                    continue
+            
+            if not product_elements:
+                logger.warning("⚠️ No product elements found on page")
+                # Log page source snippet to help debug
+                try:
+                    page_source = self.driver.page_source[:1000]
+                    logger.debug(f"Page source snippet: {page_source}")
+                except:
+                    pass
+                return 0
+            
+            logger.info(f"📦 Found {len(product_elements)} product elements to process")
+            
+            # Try to determine category from URL or page content
+            category = self._infer_category_from_page()
+            
+            # Process each product
+            for idx, product_element in enumerate(product_elements):
+                try:
+                    logger.info(f"\n{'─'*60}")
+                    logger.info(f"🔍 Processing product {idx + 1}/{len(product_elements)}")
+                    
+                    # Extract product details using BeautifulSoup for better parsing
+                    product_html = product_element.get_attribute('outerHTML')
+                    soup = BeautifulSoup(product_html, 'html.parser')
+                    
+                    product_data = {}
+                    
+                    # Product Name - try multiple selectors
+                    name = None
+                    name_selectors = [
+                        "h3 a", "h3", "a.co-product__anchor", 
+                        "[class*='title']", "[class*='name']",
+                        "a[href*='/product/']"
+                    ]
+                    for selector in name_selectors:
+                        name_elem = soup.select_one(selector)
+                        if name_elem and name_elem.get_text(strip=True):
+                            name = name_elem.get_text(strip=True)
+                            break
+                    
+                    if not name:
+                        logger.warning(f"⚠️ Could not find name for product {idx + 1}")
+                        products_skipped += 1
+                        continue
+                    
+                    product_data['name'] = name
+                    logger.info(f"📝 Name: {name}")
+                    
+                    # Price - try multiple selectors
+                    price = None
+                    price_selectors = [
+                        "strong.co-product__price",
+                        ".price strong",
+                        "[class*='price'] strong",
+                        "[class*='price']",
+                        "[data-auto-id*='price']"
+                    ]
+                    
+                    for selector in price_selectors:
+                        price_elem = soup.select_one(selector)
+                        if price_elem:
+                            price_text = price_elem.get_text(strip=True)
+                            price_match = re.search(r'£?(\d+\.?\d*)', price_text)
+                            if price_match:
+                                price = float(price_match.group(1))
+                                logger.info(f"💰 Price: £{price}")
+                                break
+                    
+                    if price is None:
+                        logger.warning(f"⚠️ No price found for: {name}")
+                        products_skipped += 1
+                        continue
+                    
+                    product_data['price'] = price
+                    
+                    # Product URL
+                    url_elem = soup.select_one("a[href*='/product/']")
+                    if url_elem:
+                        product_url = url_elem.get('href', '')
+                        if product_url:
+                            product_data['url'] = urljoin(self.base_url, product_url)
+                            logger.info(f"🔗 URL: {product_data['url'][:80]}...")
+                    
+                    # ASDA ID from URL
+                    if 'url' in product_data:
+                        asda_id_match = re.search(r'/(\d+)$', product_data['url'])
+                        if asda_id_match:
+                            product_data['asda_id'] = asda_id_match.group(1)
+                        else:
+                            # Generate a unique ID
+                            product_data['asda_id'] = f"gen_{hash(name) % 1000000}"
+                    
+                    # Image URL
+                    img_elem = soup.select_one("img")
+                    if img_elem:
+                        img_url = img_elem.get('src', '')
+                        if img_url:
+                            product_data['image_url'] = img_url
+                            logger.debug(f"🖼️ Image: {img_url[:80]}...")
+                    
+                    # Unit/Size
+                    unit_selectors = [
+                        "span.co-product__volume",
+                        "[class*='weight']",
+                        "[class*='size']",
+                        "[class*='unit']"
+                    ]
+                    
+                    for selector in unit_selectors:
+                        unit_elem = soup.select_one(selector)
+                        if unit_elem:
+                            unit_text = unit_elem.get_text(strip=True)
+                            if unit_text:
+                                product_data['unit'] = unit_text
+                                logger.info(f"📏 Unit/Size: {unit_text}")
+                                break
+                    
+                    # Was price (for offers)
+                    was_price_elem = soup.select_one("span.co-product__was-price, [class*='was-price']")
+                    if was_price_elem:
+                        was_price_match = re.search(r'£?(\d+\.?\d*)', was_price_elem.get_text())
+                        if was_price_match:
+                            product_data['was_price'] = float(was_price_match.group(1))
+                            logger.info(f"🏷️ Was price: £{product_data['was_price']}")
+                    
+                    # Save the product
+                    if self._save_product_from_data(product_data, category):
+                        products_saved += 1
+                        logger.info(f"✅ PRODUCT {idx + 1} SAVED SUCCESSFULLY")
+                    else:
+                        products_skipped += 1
+                        logger.warning(f"⚠️ Failed to save product {idx + 1}")
+                    
+                    products_found += 1
+                    
+                except Exception as e:
+                    products_errors += 1
+                    logger.error(f"❌ Error processing product {idx + 1}: {str(e)}")
+                    import traceback
+                    logger.debug(f"Traceback: {traceback.format_exc()}")
+            
+            # Summary
+            logger.info(f"\n{'='*80}")
+            logger.info(f"📊 PRODUCT EXTRACTION SUMMARY:")
+            logger.info(f"  Total product elements: {len(product_elements)}")
+            logger.info(f"  Products found: {products_found}")
+            logger.info(f"  Products saved: {products_saved}")
+            logger.info(f"  Products skipped: {products_skipped}")
+            logger.info(f"  Extraction errors: {products_errors}")
+            if len(product_elements) > 0:
+                logger.info(f"  Success rate: {(products_saved/len(product_elements)*100):.1f}%")
+            logger.info(f"{'='*80}\n")
+            
+            return products_saved
+            
+        except Exception as e:
+            logger.error(f"❌ CRITICAL ERROR in product extraction: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return 0
+
+    def _infer_category_from_page(self):
+        """
+        Try to infer the category from the current page URL or content.
+        
+        Returns:
+            AsdaCategory or None
+        """
+        try:
+            current_url = self.driver.current_url
+            
+            # Try to extract category code from URL
+            category_code_match = re.search(r'(\d{13})', current_url)
+            if category_code_match:
+                category_code = category_code_match.group(1)
+                
+                # Try to find existing category
+                try:
+                    category = AsdaCategory.objects.get(url_code=category_code)
+                    logger.info(f"📁 Found category from URL: {category.name}")
+                    return category
+                except AsdaCategory.DoesNotExist:
+                    # Create a basic category
+                    category_name = "Unknown Category"
+                    
+                    # Try to get category name from page
+                    try:
+                        breadcrumb = self.driver.find_element(By.CSS_SELECTOR, "[class*='breadcrumb'] span:last-child")
+                        category_name = breadcrumb.text.strip()
+                    except:
+                        try:
+                            title = self.driver.title
+                            if " | " in title:
+                                category_name = title.split(" | ")[0].strip()
+                        except:
+                            pass
+                    
+                    category = AsdaCategory.objects.create(
+                        url_code=category_code,
+                        name=category_name,
+                        is_active=True
+                    )
+                    logger.info(f"📁 Created new category: {category_name}")
+                    return category
+            
+            # If no category code in URL, use a default category
+            default_category, created = AsdaCategory.objects.get_or_create(
+                url_code='0000000000000',
+                defaults={'name': 'Uncategorized', 'is_active': True}
+            )
+            return default_category
+            
+        except Exception as e:
+            logger.error(f"Error inferring category: {str(e)}")
+            return None
+
+    def _save_product_from_data(self, product_data, category):
+        """
+        Save product from extracted data dictionary.
+        
+        Args:
+            product_data: Dictionary with product information
+            category: AsdaCategory object (can be None)
+            
+        Returns:
+            bool: True if saved successfully
+        """
+        try:
+            if not product_data.get('name') or product_data.get('price') is None:
+                logger.warning("Missing required product data (name or price)")
+                return False
+            
+            # Create or update the product
+            asda_id = product_data.get('asda_id', f"gen_{hash(product_data['name']) % 1000000}")
+            
+            product, created = AsdaProduct.objects.get_or_create(
+                asda_id=asda_id,
+                defaults={
+                    'name': product_data['name'],
+                    'price': product_data['price'],
+                    'was_price': product_data.get('was_price'),
+                    'unit': product_data.get('unit', 'each'),
+                    'description': product_data.get('description', product_data['name']),
+                    'image_url': product_data.get('image_url', ''),
+                    'product_url': product_data.get('url', ''),
+                    'category': category,
+                    'in_stock': True,
+                    'special_offer': '',
+                }
+            )
+            
+            if not created:
+                # Update existing product
+                product.name = product_data['name']
+                product.price = product_data['price']
+                if 'was_price' in product_data:
+                    product.was_price = product_data.get('was_price')
+                if 'unit' in product_data:
+                    product.unit = product_data['unit']
+                if 'image_url' in product_data:
+                    product.image_url = product_data['image_url']
+                if 'url' in product_data:
+                    product.product_url = product_data['url']
+                if category:
+                    product.category = category
+                product.save()
+                
+                logger.info(f"📝 Updated existing product: {product.name}")
+            else:
+                logger.info(f"✨ Created new product: {product.name}")
+            
+            # Update session statistics
+            if created:
+                self.session.products_found += 1
+            else:
+                self.session.products_updated += 1
+            self.session.save()
+            
+            # Update category product count if applicable
+            if category:
+                category.product_count = category.products.count()
+                category.save()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving product: {str(e)}")
+            return False
     
     def _wait_for_products_to_load(self, timeout: int = 10) -> bool:
         """Wait for products to load on the page."""
@@ -869,6 +1211,8 @@ class ProductExtractor:
         except Exception as e:
             logger.error(f"❌ Error navigating to next page: {e}")
             return False
+
+    
 
 
 class SeleniumAsdaScraper:
