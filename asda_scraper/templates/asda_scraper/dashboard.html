@@ -84,6 +84,69 @@
     </div>
 </div>
 
+<!-- Action Buttons Row -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="d-flex gap-2">
+            <a href="{% url 'asda_scraper:categories' %}" class="btn btn-primary">
+                <i class="bi bi-tags"></i> Manage Categories
+            </a>
+            <a href="{% url 'asda_scraper:products' %}" class="btn btn-primary">
+                <i class="bi bi-box-seam"></i> View Products
+            </a>
+            <a href="{% url 'asda_scraper:delete_products' %}" class="btn btn-danger">
+                <i class="bi bi-trash"></i> Delete Products
+            </a>
+        </div>
+    </div>
+</div>
+<!-- Replace the Action Buttons Row section in your dashboard.html with this -->
+
+<!-- Action Buttons Row -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="d-flex gap-2">
+            <a href="{% url 'asda_scraper:categories' %}" class="btn btn-primary">
+                <i class="bi bi-tags"></i> Manage Categories
+            </a>
+            <a href="{% url 'asda_scraper:products' %}" class="btn btn-primary">
+                <i class="bi bi-box-seam"></i> View Products
+            </a>
+            <!-- Direct link to Django Admin for product management -->
+            <a href="/admin/asda_scraper/asdaproduct/" class="btn btn-warning" target="_blank">
+                <i class="bi bi-gear"></i> Manage Products (Admin)
+            </a>
+            {% if user.is_superuser %}
+            <!-- Quick delete dropdown for superusers only -->
+            <div class="dropdown">
+                <button class="btn btn-danger dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                    <i class="bi bi-trash"></i> Quick Delete
+                </button>
+                <ul class="dropdown-menu">
+                    <li><a class="dropdown-item" href="#" onclick="return confirm('Are you sure?') && deleteProducts('out_of_stock')">Delete Out of Stock</a></li>
+                    <li><a class="dropdown-item" href="#" onclick="return confirm('Are you sure?') && deleteProducts('duplicates')">Delete Duplicates</a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item text-danger" href="/admin/asda_scraper/asdaproduct/">Go to Admin for More Options</a></li>
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Add this JavaScript function at the bottom with your other scripts -->
+<script>
+function deleteProducts(type) {
+    const formData = new FormData();
+    formData.append('delete_type', type);
+    formData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
+    
+    // For now, just redirect to admin
+    window.open('/admin/asda_scraper/asdaproduct/', '_blank');
+    return false;
+}
+</script>
+
 <!-- Statistics Grid -->
 <div class="row mb-4">
     <div class="col-md-3 mb-3">
@@ -123,6 +186,7 @@
         </div>
     </div>
 </div>
+
 
 <!-- Recent Activity -->
 <div class="row">

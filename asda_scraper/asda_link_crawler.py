@@ -19,6 +19,65 @@ from .models import AsdaCategory, CrawlSession
 
 logger = logging.getLogger(__name__)
 
+"""
+Manual logging setup for ASDA scraper
+Add this at the top of selenium_scraper.py and asda_link_crawler.py
+"""
+
+import logging
+import sys
+from pathlib import Path
+
+# Create logs directory if it doesn't exist
+logs_dir = Path(__file__).resolve().parent.parent / "logs"
+logs_dir.mkdir(exist_ok=True)
+
+# Configure logging manually for the asda_scraper module
+def setup_asda_logging():
+    """Setup logging for ASDA scraper with console and file handlers."""
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        '[%(levelname)s] %(asctime)s [%(name)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.DEBUG)
+    console_handler.setFormatter(formatter)
+    
+    # File handler
+    file_handler = logging.handlers.RotatingFileHandler(
+        logs_dir / 'asda_scraper.log',
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+    
+    # Get the asda_scraper logger and configure it
+    asda_logger = logging.getLogger('asda_scraper')
+    asda_logger.setLevel(logging.DEBUG)
+    asda_logger.handlers.clear()  # Remove any existing handlers
+    asda_logger.addHandler(console_handler)
+    asda_logger.addHandler(file_handler)
+    asda_logger.propagate = False
+    
+    # Also configure submodule loggers
+    for submodule in ['selenium_scraper', 'asda_link_crawler', 'management.commands.run_asda_crawl']:
+        sublogger = logging.getLogger(f'asda_scraper.{submodule}')
+        sublogger.setLevel(logging.DEBUG)
+        sublogger.handlers.clear()
+        sublogger.addHandler(console_handler)
+        sublogger.addHandler(file_handler)
+        sublogger.propagate = False
+    
+    return asda_logger
+
+# Setup logging when module is imported
+logger = setup_asda_logging()
+logger.info("ASDA scraper logging configured successfully")
 
 class AsdaLinkCrawler:
     """
@@ -219,7 +278,7 @@ class AsdaLinkCrawler:
 
     def _classify_link(self, link_element, url):
         """
-        Classify a link based on its URL, text, and context with detailed debug logging.
+        Classify a link based on its URL, text, and context with enhanced detection.
         
         Args:
             link_element: BeautifulSoup link element
@@ -233,6 +292,7 @@ class AsdaLinkCrawler:
             text = link_element.get_text(strip=True)
             classes = ' '.join(link_element.get('class', []))
             title = link_element.get('title', '')
+            data_auto_id = link_element.get('data-auto-id', '')
             
             # Parse URL to understand structure
             parsed = urlparse(url)
@@ -248,104 +308,85 @@ class AsdaLinkCrawler:
             }
             
             # Debug logging for classification process
-            logger.debug(f"\n🔍 CLASSIFYING LINK:")
+            logger.debug(f"\n[CLASSIFY] Analyzing link:")
             logger.debug(f"  Text: '{text[:50]}...'")
             logger.debug(f"  Classes: '{classes}'")
+            logger.debug(f"  data-auto-id: '{data_auto_id}'")
             logger.debug(f"  URL path: '{path}'")
             
-            # Classification logic based on URL patterns and content
+            # IMPORTANT: Check for taxonomy exploration links (like the ones you showed)
+            if 'linkTaxonomyExplore' in data_auto_id or 'taxonomy-explore' in classes:
+                link_info['type'] = 'subcategories'
+                link_info['priority'] = 2
+                link_info['special'] = 'taxonomy_explore'
+                logger.info(f"[FOUND] Taxonomy explore link: '{text}' -> subcategories")
             
-            # IMPORTANT: Check for special produce taxonomy buttons FIRST
-            if 'produce-taxo-btn' in classes:
+            # Check for produce taxonomy buttons
+            elif 'produce-taxo-btn' in classes:
                 link_info['type'] = 'subcategories'
                 link_info['priority'] = 2
                 link_info['special'] = 'produce_taxonomy'
-                logger.info(f"🌿 PRODUCE TAXONOMY BUTTON FOUND: '{text}' -> subcategories")
-                logger.debug(f"  Full classes: {classes}")
-                logger.debug(f"  Full URL: {url}")
+                logger.info(f"[FOUND] Produce taxonomy button: '{text}' -> subcategories")
             
             # Product links
             elif '/product/' in path:
                 link_info['type'] = 'products'
                 link_info['priority'] = 5
-                logger.debug(f"  → Classified as: products (contains '/product/')")
+                logger.debug(f"  -> Classified as: products (contains '/product/')")
                 
             # Pagination links
             elif (any(keyword in classes.lower() for keyword in ['page', 'next', 'prev', 'pagination']) or
                 any(keyword in text.lower() for keyword in ['next', 'previous', 'page', 'more'])):
                 link_info['type'] = 'pagination'
                 link_info['priority'] = 4
-                logger.debug(f"  → Classified as: pagination")
+                logger.debug(f"  -> Classified as: pagination")
                 
             # Navigation links
             elif any(keyword in classes.lower() for keyword in ['nav', 'menu', 'breadcrumb']):
                 link_info['type'] = 'navigation'
                 link_info['priority'] = 6
-                logger.debug(f"  → Classified as: navigation")
+                logger.debug(f"  -> Classified as: navigation")
                 
-            # Department/Category links - check URL structure more carefully
+            # Department/Category links based on URL structure
             elif '/dept/' in path:
                 # Count the number of category codes in the URL (13-digit numbers)
                 category_codes = re.findall(r'\d{13}', path)
                 logger.debug(f"  Found {len(category_codes)} category codes: {category_codes}")
                 
-                # Also check if this might be a subcategory based on text content
-                is_subcategory_text = any(word in text.lower() for word in [
-                    'fruit', 'vegetables', 'salad', 'flowers', 'nuts', 'seeds',
-                    'bananas', 'apples', 'potatoes', 'tomatoes', 'berries'
-                ])
+                # Count path segments
+                path_segments = [p for p in path.split('/') if p and p != 'dept']
                 
-                if is_subcategory_text and len(category_codes) >= 2:
-                    # This is likely a subcategory even if not marked with special class
+                # If it has multiple category codes or deep path, it's likely a subcategory
+                if len(category_codes) >= 2 or len(path_segments) >= 3:
                     link_info['type'] = 'subcategories'
                     link_info['priority'] = 3
-                    logger.info(f"🎯 SUBCATEGORY DETECTED (by content): '{text}' -> subcategories")
-                    logger.debug(f"  Detected by text content and URL structure")
+                    logger.info(f"[FOUND] Subcategory link (by URL structure): '{text}' -> subcategories")
                 
-                elif len(category_codes) == 1:
-                    # Single category code = main department
-                    link_info['type'] = 'departments'
-                    link_info['priority'] = 1
-                    logger.debug(f"  → Classified as: departments (1 category code)")
-                
-                elif len(category_codes) == 2:
-                    # Two category codes = category
-                    link_info['type'] = 'categories'
-                    link_info['priority'] = 2
-                    logger.debug(f"  → Classified as: categories (2 category codes)")
-                
-                elif len(category_codes) >= 3:
-                    # Three or more category codes = subcategory
+                # Check if text suggests it's a subcategory
+                elif any(word in text.lower() for word in [
+                    'chicken', 'meat', 'fish', 'vegetables', 'chips', 'pizza',
+                    'pies', 'ready meals', 'takeaway', 'vegetarian', 'vegan',
+                    'desserts', 'ice cream', 'fruit', 'salad', 'flowers', 'nuts'
+                ]):
                     link_info['type'] = 'subcategories'
                     link_info['priority'] = 3
-                    logger.debug(f"  → Classified as: subcategories (3+ category codes)")
+                    logger.info(f"[FOUND] Subcategory link (by content): '{text}' -> subcategories")
                 
                 else:
-                    # URL path depth check as fallback
-                    path_parts = [p for p in path.split('/') if p and p != 'dept']
-                    logger.debug(f"  Path parts: {path_parts} (count: {len(path_parts)})")
-                    
-                    if len(path_parts) <= 2:
-                        link_info['type'] = 'departments'
-                        link_info['priority'] = 1
-                    elif len(path_parts) == 3:
-                        link_info['type'] = 'categories'
-                        link_info['priority'] = 2
-                    else:
-                        link_info['type'] = 'subcategories'
-                        link_info['priority'] = 3
-                    
-                    logger.debug(f"  → Classified as: {link_info['type']} (by path depth)")
+                    # Default to category for other /dept/ links
+                    link_info['type'] = 'categories'
+                    link_info['priority'] = 2
+                    logger.debug(f"  -> Classified as: categories")
                         
             # Check for category links that might not have /dept/ in them
             elif any(keyword in classes.lower() for keyword in ['category', 'cat-link', 'dept-link']):
                 link_info['type'] = 'categories'
                 link_info['priority'] = 2
-                logger.debug(f"  → Classified as: categories (by class names)")
+                logger.debug(f"  -> Classified as: categories (by class names)")
             
             # Final classification
             else:
-                logger.debug(f"  → Classified as: other (no matching patterns)")
+                logger.debug(f"  -> Classified as: other (no matching patterns)")
                 
             # Extract category codes if present (for tracking)
             category_code_matches = re.findall(r'(\d{13})', url)
@@ -355,18 +396,17 @@ class AsdaLinkCrawler:
                 link_info['category_code'] = category_code_matches[-1]
                 logger.debug(f"  Category codes found: {category_code_matches}")
             
-            # Log final classification
-            if link_info['type'] != 'other':
-                logger.debug(f"✅ FINAL CLASSIFICATION: {link_info['type']} (priority: {link_info.get('priority', 'N/A')})")
+            # Log final classification for important types
+            if link_info['type'] in ['subcategories', 'categories']:
+                logger.info(f"[CLASSIFIED] {link_info['type'].upper()}: '{text}' (priority: {link_info.get('priority', 'N/A')})")
             
             return link_info
             
         except Exception as e:
-            logger.error(f"❌ Error classifying link: {str(e)}")
+            logger.error(f"Error classifying link: {str(e)}")
             logger.debug(f"  Link text: {link_element.get_text(strip=True)[:50]}")
             logger.debug(f"  URL: {url}")
             return None
-
 
 
 
@@ -525,9 +565,11 @@ class AsdaLinkCrawler:
         
         return True
     
+# Update these methods in asda_link_crawler.py
+
     def _crawl_single_link(self, link_info, current_depth):
         """
-        Crawl a single link with comprehensive logging.
+        Crawl a single link with comprehensive logging and delays.
         
         Args:
             link_info: Link information dictionary
@@ -541,7 +583,7 @@ class AsdaLinkCrawler:
         
         try:
             logger.info("*"*60)
-            logger.info(f"🎯 NAVIGATING TO LINK")
+            logger.info("[TARGET] NAVIGATING TO LINK")
             logger.info(f"  Type: {link_type}")
             logger.info(f"  URL: {url}")
             logger.info(f"  Depth: {current_depth}")
@@ -549,40 +591,61 @@ class AsdaLinkCrawler:
             
             # Store current URL for navigation back
             original_url = self.driver.current_url
-            logger.info(f"📍 Current location before navigation: {original_url}")
+            logger.info(f"[LOCATION] Current location before navigation: {original_url}")
             
             # Navigate to the link
-            logger.info(f"🚗 Navigating to: {url}")
+            logger.info(f"[NAV] Navigating to: {url}")
             self.driver.get(url)
-            logger.info(f"✅ Navigation command sent")
+            logger.info(f"[OK] Navigation command sent")
+            
+            # Apply appropriate delay based on link type
+            if hasattr(self, 'delay_manager'):
+                if link_type == 'subcategories':
+                    self.delay_manager.wait('between_subcategories')
+                elif link_type == 'pagination':
+                    self.delay_manager.wait('between_pages')
+                else:
+                    self.delay_manager.wait('between_requests')
+            else:
+                # Fallback delay
+                time.sleep(3)
             
             # Wait for page load
-            logger.info(f"⏳ Waiting for page to load...")
-            time.sleep(2)
+            logger.info(f"[WAIT] Waiting for page to load...")
             self._wait_for_page_load()
-            logger.info(f"✅ Page loaded")
+            logger.info(f"[OK] Page loaded")
+            
+            # Check for rate limiting
+            if hasattr(self, 'delay_manager'):
+                if self.delay_manager.check_rate_limit(self.driver.page_source):
+                    logger.warning("[RATE LIMIT] Rate limit detected on page")
             
             # Verify we actually navigated
             new_url = self.driver.current_url
-            logger.info(f"📍 New location after navigation: {new_url}")
+            logger.info(f"[LOCATION] New location after navigation: {new_url}")
             
             if new_url == original_url:
-                logger.warning(f"⚠️ WARNING: URL didn't change after navigation!")
+                logger.warning(f"[WARNING] URL didn't change after navigation!")
                 logger.warning(f"  Expected: {url}")
                 logger.warning(f"  Still at: {original_url}")
             
             # Handle popups
-            logger.info(f"🔍 Checking for popups...")
-            self.scraper._handle_popups()
-            logger.info(f"✅ Popup check complete")
+            logger.info(f"[CHECK] Checking for popups...")
+            from .selenium_scraper import PopupHandler
+            popup_handler = PopupHandler(self.driver)
+            popup_handler.handle_popups()
+            
+            # Small delay after popup handling
+            if hasattr(self, 'delay_manager'):
+                self.delay_manager.wait('after_popup_handling')
             
             # Mark as processed
             self.processed_links.add(url)
-            logger.info(f"✅ Marked URL as processed. Total processed: {len(self.processed_links)}")
+            logger.info(f"[OK] Marked URL as processed. Total processed: {len(self.processed_links)}")
             
             # Process based on link type
             success = False
-            logger.info(f"🔄 Processing as {link_type} page...")
+            logger.info(f"[PROCESS] Processing as {link_type} page...")
             
             if link_type in ['departments', 'categories', 'subcategories']:
                 success = self._process_category_page(link_info, current_depth)
@@ -592,38 +655,45 @@ class AsdaLinkCrawler:
                 success = self._process_product_page(link_info, current_depth)
             else:
                 # For other types, just discover more links
-                logger.info(f"📋 Processing as generic page (type: {link_type})")
+                logger.info(f"[GENERIC] Processing as generic page (type: {link_type})")
                 new_links = self.discover_page_links(url)
                 success = len(new_links) > 0
                 logger.info(f"  Found {sum(len(links) for links in new_links.values())} new links")
             
+            # Apply delay after processing
+            if hasattr(self, 'delay_manager'):
+                self.delay_manager.wait('after_product_extraction')
+            
             # Navigate back if needed
             if self.driver.current_url != original_url:
-                logger.info(f"🔙 Navigating back to: {original_url}")
+                logger.info(f"[BACK] Navigating back to: {original_url}")
                 self.driver.get(original_url)
-                time.sleep(1)
-                logger.info(f"✅ Returned to original page")
+                time.sleep(2)  # Small delay after navigation
+                logger.info(f"[OK] Returned to original page")
             
-            logger.info(f"{'✅ SUCCESS' if success else '❌ FAILED'}: Completed processing {link_type} link")
+            logger.info(f"{'[SUCCESS]' if success else '[FAILED]'}: Completed processing {link_type} link")
             return success
             
         except Exception as e:
-            logger.error(f"❌ ERROR crawling single link {url}: {str(e)}")
+            logger.error(f"[ERROR] Error crawling single link {url}: {str(e)}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             self.failed_links.add(url)
             
+            # Increase delay after error
+            if hasattr(self, 'delay_manager'):
+                self.delay_manager.increase_delay()
+                self.delay_manager.wait('after_navigation_error')
+            
             # Try to navigate back on error
             try:
                 if 'original_url' in locals() and self.driver.current_url != original_url:
-                    logger.info(f"🔙 Attempting to navigate back after error...")
+                    logger.info(f"[BACK] Attempting to navigate back after error...")
                     self.driver.get(original_url)
             except:
-                logger.error(f"❌ Failed to navigate back after error")
+                logger.error(f"[ERROR] Failed to navigate back after error")
             
             return False
-
-
 
 
 

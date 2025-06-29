@@ -23,6 +23,7 @@ from django.views.generic import ListView
 from django.core.paginator import Paginator
 from django.db.models import Q, Count
 from django.utils import timezone
+import os
 
 from .models import AsdaCategory, AsdaProduct, CrawlSession
 # Import from the selenium_scraper.py file directly
@@ -80,6 +81,8 @@ def scraper_dashboard(request):
                 session.error_summary = _parse_error_message(session.error_log)
             else:
                 session.error_summary = None
+
+        print(f"Using template: {os.path.abspath('asda_scraper/templates/asda_scraper/dashboard.html')}")
         
         # Get category statistics
         category_stats = AsdaCategory.objects.annotate(
@@ -778,3 +781,128 @@ def session_detail(request, session_id):
 
 # Additional utility functions as before...
 # (keeping all the other functions from the previous version)
+
+
+
+# Add these views to asda_scraper/views.py
+
+@login_required
+@user_passes_test(is_admin_user)
+def delete_products_view(request):
+    """
+    Web interface for deleting products.
+    """
+    if request.method == 'POST':
+        try:
+            # Get deletion parameters
+            delete_type = request.POST.get('delete_type')
+            confirm = request.POST.get('confirm') == 'true'
+            
+            if not confirm:
+                return JsonResponse({
+                    'success': False,
+                    'message': 'Please confirm the deletion'
+                })
+            
+            deleted_count = 0
+            
+            with transaction.atomic():
+                if delete_type == 'all':
+                    # Delete all products
+                    deleted_count = AsdaProduct.objects.all().delete()[0]
+                    # Reset all category counts
+                    AsdaCategory.objects.update(product_count=0)
+                    
+                elif delete_type == 'category':
+                    # Delete by category
+                    category_id = request.POST.get('category_id')
+                    if category_id:
+                        queryset = AsdaProduct.objects.filter(category_id=category_id)
+                        deleted_count = queryset.delete()[0]
+                        # Update category count
+                        category = AsdaCategory.objects.get(pk=category_id)
+                        category.product_count = 0
+                        category.save()
+                
+                elif delete_type == 'old':
+                    # Delete old products
+                    days = int(request.POST.get('days', 30))
+                    cutoff_date = timezone.now() - timezone.timedelta(days=days)
+                    queryset = AsdaProduct.objects.filter(updated_at__lt=cutoff_date)
+                    deleted_count = queryset.delete()[0]
+                    
+                elif delete_type == 'duplicates':
+                    # Delete duplicates
+                    from django.db.models import Count
+                    duplicates = (AsdaProduct.objects
+                                 .values('asda_id')
+                                 .annotate(count=Count('id'))
+                                 .filter(count__gt=1))
+                    
+                    ids_to_delete = []
+                    for item in duplicates:
+                        products = AsdaProduct.objects.filter(
+                            asda_id=item['asda_id']
+                        ).order_by('-created_at')
+                        # Keep newest, delete rest
+                        ids_to_delete.extend(products[1:].values_list('id', flat=True))
+                    
+                    deleted_count = AsdaProduct.objects.filter(
+                        id__in=ids_to_delete
+                    ).delete()[0]
+                
+                elif delete_type == 'out_of_stock':
+                    # Delete out of stock products
+                    queryset = AsdaProduct.objects.filter(in_stock=False)
+                    deleted_count = queryset.delete()[0]
+                
+                # Update category counts
+                for category in AsdaCategory.objects.all():
+                    category.product_count = category.products.count()
+                    category.save()
+                
+                # Log the deletion
+                logger.info(f"User {request.user} deleted {deleted_count} products (type: {delete_type})")
+                
+                return JsonResponse({
+                    'success': True,
+                    'message': f'Successfully deleted {deleted_count} products',
+                    'deleted_count': deleted_count
+                })
+                
+        except Exception as e:
+            logger.error(f"Error deleting products: {str(e)}")
+            return JsonResponse({
+                'success': False,
+                'message': f'Error: {str(e)}'
+            })
+    
+    # GET request - show deletion options
+    context = {
+        'total_products': AsdaProduct.objects.count(),
+        'categories': AsdaCategory.objects.filter(product_count__gt=0).order_by('name'),
+        'out_of_stock_count': AsdaProduct.objects.filter(in_stock=False).count(),
+        'duplicate_count': _get_duplicate_count(),
+    }
+    
+    return render(request, 'asda_scraper/delete_products.html', context)
+
+
+def _get_duplicate_count():
+    """Get count of duplicate products."""
+    from django.db.models import Count
+    duplicates = (AsdaProduct.objects
+                 .values('asda_id')
+                 .annotate(count=Count('id'))
+                 .filter(count__gt=1))
+    
+    total_duplicates = 0
+    for item in duplicates:
+        # Count all but one (the one we'd keep)
+        total_duplicates += item['count'] - 1
+    
+    return total_duplicates
+
+
+# Add URL pattern to urls.py:
+# path('delete-products/', delete_products_view, name='delete_products'),

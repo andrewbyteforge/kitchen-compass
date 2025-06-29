@@ -344,3 +344,48 @@ CATEGORY_VALIDATION = {
         'sale'
     ]
 }
+
+# Updated scraper_config.py with enhanced delay settings
+
+# Delay Configuration
+DELAY_CONFIG = {
+    # Base delays
+    'between_requests': 3.0,           # Between any two requests
+    'between_categories': 60.0,        # 1 minute between main categories
+    'between_subcategories': 15.0,     # 15 seconds between subcategories
+    'between_pages': 5.0,              # Between pagination pages
+    'after_product_extraction': 2.0,   # After extracting products from a page
+    
+    # Random delay ranges (adds randomness to avoid pattern detection)
+    'random_delay_min': 1.0,           # Minimum random delay to add
+    'random_delay_max': 5.0,           # Maximum random delay to add
+    
+    # Longer delays after certain actions
+    'after_popup_handling': 3.0,       # After handling popups
+    'after_navigation_error': 10.0,    # After navigation errors
+    'after_rate_limit_detected': 300.0, # 5 minutes if rate limit detected
+    
+    # Progressive delays (increase delay if errors occur)
+    'progressive_delay_factor': 1.5,   # Multiply delay by this on errors
+    'max_progressive_delay': 120.0,    # Maximum progressive delay (2 minutes)
+}
+
+# Add this to your existing SCRAPER_SETTINGS
+SCRAPER_SETTINGS = {
+    'max_pages_per_category': 5,
+    'max_retries': 3,
+    'retry_delay': 2.0,
+    'request_delay': 1.0,
+    'category_delay': 60.0,  # Updated to 1 minute
+    'scroll_pause_time': 2.0,
+    'popup_check_delay': 2.0,
+    'max_popup_attempts': 3,
+    # Add rate limit detection
+    'rate_limit_indicators': [
+        'too many requests',
+        'rate limit',
+        'access denied',
+        '429',
+        'please slow down'
+    ]
+}

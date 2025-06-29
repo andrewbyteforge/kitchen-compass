@@ -189,33 +189,139 @@ if not DEBUG:
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
 
-# Logging
+# Manual logging configuration
+# Logging configuration (add this AFTER the security settings section, not inside it)
+# Updated LOGGING configuration with Unicode handling for Windows
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "verbose": {"format": "[{levelname}] {asctime} [{name}] {message}", "style": "{", "datefmt": "%Y-%m-%d %H:%M:%S"},
-        "simple": {"format": "{levelname} {message}", "style": "{"},
+        "verbose": {
+            "format": "[{levelname}] {asctime} [{name}] {message}", 
+            "style": "{", 
+            "datefmt": "%Y-%m-%d %H:%M:%S"
+        },
+        "simple": {
+            "format": "{levelname} {message}", 
+            "style": "{"
+        },
     },
     "filters": {
-        "require_debug_false": {"()": "django.utils.log.RequireDebugFalse"},
-        "require_debug_true": {"()": "django.utils.log.RequireDebugTrue"},
+        "require_debug_false": {
+            "()": "django.utils.log.RequireDebugFalse"
+        },
+        "require_debug_true": {
+            "()": "django.utils.log.RequireDebugTrue"
+        },
     },
     "handlers": {
-        "console": {"level": "INFO", "filters": ["require_debug_true"], "class": "logging.StreamHandler", "formatter": "simple"},
-        "file": {"level": "INFO", "class": "logging.handlers.RotatingFileHandler", "filename": LOGS_DIR / "kitchen_compass.log", "maxBytes": 5*1024*1024, "backupCount": 5, "formatter": "verbose"},
-        "error_file": {"level": "ERROR", "class": "logging.handlers.RotatingFileHandler", "filename": LOGS_DIR / "errors.log", "maxBytes": 5*1024*1024, "backupCount": 5, "formatter": "verbose"},
-        "security_file": {"level": "INFO", "class": "logging.handlers.RotatingFileHandler", "filename": LOGS_DIR / "security.log", "maxBytes": 5*1024*1024, "backupCount": 5, "formatter": "verbose"},
+        "console": {
+            "level": "DEBUG",
+            "filters": ["require_debug_true"], 
+            "class": "logging.StreamHandler", 
+            "formatter": "verbose",
+            "stream": "ext://sys.stdout"  # Add explicit stream
+        },
+        "file": {
+            "level": "INFO", 
+            "class": "logging.handlers.RotatingFileHandler", 
+            "filename": str(LOGS_DIR / "kitchen_compass.log"), 
+            "maxBytes": 5*1024*1024, 
+            "backupCount": 5, 
+            "formatter": "verbose",
+            "encoding": "utf-8"  # Add UTF-8 encoding
+        },
+        "error_file": {
+            "level": "ERROR", 
+            "class": "logging.handlers.RotatingFileHandler", 
+            "filename": str(LOGS_DIR / "errors.log"), 
+            "maxBytes": 5*1024*1024, 
+            "backupCount": 5, 
+            "formatter": "verbose",
+            "encoding": "utf-8"  # Add UTF-8 encoding
+        },
+        "security_file": {
+            "level": "INFO", 
+            "class": "logging.handlers.RotatingFileHandler", 
+            "filename": str(LOGS_DIR / "security.log"), 
+            "maxBytes": 5*1024*1024, 
+            "backupCount": 5, 
+            "formatter": "verbose",
+            "encoding": "utf-8"  # Add UTF-8 encoding
+        },
+        "scraper_file": {
+            "level": "DEBUG",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(LOGS_DIR / "asda_scraper.log"),
+            "maxBytes": 10*1024*1024,  # 10MB
+            "backupCount": 5,
+            "formatter": "verbose",
+            "encoding": "utf-8"  # Add UTF-8 encoding
+        },
     },
     "loggers": {
-        "django": {"handlers": ["console","file"], "level": "INFO", "propagate": True},
-        "django.request": {"handlers": ["error_file"], "level": "ERROR", "propagate": False},
-        "django.security": {"handlers": ["security_file"], "level": "INFO", "propagate": False},
-        "auth_hub": {"handlers": ["console","file"], "level": "DEBUG", "propagate": False},
-        "kitchen_compass": {"handlers": ["console","file"], "level": "DEBUG", "propagate": False},
+        "django": {
+            "handlers": ["console", "file"], 
+            "level": "INFO", 
+            "propagate": True
+        },
+        "django.request": {
+            "handlers": ["error_file"], 
+            "level": "ERROR", 
+            "propagate": False
+        },
+        "django.security": {
+            "handlers": ["security_file"], 
+            "level": "INFO", 
+            "propagate": False
+        },
+        "auth_hub": {
+            "handlers": ["console", "file"], 
+            "level": "DEBUG", 
+            "propagate": False
+        },
+        "kitchen_compass": {
+            "handlers": ["console", "file"], 
+            "level": "DEBUG", 
+            "propagate": False
+        },
+        "asda_scraper": {
+            "handlers": ["console", "scraper_file"],
+            "level": "DEBUG",
+            "propagate": False
+        },
+        "asda_scraper.selenium_scraper": {
+            "handlers": ["console", "scraper_file"],
+            "level": "DEBUG",
+            "propagate": False
+        },
+        "asda_scraper.asda_link_crawler": {
+            "handlers": ["console", "scraper_file"],
+            "level": "DEBUG",
+            "propagate": False
+        },
+        "asda_scraper.management.commands.run_asda_crawl": {
+            "handlers": ["console", "scraper_file"],
+            "level": "DEBUG",
+            "propagate": False
+        },
+        # Reduce noise from selenium and urllib3
+        "selenium": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False
+        },
+        "urllib3": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False
+        }
+    },
+    "root": {
+        "handlers": ["console", "file"],
+        "level": "INFO"
     }
 }
-
 # Cache configuration
 CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache","LOCATION": "unique-snowflake"}}
 

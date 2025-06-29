@@ -33,6 +33,66 @@ from .models import AsdaCategory, AsdaProduct, CrawlSession
 logger = logging.getLogger(__name__)
 
 
+"""
+Manual logging setup for ASDA scraper
+Add this at the top of selenium_scraper.py and asda_link_crawler.py
+"""
+
+import logging
+import sys
+from pathlib import Path
+
+# Create logs directory if it doesn't exist
+logs_dir = Path(__file__).resolve().parent.parent / "logs"
+logs_dir.mkdir(exist_ok=True)
+
+# Configure logging manually for the asda_scraper module
+def setup_asda_logging():
+    """Setup logging for ASDA scraper with console and file handlers."""
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        '[%(levelname)s] %(asctime)s [%(name)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.DEBUG)
+    console_handler.setFormatter(formatter)
+    
+    # File handler
+    file_handler = logging.handlers.RotatingFileHandler(
+        logs_dir / 'asda_scraper.log',
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+    
+    # Get the asda_scraper logger and configure it
+    asda_logger = logging.getLogger('asda_scraper')
+    asda_logger.setLevel(logging.DEBUG)
+    asda_logger.handlers.clear()  # Remove any existing handlers
+    asda_logger.addHandler(console_handler)
+    asda_logger.addHandler(file_handler)
+    asda_logger.propagate = False
+    
+    # Also configure submodule loggers
+    for submodule in ['selenium_scraper', 'asda_link_crawler', 'management.commands.run_asda_crawl']:
+        sublogger = logging.getLogger(f'asda_scraper.{submodule}')
+        sublogger.setLevel(logging.DEBUG)
+        sublogger.handlers.clear()
+        sublogger.addHandler(console_handler)
+        sublogger.addHandler(file_handler)
+        sublogger.propagate = False
+    
+    return asda_logger
+
+# Setup logging when module is imported
+logger = setup_asda_logging()
+logger.info("ASDA scraper logging configured successfully")
+
 # Configuration constants (moved inline for now)
 ASDA_CATEGORY_MAPPINGS = {
     # Core Food Categories (Priority 1)
@@ -803,7 +863,7 @@ class ProductExtractor:
                         img_url = img_elem.get('src', '')
                         if img_url:
                             product_data['image_url'] = img_url
-                            logger.debug(f"🖼️ Image: {img_url[:80]}...")
+                            logger.debug(f"[IMAGE] Image: {img_url[:80]}...")
                     
                     # Unit/Size
                     unit_selectors = [
@@ -819,7 +879,7 @@ class ProductExtractor:
                             unit_text = unit_elem.get_text(strip=True)
                             if unit_text:
                                 product_data['unit'] = unit_text
-                                logger.info(f"📏 Unit/Size: {unit_text}")
+                                logger.info(f"[SIZE] Unit/Size: {unit_text}")
                                 break
                     
                     # Was price (for offers)
@@ -833,7 +893,7 @@ class ProductExtractor:
                     # Save the product
                     if self._save_product_from_data(product_data, category):
                         products_saved += 1
-                        logger.info(f"✅ PRODUCT {idx + 1} SAVED SUCCESSFULLY")
+                        logger.info(f"[OK] PRODUCT {idx + 1} SAVED SUCCESSFULLY")
                     else:
                         products_skipped += 1
                         logger.warning(f"⚠️ Failed to save product {idx + 1}")
@@ -972,9 +1032,9 @@ class ProductExtractor:
                     product.category = category
                 product.save()
                 
-                logger.info(f"📝 Updated existing product: {product.name}")
+                logger.info(f"[UPDATE] Updated existing product: {product.name}")
             else:
-                logger.info(f"✨ Created new product: {product.name}")
+                logger.info(f"[NEW] Created new product: {product.name}")
             
             # Update session statistics
             if created:
@@ -1223,6 +1283,7 @@ class SeleniumAsdaScraper:
         self.headless = headless
         self.driver_manager = None
         self.driver = None
+        self.base_url = "https://groceries.asda.com"
         
         logger.info(f"Selenium ASDA Scraper initialized for session {self.session.pk}")
         
@@ -1272,7 +1333,7 @@ class SeleniumAsdaScraper:
         return active_categories == 0
     
     def _crawl_all_products(self) -> ScrapingResult:
-        """Crawl products for all active categories."""
+        """Crawl products for all active categories with intelligent delays."""
         result = ScrapingResult()
         
         try:
@@ -1281,41 +1342,123 @@ class SeleniumAsdaScraper:
             
             logger.info(f"Crawling products for {total_categories} categories")
             
+            # Initialize components
             product_extractor = ProductExtractor(self.driver, self.session)
+            from .asda_link_crawler import AsdaLinkCrawler
+            link_crawler = AsdaLinkCrawler(self)
+            link_crawler.scraper = product_extractor
+            
+            # Initialize delay manager
+            delay_manager = DelayManager()
+            
+            logger.info("="*80)
+            logger.info("LINK CRAWLER INITIALIZED - Will discover and follow subcategory links")
+            logger.info("DELAY STRATEGY: 60 seconds between main categories")
+            logger.info("="*80)
             
             for i, category in enumerate(active_categories, 1):
                 try:
-                    logger.info(f"Crawling category {i}/{total_categories}: {category.name}")
+                    logger.info(f"\n{'='*80}")
+                    logger.info(f"PROCESSING MAIN CATEGORY {i}/{total_categories}: {category.name}")
+                    logger.info(f"{'='*80}")
                     
                     self.session.categories_crawled = i
                     self.session.save()
                     
-                    products_found = product_extractor.extract_products_from_category(category)
-                    result.products_found += products_found
+                    # Build and navigate to category URL
+                    category_url = product_extractor._build_category_url(category)
+                    if not category_url:
+                        logger.warning(f"Skipping {category.name} - no URL mapping")
+                        continue
                     
+                    logger.info(f"Navigating to category: {category_url}")
+                    self.driver.get(category_url)
+                    
+                    # Check for rate limiting
+                    if delay_manager.check_rate_limit(self.driver.page_source):
+                        logger.warning("Rate limit detected - applying extended delay")
+                    
+                    # Wait after navigation
+                    delay_manager.wait('between_requests')
+                    
+                    # Handle popups
+                    popup_handler = PopupHandler(self.driver)
+                    popup_handler.handle_popups()
+                    delay_manager.wait('after_popup_handling')
+                    
+                    # Extract products from main category page
+                    logger.info(f"Extracting products from main category page...")
+                    main_page_products = product_extractor._extract_products_from_page(category)
+                    result.products_found += main_page_products
+                    logger.info(f"Found {main_page_products} products on main category page")
+                    
+                    # Delay after extraction
+                    delay_manager.wait('after_product_extraction')
+                    
+                    # Discover links on this category page
+                    logger.info(f"Discovering subcategory links...")
+                    discovered_links = link_crawler.discover_page_links(category_url)
+                    
+                    # Process subcategory links with delays
+                    subcategory_links = discovered_links.get('subcategories', [])
+                    if subcategory_links:
+                        logger.info(f"Found {len(subcategory_links)} subcategory links to explore")
+                        
+                        # Add delay manager to link crawler
+                        link_crawler.delay_manager = delay_manager
+                        
+                        # Crawl subcategories
+                        link_crawler.crawl_discovered_links(discovered_links, max_depth=2, current_depth=0)
+                    else:
+                        logger.warning(f"No subcategory links found on {category.name} page")
+                    
+                    # Update category timestamp
                     category.last_crawled = timezone.now()
                     category.save()
                     
-                    logger.info(f"Found {products_found} products in {category.name}")
+                    # Reset delay multiplier after successful category
+                    delay_manager.reset_delay()
                     
-                    delay = self.session.crawl_settings.get('delay_between_requests', 2.0)
-                    time.sleep(delay)
+                    # Apply delay between main categories (except for last one)
+                    if i < total_categories:
+                        logger.info(f"[DELAY] Applying 60-second delay before next main category...")
+                        delay_manager.wait('between_categories')
                     
                 except Exception as e:
                     error_msg = f"Error crawling category {category.name}: {e}"
                     logger.error(error_msg)
                     result.errors.append(error_msg)
+                    
+                    # Increase delay after error
+                    delay_manager.increase_delay()
+                    delay_manager.wait('after_navigation_error')
                     continue
             
+            # Update final counts
             result.categories_processed = total_categories
             result.products_saved = self.session.products_found
+            
+            # Keep browser open for inspection
+            logger.info("\n" + "="*80)
+            logger.info("CRAWLING COMPLETE - Browser window will remain open")
+            logger.info("Close the browser window manually when done inspecting")
+            logger.info("="*80)
+            
+            # Wait for user to close browser
+            input("\nPress Enter to close the browser and complete cleanup...")
             
         except Exception as e:
             logger.error(f"Error crawling products: {e}")
             result.errors.append(str(e))
         
         return result
-    
+
+
+
+
+
+
+
     def _cleanup(self):
         """Clean up resources."""
         try:
@@ -1329,3 +1472,75 @@ class SeleniumAsdaScraper:
 def create_selenium_scraper(crawl_session: CrawlSession, headless: bool = False) -> SeleniumAsdaScraper:
     """Factory function to create a Selenium scraper instance."""
     return SeleniumAsdaScraper(crawl_session, headless)
+
+
+# Add this class to selenium_scraper.py
+
+import random
+from datetime import datetime, timedelta
+
+class DelayManager:
+    """Manages intelligent delays to avoid rate limiting."""
+    
+    def __init__(self):
+        self.last_request_time = None
+        self.error_count = 0
+        self.current_delay_multiplier = 1.0
+        
+    def wait(self, delay_type='between_requests', force_delay=None):
+        """
+        Apply intelligent delay based on context.
+        
+        Args:
+            delay_type: Type of delay from DELAY_CONFIG
+            force_delay: Override with specific delay in seconds
+        """
+        if force_delay:
+            delay = force_delay
+        else:
+            # Get base delay from config
+            from .scraper_config import DELAY_CONFIG
+            base_delay = DELAY_CONFIG.get(delay_type, 2.0)
+            
+            # Apply progressive delay if errors occurred
+            delay = base_delay * self.current_delay_multiplier
+            
+            # Add random component
+            random_addition = random.uniform(
+                DELAY_CONFIG['random_delay_min'],
+                DELAY_CONFIG['random_delay_max']
+            )
+            delay += random_addition
+            
+            # Cap at maximum
+            delay = min(delay, DELAY_CONFIG['max_progressive_delay'])
+        
+        logger.info(f"[DELAY] Waiting {delay:.1f} seconds ({delay_type})")
+        time.sleep(delay)
+        self.last_request_time = datetime.now()
+        
+    def increase_delay(self):
+        """Increase delay multiplier after errors."""
+        from .scraper_config import DELAY_CONFIG
+        self.error_count += 1
+        self.current_delay_multiplier *= DELAY_CONFIG['progressive_delay_factor']
+        logger.warning(f"[DELAY] Increased delay multiplier to {self.current_delay_multiplier:.2f} after {self.error_count} errors")
+        
+    def reset_delay(self):
+        """Reset delay multiplier after successful operations."""
+        if self.error_count > 0:
+            logger.info("[DELAY] Resetting delay multiplier after successful operation")
+        self.error_count = 0
+        self.current_delay_multiplier = 1.0
+        
+    def check_rate_limit(self, page_source):
+        """Check if page indicates rate limiting."""
+        from .scraper_config import SCRAPER_SETTINGS
+        
+        page_text = page_source.lower()
+        for indicator in SCRAPER_SETTINGS['rate_limit_indicators']:
+            if indicator in page_text:
+                logger.error(f"[RATE LIMIT] Detected rate limit indicator: '{indicator}'")
+                self.wait('after_rate_limit_detected')
+                return True
+        return False

@@ -1,0 +1,236 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Delete Products - ASDA Scraper{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-12">
+            <h1 class="mb-4">Delete ASDA Products</h1>
+            
+            <!-- Warning Alert -->
+            <div class="alert alert-danger" role="alert">
+                <h4 class="alert-heading"><i class="bi bi-exclamation-triangle"></i> Warning</h4>
+                <p>Deleting products is a permanent action and cannot be undone. Please be careful when selecting deletion options.</p>
+            </div>
+            
+            <!-- Current Statistics -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Current Database Statistics</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-md-3">
+                            <h3>{{ total_products }}</h3>
+                            <p class="text-muted">Total Products</p>
+                        </div>
+                        <div class="col-md-3">
+                            <h3>{{ categories|length }}</h3>
+                            <p class="text-muted">Categories with Products</p>
+                        </div>
+                        <div class="col-md-3">
+                            <h3>{{ out_of_stock_count }}</h3>
+                            <p class="text-muted">Out of Stock</p>
+                        </div>
+                        <div class="col-md-3">
+                            <h3>{{ duplicate_count }}</h3>
+                            <p class="text-muted">Duplicates</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Deletion Options -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Deletion Options</h5>
+                </div>
+                <div class="card-body">
+                    <form id="deleteForm" method="post">
+                        {% csrf_token %}
+                        
+                        <!-- Delete All -->
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="radio" name="delete_type" id="deleteAll" value="all">
+                            <label class="form-check-label" for="deleteAll">
+                                <strong class="text-danger">Delete ALL Products</strong>
+                                <br>
+                                <small class="text-muted">This will remove all {{ total_products }} products from the database</small>
+                            </label>
+                        </div>
+                        
+                        <!-- Delete by Category -->
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="radio" name="delete_type" id="deleteCategory" value="category">
+                            <label class="form-check-label" for="deleteCategory">
+                                <strong>Delete by Category</strong>
+                            </label>
+                            <div class="ms-4 mt-2" style="display: none;" id="categorySelect">
+                                <select class="form-select" name="category_id">
+                                    <option value="">Select a category...</option>
+                                    {% for category in categories %}
+                                    <option value="{{ category.id }}">{{ category.name }} ({{ category.product_count }} products)</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Delete Old Products -->
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="radio" name="delete_type" id="deleteOld" value="old">
+                            <label class="form-check-label" for="deleteOld">
+                                <strong>Delete Old Products</strong>
+                            </label>
+                            <div class="ms-4 mt-2" style="display: none;" id="daysSelect">
+                                <label>Products older than:</label>
+                                <div class="input-group" style="max-width: 200px;">
+                                    <input type="number" class="form-control" name="days" value="30" min="1">
+                                    <span class="input-group-text">days</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Delete Duplicates -->
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="radio" name="delete_type" id="deleteDuplicates" value="duplicates">
+                            <label class="form-check-label" for="deleteDuplicates">
+                                <strong>Delete Duplicate Products</strong>
+                                <br>
+                                <small class="text-muted">Keeps the newest version of each product ({{ duplicate_count }} duplicates found)</small>
+                            </label>
+                        </div>
+                        
+                        <!-- Delete Out of Stock -->
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="radio" name="delete_type" id="deleteOutOfStock" value="out_of_stock">
+                            <label class="form-check-label" for="deleteOutOfStock">
+                                <strong>Delete Out of Stock Products</strong>
+                                <br>
+                                <small class="text-muted">Remove {{ out_of_stock_count }} products marked as out of stock</small>
+                            </label>
+                        </div>
+                        
+                        <!-- Confirmation -->
+                        <hr>
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="confirmDelete" name="confirm" value="true">
+                            <label class="form-check-label" for="confirmDelete">
+                                <strong>I understand this action cannot be undone</strong>
+                            </label>
+                        </div>
+                        
+                        <!-- Buttons -->
+                        <div class="d-flex justify-content-between">
+                            <a href="{% url 'asda_scraper:dashboard' %}" class="btn btn-secondary">
+                                <i class="bi bi-arrow-left"></i> Back to Dashboard
+                            </a>
+                            <button type="submit" class="btn btn-danger" id="deleteButton" disabled>
+                                <i class="bi bi-trash"></i> Delete Products
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Show/hide additional options
+document.querySelectorAll('input[name="delete_type"]').forEach(radio => {
+    radio.addEventListener('change', function() {
+        document.getElementById('categorySelect').style.display = 'none';
+        document.getElementById('daysSelect').style.display = 'none';
+        
+        if (this.value === 'category') {
+            document.getElementById('categorySelect').style.display = 'block';
+        } else if (this.value === 'old') {
+            document.getElementById('daysSelect').style.display = 'block';
+        }
+        
+        checkFormValidity();
+    });
+});
+
+// Enable/disable delete button based on confirmation
+document.getElementById('confirmDelete').addEventListener('change', checkFormValidity);
+
+function checkFormValidity() {
+    const deleteType = document.querySelector('input[name="delete_type"]:checked');
+    const confirmed = document.getElementById('confirmDelete').checked;
+    const deleteButton = document.getElementById('deleteButton');
+    
+    let valid = deleteType && confirmed;
+    
+    // Additional validation for category selection
+    if (deleteType && deleteType.value === 'category') {
+        const categorySelect = document.querySelector('select[name="category_id"]');
+        valid = valid && categorySelect.value !== '';
+    }
+    
+    deleteButton.disabled = !valid;
+}
+
+// Handle form submission
+document.getElementById('deleteForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const deleteType = document.querySelector('input[name="delete_type"]:checked').value;
+    let confirmMsg = 'Are you sure you want to ';
+    
+    switch(deleteType) {
+        case 'all':
+            confirmMsg += 'delete ALL products?';
+            break;
+        case 'category':
+            const categoryName = document.querySelector('select[name="category_id"] option:checked').text;
+            confirmMsg += `delete all products in ${categoryName}?`;
+            break;
+        case 'old':
+            const days = document.querySelector('input[name="days"]').value;
+            confirmMsg += `delete products older than ${days} days?`;
+            break;
+        case 'duplicates':
+            confirmMsg += 'delete duplicate products?';
+            break;
+        case 'out_of_stock':
+            confirmMsg += 'delete out of stock products?';
+            break;
+    }
+    
+    if (confirm(confirmMsg)) {
+        // Show loading state
+        const deleteButton = document.getElementById('deleteButton');
+        deleteButton.disabled = true;
+        deleteButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Deleting...';
+        
+        // Submit form via AJAX
+        fetch(this.action, {
+            method: 'POST',
+            body: new FormData(this),
+            headers: {
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                window.location.href = "{% url 'asda_scraper:dashboard' %}";
+            } else {
+                alert('Error: ' + data.message);
+                deleteButton.disabled = false;
+                deleteButton.innerHTML = '<i class="bi bi-trash"></i> Delete Products';
+            }
+        })
+        .catch(error => {
+            alert('An error occurred: ' + error);
+            deleteButton.disabled = false;
+            deleteButton.innerHTML = '<i class="bi bi-trash"></i> Delete Products';
+        });
+    }
+});
+</script>
+{% endblock %}

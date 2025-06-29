@@ -67,81 +67,130 @@ class AsdaCategoryAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related('parent_category')
 
 
+# Add this to your asda_scraper/admin.py file in the AsdaProductAdmin class
+
+from django.contrib import admin, messages
+from django.db.models import Count
+from .models import AsdaProduct, AsdaCategory
+
 @admin.register(AsdaProduct)
 class AsdaProductAdmin(admin.ModelAdmin):
     """
-    Admin interface for ASDA products.
-    
-    Provides comprehensive product management with filtering, searching,
-    and bulk operations for product data.
+    Admin interface for ASDA products with enhanced delete capabilities.
     """
     list_display = [
         'name', 
-        'price_display', 
-        'unit', 
+        'price', 
         'category', 
-        'in_stock', 
-        'special_offer_display',
+        'in_stock',
+        'created_at',
         'updated_at'
     ]
     list_filter = [
-        'in_stock', 
-        'category', 
-        'created_at', 
-        'updated_at'
+        'category',
+        'in_stock',
+        'created_at',
     ]
-    search_fields = ['name', 'asda_id', 'description']
-    list_editable = ['in_stock']
-    readonly_fields = ['asda_id', 'created_at', 'updated_at', 'price_per_unit_display']
-    fieldsets = (
-        ('Product Information', {
-            'fields': ('name', 'asda_id', 'description', 'category')
-        }),
-        ('Pricing & Availability', {
-            'fields': ('price', 'was_price', 'unit', 'price_per_unit', 'price_per_unit_display', 'in_stock', 'special_offer')
-        }),
-        ('Media & Links', {
-            'fields': ('image_url', 'product_url')
-        }),
-        ('Ratings & Reviews', {
-            'fields': ('rating', 'review_count')
-        }),
-        ('Additional Data', {
-            'fields': ('nutritional_info',),
-            'classes': ('collapse',)
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
-    )
+    search_fields = ['name', 'asda_id']
+    list_per_page = 50
     
-    def price_display(self, obj):
-        """Display price with currency symbol."""
-        return f"£{obj.price}"
-    price_display.short_description = 'Price'
+    actions = [
+        'delete_all_products',
+        'delete_out_of_stock',
+        'delete_by_category',
+    ]
     
-    def special_offer_display(self, obj):
-        """Display special offer with highlight if present."""
-        if obj.special_offer:
-            return format_html(
-                '<span style="background-color: #ffeaa7; padding: 2px 4px; border-radius: 3px;">{}</span>',
-                obj.special_offer
+    def delete_all_products(self, request, queryset):
+        """Delete ALL products in the database (use with caution)."""
+        if not request.user.is_superuser:
+            self.message_user(request, "Only superusers can perform this action.", messages.ERROR)
+            return
+            
+        # Get total count
+        total_count = AsdaProduct.objects.count()
+        
+        if total_count > 100:
+            self.message_user(
+                request, 
+                f"Cannot delete {total_count} products via admin. Use management command instead.",
+                messages.WARNING
             )
-        return '-'
-    special_offer_display.short_description = 'Special Offer'
+            return
+        
+        # Delete all products
+        deleted = AsdaProduct.objects.all().delete()
+        
+        # Reset category counts
+        AsdaCategory.objects.update(product_count=0)
+        
+        self.message_user(
+            request,
+            f"Successfully deleted {deleted[0]} products and reset category counts.",
+            messages.SUCCESS
+        )
     
-    def price_per_unit_display(self, obj):
-        """Display calculated price per unit."""
-        price_per_unit = obj.get_price_per_unit()
-        if price_per_unit:
-            return f"£{price_per_unit:.2f}/kg"
-        return 'N/A'
-    price_per_unit_display.short_description = 'Price per Unit'
+    delete_all_products.short_description = "⚠️ DELETE ALL PRODUCTS (Use with caution!)"
     
-    def get_queryset(self, request):
-        """Optimize queryset with select_related."""
-        return super().get_queryset(request).select_related('category')
+    def delete_out_of_stock(self, request, queryset):
+        """Delete all out of stock products."""
+        out_of_stock = AsdaProduct.objects.filter(in_stock=False)
+        count = out_of_stock.count()
+        
+        if count == 0:
+            self.message_user(request, "No out of stock products found.", messages.INFO)
+            return
+            
+        out_of_stock.delete()
+        
+        # Update category counts
+        for category in AsdaCategory.objects.all():
+            category.product_count = category.products.count()
+            category.save()
+        
+        self.message_user(
+            request,
+            f"Successfully deleted {count} out of stock products.",
+            messages.SUCCESS
+        )
+    
+    delete_out_of_stock.short_description = "Delete all out of stock products"
+    
+    def delete_by_category(self, request, queryset):
+        """Delete products from selected items' categories."""
+        categories = set(queryset.values_list('category', flat=True))
+        
+        total_deleted = 0
+        for category_id in categories:
+            if category_id:
+                count = AsdaProduct.objects.filter(category_id=category_id).delete()[0]
+                total_deleted += count
+                
+                # Update category count
+                try:
+                    category = AsdaCategory.objects.get(pk=category_id)
+                    category.product_count = 0
+                    category.save()
+                except AsdaCategory.DoesNotExist:
+                    pass
+        
+        self.message_user(
+            request,
+            f"Deleted {total_deleted} products from {len(categories)} categories.",
+            messages.SUCCESS
+        )
+    
+    delete_by_category.short_description = "Delete all products in selected categories"
+
+
+
+
+
+
+
+
+
+
+
 
 
 @admin.register(CrawlSession)

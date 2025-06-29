@@ -21,4 +21,10 @@ urlpatterns = [
     # Data views
     path('categories/', views.CategoryListView.as_view(), name='categories'),
     path('products/', views.ProductListView.as_view(), name='products'),
+    
+    # Session management
+    path('session/<int:session_id>/', views.session_detail, name='session_detail'),
+    
+    # Delete products
+    path('delete-products/', views.delete_products_view, name='delete_products'),
 ]
