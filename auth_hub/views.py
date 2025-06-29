@@ -862,3 +862,14 @@ def microsoft_disconnect(request):
         messages.error(request, 'Error disconnecting Microsoft account.')
     
     return redirect('meal_planner:calendar_sync_settings')
+
+
+def is_admin_user(user):
+    """
+    Check if user has admin privileges for ASDA scraper.
+    """
+    # Replace with your actual admin email
+    ADMIN_EMAILS = [
+        'your-actual-email@domain.com',  # Replace with your real email
+    ]
+    return user.is_authenticated and (user.email in ADMIN_EMAILS or user.is_superuser)

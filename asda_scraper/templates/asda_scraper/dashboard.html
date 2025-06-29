@@ -1,0 +1,337 @@
+{% extends "asda_scraper/base.html" %}
+{% load static %}
+
+{% block scraper_content %}
+<!-- Crawl Control Panel -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card crawl-controls">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h4 class="card-title mb-1">
+                            <i class="bi bi-play-circle me-2"></i>
+                            Crawl Control
+                        </h4>
+                        <div id="crawl-status">
+                            {% if current_session %}
+                                <p class="mb-2">
+                                    <span class="me-3">
+                                        Status: <span id="status-badge" class="status-badge status-{{ current_session.status|lower }}">
+                                            {{ current_session.get_status_display }}
+                                        </span>
+                                    </span>
+                                    <span class="me-3">Session ID: {{ current_session.pk }}</span>
+                                    <span>Started: {{ current_session.start_time|date:"M d, Y H:i" }}</span>
+                                </p>
+                                <div id="progress-info">
+                                    <div class="row text-center">
+                                        <div class="col-md-3">
+                                            <div class="h5 mb-0">{{ current_session.categories_crawled }}</div>
+                                            <small>Categories</small>
+                                        </div>
+                                        <div class="col-md-3">
+                                            <div class="h5 mb-0">{{ current_session.products_found }}</div>
+                                            <small>Found</small>
+                                        </div>
+                                        <div class="col-md-3">
+                                            <div class="h5 mb-0">{{ current_session.products_updated }}</div>
+                                            <small>Updated</small>
+                                        </div>
+                                        <div class="col-md-3">
+                                            <div class="h5 mb-0">
+                                                {% if current_session.get_duration %}
+                                                    {{ current_session.get_duration }}
+                                                {% else %}
+                                                    0s
+                                                {% endif %}
+                                            </div>
+                                            <small>Duration</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            {% else %}
+                                <p class="mb-2">
+                                    <span id="status-badge" class="status-badge bg-secondary">IDLE</span>
+                                    <span class="ms-3">No active crawl session</span>
+                                </p>
+                                <div id="progress-info">
+                                    <p class="mb-0">Ready to start a new crawl session</p>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        {% if current_session and current_session.status in 'PENDING,RUNNING' %}
+                            <button id="start-crawl-btn" class="btn btn-success btn-lg me-2" style="display: none;" onclick="startCrawl()">
+                                <i class="bi bi-play-fill"></i> Start Crawl
+                            </button>
+                            <button id="stop-crawl-btn" class="btn btn-danger btn-lg" onclick="stopCrawl({{ current_session.pk }})">
+                                <i class="bi bi-stop-fill"></i> Stop Crawl
+                            </button>
+                        {% else %}
+                            <button id="start-crawl-btn" class="btn btn-success btn-lg me-2" onclick="startCrawl()">
+                                <i class="bi bi-play-fill"></i> Start Crawl
+                            </button>
+                            <button id="stop-crawl-btn" class="btn btn-danger btn-lg" style="display: none;" onclick="stopCrawl()">
+                                <i class="bi bi-stop-fill"></i> Stop Crawl
+                            </button>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Statistics Grid -->
+<div class="row mb-4">
+    <div class="col-md-3 mb-3">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <i class="bi bi-box-seam text-primary" style="font-size: 2.5rem;"></i>
+                <h3 class="mt-2 mb-0">{{ total_products|default:0 }}</h3>
+                <p class="text-muted mb-0">Total Products</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 mb-3">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <i class="bi bi-tags text-success" style="font-size: 2.5rem;"></i>
+                <h3 class="mt-2 mb-0">{{ total_categories|default:0 }}</h3>
+                <p class="text-muted mb-0">Categories</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 mb-3">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <i class="bi bi-check-circle text-info" style="font-size: 2.5rem;"></i>
+                <h3 class="mt-2 mb-0">{{ active_categories|default:0 }}</h3>
+                <p class="text-muted mb-0">Active Categories</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 mb-3">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <i class="bi bi-clock-history text-warning" style="font-size: 2.5rem;"></i>
+                <h3 class="mt-2 mb-0">{{ recent_sessions|length }}</h3>
+                <p class="text-muted mb-0">Recent Sessions</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Activity -->
+<div class="row">
+    <!-- Recent Sessions -->
+    <div class="col-md-6 mb-4">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="bi bi-clock-history me-2"></i>
+                    Recent Crawl Sessions
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if recent_sessions %}
+                    <div class="list-group list-group-flush">
+                        {% for session in recent_sessions %}
+                            <div class="list-group-item border-0 px-0">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h6 class="mb-1">Session #{{ session.pk }}</h6>
+                                        <p class="mb-1 small text-muted">
+                                            Started by {{ session.user.username }} on {{ session.start_time|date:"M d, Y H:i" }}
+                                        </p>
+                                        <small>
+                                            {{ session.products_found }} products found, 
+                                            {{ session.products_updated }} updated
+                                        </small>
+                                    </div>
+                                    <span class="status-badge status-{{ session.status|lower }}">
+                                        {{ session.get_status_display }}
+                                    </span>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-clock-history text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No crawl sessions yet</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Top Categories -->
+    <div class="col-md-6 mb-4">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="bi bi-bar-chart me-2"></i>
+                    Top Categories by Products
+                </h5>
+                <a href="{% url 'asda_scraper:categories' %}" class="btn btn-sm btn-outline-primary">
+                    View All
+                </a>
+            </div>
+            <div class="card-body">
+                {% if category_stats %}
+                    <div class="list-group list-group-flush">
+                        {% for category in category_stats %}
+                            <div class="list-group-item border-0 px-0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <h6 class="mb-1">{{ category.name }}</h6>
+                                        <small class="text-muted">{{ category.url_code }}</small>
+                                    </div>
+                                    <span class="badge bg-primary rounded-pill">{{ category.total_products }}</span>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-tags text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-2">No categories found</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Latest Products -->
+{% if latest_products %}
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="bi bi-box me-2"></i>
+                    Latest Products
+                </h5>
+                <a href="{% url 'asda_scraper:products' %}" class="btn btn-sm btn-outline-primary">
+                    View All Products
+                </a>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    {% for product in latest_products %}
+                        <div class="col-md-6 col-lg-4 mb-3">
+                            <div class="card product-card h-100">
+                                <div class="card-body">
+                                    <h6 class="card-title">{{ product.name|truncatechars:40 }}</h6>
+                                    <p class="card-text">
+                                        <span class="h5 text-success">£{{ product.price }}</span>
+                                        {% if product.unit %}
+                                            <small class="text-muted">/ {{ product.unit }}</small>
+                                        {% endif %}
+                                    </p>
+                                    <small class="text-muted">
+                                        <i class="bi bi-tag me-1"></i>{{ product.category.name }}
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- JavaScript for AJAX functionality -->
+<script>
+function startCrawl() {
+    // Get form data
+    const formData = new FormData();
+    formData.append('max_products', '100');
+    formData.append('delay', '1.0');
+    formData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
+    
+    fetch('{% url "asda_scraper:start_crawl" %}', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAlert('success', data.message);
+            // Refresh page after a short delay
+            setTimeout(() => {
+                location.reload();
+            }, 1500);
+        } else {
+            showAlert('danger', data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showAlert('danger', 'An error occurred while starting the crawl.');
+    });
+}
+
+function stopCrawl(sessionId = null) {
+    const formData = new FormData();
+    if (sessionId) {
+        formData.append('session_id', sessionId);
+    }
+    formData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
+    
+    fetch('{% url "asda_scraper:stop_crawl" %}', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAlert('info', data.message);
+            // Refresh page after a short delay
+            setTimeout(() => {
+                location.reload();
+            }, 1500);
+        } else {
+            showAlert('danger', data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showAlert('danger', 'An error occurred while stopping the crawl.');
+    });
+}
+
+function showAlert(type, message) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    // Insert at the top of the container
+    const container = document.querySelector('.scraper-dashboard');
+    container.insertBefore(alertDiv, container.firstChild);
+    
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+        alertDiv.remove();
+    }, 5000);
+}
+</script>
+
+<!-- CSRF Token for AJAX requests -->
+{% csrf_token %}
+{% endblock %}

@@ -11,8 +11,11 @@ from django.conf.urls.static import static
 from django.views.generic import RedirectView
 
 urlpatterns = [
-    # Admin
+    # Django Admin
     path('admin/', admin.site.urls),
+    
+    # ASDA Scraper app
+    path('scraper/', include('asda_scraper.urls')),
     
     # Auth Hub app
     path('auth/', include('auth_hub.urls', namespace='auth_hub')),
@@ -20,15 +23,14 @@ urlpatterns = [
     # Allauth URLs (for social auth in future)
     path('accounts/', include('allauth.urls')),
 
-
+    # Recipe Hub app
     path('recipes/', include('recipe_hub.urls')),
 
-
+    # Meal Planner app
     path('meals/', include('meal_planner.urls')),
     
     # Home page redirect to login
     path('', RedirectView.as_view(url='/auth/login/', permanent=False), name='home'),
-   
 ]
 
 # Serve media files in development

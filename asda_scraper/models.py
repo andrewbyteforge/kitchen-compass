@@ -1,666 +1,375 @@
 """
-Asda product and category models for storing scraped grocery data.
+ASDA Scraper Models
 
-This module contains Django models for organizing and storing:
-- Asda product categories with hierarchical structure
-- Product information including prices and availability
-- Historical price tracking
-
-File: auth_hub/models.py (add to existing models)
+This module contains models for storing scraped ASDA product data,
+categories, and crawl session information.
 """
 
-from django.db import models
-from django.core.validators import MinValueValidator
-from decimal import Decimal
 import logging
+from django.db import models
+from django.contrib.auth.models import User
+from django.utils import timezone
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 logger = logging.getLogger(__name__)
 
 
 class AsdaCategory(models.Model):
     """
-    Represents a product category from Asda groceries.
+    Model for ASDA product categories discovered during scraping.
     
-    Supports hierarchical categories with parent-child relationships
-    for organizing products in a tree structure.
+    Attributes:
+        name: Display name of the category (e.g., 'Fruit, Veg & Flowers')
+        url_code: The numeric code used in ASDA URLs for this category
+        parent_category: Optional parent category for hierarchical structure
+        is_active: Whether this category should be crawled
+        last_crawled: When this category was last scraped
+        product_count: Number of products found in this category
     """
-    
     name = models.CharField(
-        max_length=200,
-        help_text="Category name as displayed on Asda website"
+        max_length=255,
+        help_text="Display name of the category"
     )
-    
-    slug = models.SlugField(
-        max_length=250,
+    url_code = models.CharField(
+        max_length=50,
         unique=True,
-        blank=True,
-        help_text="URL-friendly version of category name"
+        help_text="Numeric code used in ASDA URLs"
     )
-    
-    url = models.URLField(
-        blank=True,
-        null=True,
-        help_text="Direct URL to category page on Asda website"
-    )
-    
-    parent = models.ForeignKey(
+    parent_category = models.ForeignKey(
         'self',
         on_delete=models.CASCADE,
-        blank=True,
         null=True,
-        related_name='subcategories',
-        help_text="Parent category for hierarchical organization"
-    )
-    
-    level = models.PositiveIntegerField(
-        default=1,
-        validators=[MinValueValidator(1)],
-        help_text="Hierarchy level (1=main category, 2=subcategory, etc.)"
-    )
-    
-    description = models.TextField(
         blank=True,
-        help_text="Category description or notes"
+        related_name='subcategories',
+        help_text="Parent category if this is a subcategory"
     )
-    
     is_active = models.BooleanField(
         default=True,
-        help_text="Whether this category is currently being tracked"
+        help_text="Whether this category should be included in scraping"
     )
-    
-    product_count = models.PositiveIntegerField(
-        default=0,
-        help_text="Cached count of products in this category"
-    )
-    
-    last_scraped = models.DateTimeField(
-        blank=True,
+    last_crawled = models.DateTimeField(
         null=True,
-        help_text="Last time this category was scraped for products"
+        blank=True,
+        help_text="Last time this category was scraped"
     )
-    
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        help_text="Timestamp when category was first created"
+    product_count = models.IntegerField(
+        default=0,
+        help_text="Number of products found in this category"
     )
-    
-    updated_at = models.DateTimeField(
-        auto_now=True,
-        help_text="Timestamp when category was last updated"
-    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        """Meta configuration for AsdaCategory model."""
-        
-        verbose_name = "Asda Category"
-        verbose_name_plural = "Asda Categories"
-        ordering = ['level', 'name']
-        indexes = [
-            models.Index(fields=['parent', 'level']),
-            models.Index(fields=['is_active', 'last_scraped']),
-            models.Index(fields=['slug']),
-        ]
-        constraints = [
-            models.CheckConstraint(
-                check=models.Q(level__gte=1),
-                name='category_level_positive'
-            )
-        ]
+        verbose_name = "ASDA Category"
+        verbose_name_plural = "ASDA Categories"
+        ordering = ['name']
     
-    def __str__(self) -> str:
-        """String representation of category."""
-        if self.parent:
-            return f"{self.parent.name} > {self.name}"
+    def __str__(self):
+        """String representation of the category."""
+        if self.parent_category:
+            return f"{self.parent_category.name} > {self.name}"
         return self.name
     
+    def get_full_path(self):
+        """Get the full category path from root to this category."""
+        path = [self.name]
+        parent = self.parent_category
+        while parent:
+            path.append(parent.name)
+            parent = parent.parent_category
+        return ' > '.join(reversed(path))
+    
     def save(self, *args, **kwargs):
-        """
-        Custom save method to generate slug and update product count.
-        
-        Automatically creates URL-friendly slug from category name
-        and maintains product count cache.
-        """
-        try:
-            if not self.slug:
-                from django.utils.text import slugify
-                base_slug = slugify(self.name)
-                slug = base_slug
-                counter = 1
-                
-                while AsdaCategory.objects.filter(slug=slug).exclude(pk=self.pk).exists():
-                    slug = f"{base_slug}-{counter}"
-                    counter += 1
-                
-                self.slug = slug
-            
-            super().save(*args, **kwargs)
-            
-            # Update product count after saving
-            self.update_product_count()
-            
-            logger.info(f"Saved Asda category: {self.name} (Level {self.level})")
-            
-        except Exception as e:
-            logger.error(f"Error saving AsdaCategory {self.name}: {str(e)}")
-            raise
-    
-    def update_product_count(self):
-        """Update the cached product count for this category."""
-        try:
-            count = self.products.filter(is_available=True).count()
-            if count != self.product_count:
-                AsdaCategory.objects.filter(pk=self.pk).update(product_count=count)
-                logger.debug(f"Updated product count for {self.name}: {count}")
-        except Exception as e:
-            logger.error(f"Error updating product count for {self.name}: {str(e)}")
-    
-    def get_all_products(self):
-        """
-        Get all products in this category and its subcategories.
-        
-        Returns:
-            QuerySet: All products in category hierarchy
-        """
-        try:
-            # Get all descendant categories
-            descendant_ids = [self.pk]
-            
-            def get_descendants(category_id):
-                children = AsdaCategory.objects.filter(parent_id=category_id).values_list('id', flat=True)
-                for child_id in children:
-                    descendant_ids.append(child_id)
-                    get_descendants(child_id)
-            
-            get_descendants(self.pk)
-            
-            return AsdaProduct.objects.filter(
-                category_id__in=descendant_ids,
-                is_available=True
-            )
-            
-        except Exception as e:
-            logger.error(f"Error getting products for category {self.name}: {str(e)}")
-            return AsdaProduct.objects.none()
-    
-    def get_breadcrumb(self):
-        """
-        Get breadcrumb path for this category.
-        
-        Returns:
-            List[AsdaCategory]: Path from root to this category
-        """
-        breadcrumb = []
-        current = self
-        
-        while current:
-            breadcrumb.insert(0, current)
-            current = current.parent
-        
-        return breadcrumb
+        """Override save to log category changes."""
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+        if is_new:
+            logger.info(f"New ASDA category created: {self.name} (URL code: {self.url_code})")
+        else:
+            logger.info(f"ASDA category updated: {self.name}")
 
 
 class AsdaProduct(models.Model):
     """
-    Represents a product from Asda groceries with pricing information.
+    Model for storing individual ASDA product information.
     
-    Stores product details, current pricing, and tracks availability
-    for use in menu planning and cost calculations.
+    Enhanced with additional fields for comprehensive product data including
+    ratings, sale prices, and detailed pricing information.
+    
+    Attributes:
+        name: Product name
+        price: Current price in pounds
+        was_price: Original price if item is on sale
+        unit: Unit of measurement (e.g., 'each', 'kg', '100g')
+        price_per_unit: Price per unit string (e.g., '£6.83/kg')
+        description: Product description
+        image_url: URL to product image
+        product_url: Direct URL to product page
+        asda_id: ASDA's internal product ID
+        category: Category this product belongs to
+        in_stock: Whether product is currently in stock
+        special_offer: Any special offer text
+        rating: Product rating out of 5
+        review_count: Number of reviews (e.g., '50+')
+        nutritional_info: JSON field for nutritional information
     """
-    
     name = models.CharField(
-        max_length=300,
-        help_text="Product name as displayed on Asda website"
+        max_length=500,
+        help_text="Product name as shown on ASDA website"
     )
-    
-    slug = models.SlugField(
-        max_length=350,
-        unique=True,
+    price = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        validators=[MinValueValidator(0)],
+        help_text="Current price in pounds"
+    )
+    was_price = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        null=True,
         blank=True,
-        help_text="URL-friendly version of product name"
+        validators=[MinValueValidator(0)],
+        help_text="Original price if item is on sale"
     )
-    
+    unit = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Unit of measurement (e.g., 'each', 'kg', '100g')"
+    )
+    price_per_unit = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Price per unit string (e.g., '£6.83/kg')"
+    )
+    description = models.TextField(
+        blank=True,
+        help_text="Product description"
+    )
+    image_url = models.URLField(
+        blank=True,
+        help_text="URL to product image"
+    )
+    product_url = models.URLField(
+        unique=True,
+        help_text="Direct URL to product page on ASDA"
+    )
+    asda_id = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text="ASDA's internal product ID"
+    )
     category = models.ForeignKey(
         AsdaCategory,
         on_delete=models.CASCADE,
         related_name='products',
         help_text="Category this product belongs to"
     )
-    
-    price = models.DecimalField(
-        max_digits=8,
-        decimal_places=2,
-        blank=True,
-        null=True,
-        validators=[MinValueValidator(Decimal('0.01'))],
-        help_text="Current price in GBP"
-    )
-    
-    price_text = models.CharField(
-        max_length=50,
-        blank=True,
-        help_text="Raw price text as scraped from website"
-    )
-    
-    price_per_unit = models.DecimalField(
-        max_digits=8,
-        decimal_places=2,
-        blank=True,
-        null=True,
-        help_text="Price per unit (kg, litre, etc.)"
-    )
-    
-    unit_type = models.CharField(
-        max_length=20,
-        blank=True,
-        help_text="Unit type (kg, g, ml, l, each, etc.)"
-    )
-    
-    description = models.TextField(
-        blank=True,
-        help_text="Product description or details"
-    )
-    
-    brand = models.CharField(
-        max_length=100,
-        blank=True,
-        help_text="Product brand name"
-    )
-    
-    url = models.URLField(
-        blank=True,
-        null=True,
-        help_text="Direct URL to product page on Asda website"
-    )
-    
-    image_url = models.URLField(
-        blank=True,
-        null=True,
-        help_text="URL to product image"
-    )
-    
-    barcode = models.CharField(
-        max_length=20,
-        blank=True,
-        help_text="Product barcode/EAN if available"
-    )
-    
-    is_available = models.BooleanField(
+    in_stock = models.BooleanField(
         default=True,
         help_text="Whether product is currently available"
     )
-    
-    is_on_offer = models.BooleanField(
-        default=False,
-        help_text="Whether product is currently on special offer"
-    )
-    
-    original_price = models.DecimalField(
-        max_digits=8,
-        decimal_places=2,
-        blank=True,
-        null=True,
-        help_text="Original price before any discounts"
-    )
-    
-    offer_text = models.CharField(
+    special_offer = models.CharField(
         max_length=200,
         blank=True,
-        help_text="Special offer description"
+        help_text="Any special offer or promotion text (e.g., 'Rollback')"
     )
-    
-    nutritional_info = models.JSONField(
-        blank=True,
+    rating = models.DecimalField(
+        max_digits=3,
+        decimal_places=2,
         null=True,
-        help_text="Nutritional information as JSON"
-    )
-    
-    allergens = models.CharField(
-        max_length=500,
         blank=True,
-        help_text="Allergen information"
+        validators=[MinValueValidator(0), MaxValueValidator(5)],
+        help_text="Product rating out of 5 stars"
     )
-    
-    ingredients = models.TextField(
+    review_count = models.CharField(
+        max_length=20,
         blank=True,
-        help_text="Product ingredients list"
+        help_text="Number of reviews (e.g., '50+', '127')"
     )
-    
-    last_scraped = models.DateTimeField(
-        auto_now=True,
-        help_text="Last time product data was updated"
+    nutritional_info = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Nutritional information if available"
     )
-    
-    first_seen = models.DateTimeField(
-        auto_now_add=True,
-        help_text="When product was first discovered"
-    )
-    
-    times_scraped = models.PositiveIntegerField(
-        default=1,
-        help_text="Number of times this product has been scraped"
-    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        """Meta configuration for AsdaProduct model."""
-        
-        verbose_name = "Asda Product"
-        verbose_name_plural = "Asda Products"
-        ordering = ['category', 'name']
+        verbose_name = "ASDA Product"
+        verbose_name_plural = "ASDA Products"
+        ordering = ['name']
         indexes = [
-            models.Index(fields=['category', 'is_available']),
-            models.Index(fields=['price', 'is_available']),
-            models.Index(fields=['brand', 'category']),
-            models.Index(fields=['slug']),
-            models.Index(fields=['last_scraped']),
-            models.Index(fields=['is_on_offer', 'is_available']),
-        ]
-        constraints = [
-            models.CheckConstraint(
-                check=models.Q(price__gte=0) | models.Q(price__isnull=True),
-                name='product_price_non_negative'
-            ),
-            models.CheckConstraint(
-                check=models.Q(times_scraped__gte=1),
-                name='product_times_scraped_positive'
-            )
+            models.Index(fields=['asda_id']),
+            models.Index(fields=['category', 'name']),
+            models.Index(fields=['price']),
+            models.Index(fields=['rating']),
+            models.Index(fields=['was_price']),
+            models.Index(fields=['special_offer']),
         ]
     
-    def __str__(self) -> str:
-        """String representation of product."""
-        price_str = f"£{self.price}" if self.price else "No price"
-        return f"{self.name} - {price_str}"
+    def __str__(self):
+        """String representation of the product."""
+        if self.was_price and self.was_price > self.price:
+            return f"{self.name} - £{self.price} (was £{self.was_price})"
+        return f"{self.name} - £{self.price}"
+    
+    def get_price_per_unit(self):
+        """Calculate price per standard unit if possible."""
+        if self.unit and 'kg' in self.unit.lower():
+            return self.price
+        elif self.unit and 'g' in self.unit.lower():
+            # Convert to price per kg
+            try:
+                grams = float(''.join(filter(str.isdigit, self.unit)))
+                return (self.price / grams) * 1000
+            except (ValueError, ZeroDivisionError):
+                return None
+        return None
+    
+    def get_savings(self):
+        """Calculate savings if item is on sale."""
+        if self.was_price and self.was_price > self.price:
+            return self.was_price - self.price
+        return None
+    
+    def get_savings_percentage(self):
+        """Calculate savings percentage if item is on sale."""
+        savings = self.get_savings()
+        if savings and self.was_price:
+            return round((savings / self.was_price) * 100, 1)
+        return None
+    
+    def is_on_sale(self):
+        """Check if product is currently on sale."""
+        return bool(self.was_price and self.was_price > self.price)
+    
+    def get_rating_display(self):
+        """Get formatted rating display."""
+        if self.rating:
+            stars = "★" * int(self.rating) + "☆" * (5 - int(self.rating))
+            review_text = f" ({self.review_count} reviews)" if self.review_count else ""
+            return f"{self.rating}/5 {stars}{review_text}"
+        return "No rating"
     
     def save(self, *args, **kwargs):
-        """
-        Custom save method to generate slug and update related data.
+        """Override save to log product changes and update category count."""
+        is_new = self.pk is None
         
-        Automatically creates URL-friendly slug and updates category
-        product counts when product availability changes.
-        """
-        try:
-            # Generate slug if not provided
-            if not self.slug:
-                from django.utils.text import slugify
-                base_slug = slugify(self.name)
-                slug = base_slug
-                counter = 1
-                
-                while AsdaProduct.objects.filter(slug=slug).exclude(pk=self.pk).exists():
-                    slug = f"{base_slug}-{counter}"
-                    counter += 1
-                
-                self.slug = slug
-            
-            # Check if this is an update and availability changed
-            old_availability = None
-            if self.pk:
-                try:
-                    old_instance = AsdaProduct.objects.get(pk=self.pk)
-                    old_availability = old_instance.is_available
-                    
-                    # Increment scrape count if this is an update
-                    if not kwargs.get('force_insert', False):
-                        self.times_scraped = old_instance.times_scraped + 1
-                        
-                except AsdaProduct.DoesNotExist:
-                    pass
-            
-            super().save(*args, **kwargs)
-            
-            # Update category product count if availability changed
-            if old_availability is not None and old_availability != self.is_available:
-                self.category.update_product_count()
-            
-            logger.info(f"Saved Asda product: {self.name} (£{self.price or 'N/A'})")
-            
-        except Exception as e:
-            logger.error(f"Error saving AsdaProduct {self.name}: {str(e)}")
-            raise
-    
-    def get_price_display(self) -> str:
-        """
-        Get formatted price for display.
+        # Log price changes for existing products
+        if not is_new:
+            try:
+                old_product = AsdaProduct.objects.get(pk=self.pk)
+                if old_product.price != self.price:
+                    logger.info(
+                        f"Price change for {self.name}: £{old_product.price} → £{self.price}"
+                    )
+            except AsdaProduct.DoesNotExist:
+                pass
         
-        Returns:
-            str: Formatted price string
-        """
-        if self.price:
-            return f"£{self.price:.2f}"
-        elif self.price_text:
-            return self.price_text
+        super().save(*args, **kwargs)
+        
+        if is_new:
+            # Update category product count
+            self.category.product_count = self.category.products.count()
+            self.category.save(update_fields=['product_count'])
+            logger.info(f"New ASDA product added: {self.name} - £{self.price}")
         else:
-            return "Price not available"
-    
-    def get_savings_display(self) -> str:
-        """
-        Get savings amount if product is on offer.
-        
-        Returns:
-            str: Formatted savings string or empty string
-        """
-        if self.is_on_offer and self.original_price and self.price:
-            savings = self.original_price - self.price
-            if savings > 0:
-                return f"Save £{savings:.2f}"
-        return ""
-    
-    def is_price_current(self, hours: int = 24) -> bool:
-        """
-        Check if price data is current within specified hours.
-        
-        Args:
-            hours: Maximum age in hours for price to be considered current
-            
-        Returns:
-            bool: True if price is current, False otherwise
-        """
-        if not self.last_scraped:
-            return False
-        
-        from django.utils import timezone
-        from datetime import timedelta
-        
-        cutoff = timezone.now() - timedelta(hours=hours)
-        return self.last_scraped >= cutoff
-    
-    def get_nutrition_value(self, nutrient: str) -> str:
-        """
-        Get specific nutritional value from stored data.
-        
-        Args:
-            nutrient: Name of nutrient to retrieve
-            
-        Returns:
-            str: Nutrient value or empty string if not found
-        """
-        if self.nutritional_info and isinstance(self.nutritional_info, dict):
-            return str(self.nutritional_info.get(nutrient, ''))
-        return ''
+            logger.info(f"ASDA product updated: {self.name}")
 
 
-class AsdaPriceHistory(models.Model):
+class CrawlSession(models.Model):
     """
-    Tracks historical price changes for Asda products.
+    Model for tracking individual crawl sessions.
     
-    Maintains a record of price changes over time to enable
-    price trend analysis and deal identification.
+    Attributes:
+        user: User who started the crawl
+        status: Current status of the crawl
+        start_time: When the crawl started
+        end_time: When the crawl finished
+        categories_crawled: Number of categories processed
+        products_found: Number of products discovered
+        products_updated: Number of existing products updated
+        error_log: Any errors encountered during crawling
+        crawl_settings: JSON field for crawl configuration
     """
     
-    product = models.ForeignKey(
-        AsdaProduct,
+    STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('RUNNING', 'Running'),
+        ('COMPLETED', 'Completed'),
+        ('FAILED', 'Failed'),
+        ('CANCELLED', 'Cancelled'),
+    ]
+    
+    user = models.ForeignKey(
+        User,
         on_delete=models.CASCADE,
-        related_name='price_history',
-        help_text="Product this price record belongs to"
+        related_name='crawl_sessions'
     )
-    
-    price = models.DecimalField(
-        max_digits=8,
-        decimal_places=2,
-        validators=[MinValueValidator(Decimal('0.01'))],
-        help_text="Price at this point in time"
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='PENDING'
     )
-    
-    price_text = models.CharField(
-        max_length=50,
+    start_time = models.DateTimeField(auto_now_add=True)
+    end_time = models.DateTimeField(null=True, blank=True)
+    categories_crawled = models.IntegerField(default=0)
+    products_found = models.IntegerField(default=0)
+    products_updated = models.IntegerField(default=0)
+    error_log = models.TextField(
         blank=True,
-        help_text="Raw price text as scraped"
+        help_text="Any errors encountered during crawling"
     )
-    
-    is_on_offer = models.BooleanField(
-        default=False,
-        help_text="Whether this was an offer price"
-    )
-    
-    offer_text = models.CharField(
-        max_length=200,
-        blank=True,
-        help_text="Offer description if applicable"
-    )
-    
-    recorded_at = models.DateTimeField(
-        auto_now_add=True,
-        help_text="When this price was recorded"
+    crawl_settings = models.JSONField(
+        default=dict,
+        help_text="Configuration used for this crawl session"
     )
     
     class Meta:
-        """Meta configuration for AsdaPriceHistory model."""
-        
-        verbose_name = "Asda Price History"
-        verbose_name_plural = "Asda Price Histories"
-        ordering = ['-recorded_at']
-        indexes = [
-            models.Index(fields=['product', '-recorded_at']),
-            models.Index(fields=['price', 'recorded_at']),
-            models.Index(fields=['is_on_offer', 'recorded_at']),
-        ]
-        constraints = [
-            models.CheckConstraint(
-                check=models.Q(price__gt=0),
-                name='history_price_positive'
-            )
-        ]
+        verbose_name = "Crawl Session"
+        verbose_name_plural = "Crawl Sessions"
+        ordering = ['-start_time']
     
-    def __str__(self) -> str:
-        """String representation of price history entry."""
-        return f"{self.product.name} - £{self.price} on {self.recorded_at.date()}"
+    def __str__(self):
+        """String representation of the crawl session."""
+        duration = ""
+        if self.end_time:
+            duration = f" ({(self.end_time - self.start_time).seconds}s)"
+        return f"Crawl {self.pk} - {self.status}{duration}"
     
-    @classmethod
-    def record_price_change(cls, product: AsdaProduct) -> 'AsdaPriceHistory':
-        """
-        Record a price change for a product.
-        
-        Args:
-            product: AsdaProduct instance to record price for
-            
-        Returns:
-            AsdaPriceHistory: Created price history record
-        """
-        try:
-            if not product.price:
-                raise ValueError("Product must have a price to record")
-            
-            # Check if price has actually changed
-            latest_history = cls.objects.filter(product=product).first()
-            if latest_history and latest_history.price == product.price:
-                logger.debug(f"No price change for {product.name}, skipping history record")
-                return latest_history
-            
-            history = cls.objects.create(
-                product=product,
-                price=product.price,
-                price_text=product.price_text,
-                is_on_offer=product.is_on_offer,
-                offer_text=product.offer_text
-            )
-            
-            logger.info(f"Recorded price history for {product.name}: £{product.price}")
-            return history
-            
-        except Exception as e:
-            logger.error(f"Error recording price history for {product.name}: {str(e)}")
-            raise
-
-
-# Add these fields to your existing User model or create a profile model
-class UserAsdaPreferences(models.Model):
-    """
-    User preferences for Asda product filtering and notifications.
+    def get_duration(self):
+        """Get the duration of the crawl session."""
+        if self.end_time:
+            return self.end_time - self.start_time
+        elif self.status == 'RUNNING':
+            return timezone.now() - self.start_time
+        return None
     
-    Stores user-specific settings for product searches,
-    price alerts, and shopping preferences.
-    """
+    def get_products_per_minute(self):
+        """Calculate products processed per minute."""
+        duration = self.get_duration()
+        if duration and duration.total_seconds() > 0:
+            total_products = self.products_found + self.products_updated
+            minutes = duration.total_seconds() / 60
+            return round(total_products / minutes, 2)
+        return 0
     
-    user = models.OneToOneField(
-        'auth.User',
-        on_delete=models.CASCADE,
-        related_name='asda_preferences',
-        help_text="User these preferences belong to"
-    )
+    def mark_completed(self):
+        """Mark the crawl session as completed."""
+        self.status = 'COMPLETED'
+        self.end_time = timezone.now()
+        self.save(update_fields=['status', 'end_time'])
+        logger.info(
+            f"Crawl session {self.pk} completed. "
+            f"Products found: {self.products_found}, "
+            f"Products updated: {self.products_updated}, "
+            f"Rate: {self.get_products_per_minute()} products/min"
+        )
     
-    preferred_categories = models.ManyToManyField(
-        AsdaCategory,
-        blank=True,
-        help_text="Categories user is most interested in"
-    )
-    
-    price_alert_threshold = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('5.00'),
-        help_text="Maximum price for automatic price alerts"
-    )
-    
-    enable_price_alerts = models.BooleanField(
-        default=True,
-        help_text="Whether to send price drop notifications"
-    )
-    
-    preferred_brands = models.TextField(
-        blank=True,
-        help_text="Comma-separated list of preferred brands"
-    )
-    
-    dietary_restrictions = models.CharField(
-        max_length=500,
-        blank=True,
-        help_text="Dietary restrictions or allergen avoidance"
-    )
-    
-    max_budget_per_item = models.DecimalField(
-        max_digits=6,
-        decimal_places=2,
-        blank=True,
-        null=True,
-        help_text="Maximum budget per item for recommendations"
-    )
-    
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        help_text="When preferences were created"
-    )
-    
-    updated_at = models.DateTimeField(
-        auto_now=True,
-        help_text="When preferences were last updated"
-    )
-    
-    class Meta:
-        """Meta configuration for UserAsdaPreferences model."""
-        
-        verbose_name = "User Asda Preferences"
-        verbose_name_plural = "User Asda Preferences"
-    
-    def __str__(self) -> str:
-        """String representation of user preferences."""
-        return f"Asda preferences for {self.user.username}"
-    
-    def get_preferred_brand_list(self) -> list:
-        """
-        Get list of preferred brands.
-        
-        Returns:
-            List[str]: List of brand names
-        """
-        if self.preferred_brands:
-            return [brand.strip() for brand in self.preferred_brands.split(',') if brand.strip()]
-        return []
+    def mark_failed(self, error_message):
+        """Mark the crawl session as failed with error message."""
+        self.status = 'FAILED'
+        self.end_time = timezone.now()
+        self.error_log = error_message
+        self.save(update_fields=['status', 'end_time', 'error_log'])
+        logger.error(f"Crawl session {self.pk} failed: {error_message}")
