@@ -843,196 +843,178 @@ class SeleniumAsdaScraper:
             # Fallback to the category it was scraped from
             logger.debug(f"📍 Keeping '{product_data['name'][:30]}...' in '{scraped_from_category.name}' (no match)")
             return scraped_from_category
+
+    def _get_or_create_category(self, category_code, category_names):
+        """
+        Get an existing category or create a new one if it doesn't exist.
         
-        def _get_or_create_category(self, category_code, category_names):
-            """
-            Get an existing category or create a new one if it doesn't exist.
+        Args:
+            category_code: The numeric category code
+            category_names: Dictionary mapping codes to names
             
-            Args:
-                category_code: The numeric category code
-                category_names: Dictionary mapping codes to names
-                
-            Returns:
-                AsdaCategory object or None if creation fails
-            """
-            try:
-                # First check if it exists in our cache
-                if category_code in self._active_categories_cache:
-                    return self._active_categories_cache[category_code]
-                
-                # Try to get from database
-                try:
-                    category = AsdaCategory.objects.get(url_code=category_code, is_active=True)
-                    # Add to cache
-                    self._active_categories_cache[category_code] = category
-                    return category
-                except AsdaCategory.DoesNotExist:
-                    pass
-                
-                # Category doesn't exist, so create it
-                if category_code in category_names:
-                    category_name = category_names[category_code]
-                    
-                    # Check if we should create this category (validate it first)
-                    if self._should_create_category(category_code, category_name):
-                        category = self._create_new_category(category_code, category_name)
-                        if category:
-                            # Add to cache
-                            self._active_categories_cache[category_code] = category
-                            logger.info(f"🆕 Created new category: {category.name} ({category_code})")
-                            return category
-                    else:
-                        logger.debug(f"🚫 Skipped creating category: {category_name} (validation failed)")
-                
-                return None
-                
-            except Exception as e:
-                logger.error(f"❌ Error getting/creating category {category_code}: {str(e)}")
-                return None
-        
-        def _should_create_category(self, category_code, category_name):
-            """
-            Determine if we should create a new category by testing if it's valid on ASDA.
+        Returns:
+            AsdaCategory object or None if creation fails
+        """
+        try:
+            # First check if it exists in our cache
+            if hasattr(self, '_active_categories_cache') and category_code in self._active_categories_cache:
+                return self._active_categories_cache[category_code]
             
-            Args:
-                category_code: The numeric category code
-                category_name: The category name
-                
-            Returns:
-                bool: True if category should be created
-            """
+            # Try to get from database
             try:
-                # Get the URL slug mapping for testing
-                category_url_map = {
-                    '1215686352935': 'fruit-veg-flowers',
-                    '1215135760597': 'meat-poultry-fish',
-                    '1215660378320': 'chilled-food',
-                    '1215338621416': 'frozen-food',
-                    '1215337189632': 'food-cupboard',
-                    '1215686354843': 'bakery',
-                    '1215135760614': 'drinks',
-                    '1215135760665': 'laundry-household',
-                    '1215135760648': 'toiletries-beauty',
-                    '1215686353929': 'health-wellness',
-                    '1215686356579': 'sweets-treats-snacks',
-                    '1215135760631': 'baby-toddler-kids',
-                    '1215662103573': 'pet-food-accessories',
-                    '1215686351451': 'world-food',
-                    '1215686355606': 'dietary-lifestyle',
-                }
-                
-                url_slug = category_url_map.get(category_code)
-                if not url_slug:
-                    logger.debug(f"🤔 No URL slug found for category {category_code}, skipping validation")
-                    return False
-                
-                # Test the category URL to make sure it's valid
-                test_url = f"https://groceries.asda.com/cat/{url_slug}/{category_code}"
-                logger.debug(f"🧪 Validating new category: {category_name} → {test_url}")
-                
-                current_url = self.driver.current_url
-                self.driver.get(test_url)
-                time.sleep(2)
-                
-                # Check if page loaded successfully
-                page_title = self.driver.title.lower()
-                loaded_url = self.driver.current_url
-                
-                # Navigate back to the original page
-                self.driver.get(current_url)
-                time.sleep(1)
-                
-                is_valid = ('404' not in page_title and 
-                        'error' not in page_title and 
-                        'not found' not in page_title and
-                        url_slug in loaded_url)
-                
-                if is_valid:
-                    logger.info(f"✅ Category validation successful: {category_name}")
-                else:
-                    logger.warning(f"❌ Category validation failed: {category_name}")
-                
-                return is_valid
-                
-            except Exception as e:
-                logger.error(f"❌ Error validating category {category_name}: {str(e)}")
-                return False
-        
-        def _create_new_category(self, category_code, category_name):
-            """
-            Create a new category in the database.
-            
-            Args:
-                category_code: The numeric category code
-                category_name: The category name
-                
-            Returns:
-                AsdaCategory object or None if creation fails
-            """
-            try:
-                category, created = AsdaCategory.objects.get_or_create(
-                    url_code=category_code,
-                    defaults={
-                        'name': category_name,
-                        'is_active': True
-                    }
-                )
-                
-                if created:
-                    logger.info(f"🎉 Successfully created new category: {category.name}")
-                    
-                    # Update session statistics
-                    if hasattr(self.session, 'categories_discovered'):
-                        self.session.categories_discovered += 1
-                    else:
-                        self.session.categories_discovered = 1
-                    self.session.save()
-                    
-                return category
-                
-            except Exception as e:
-                logger.error(f"❌ Error creating category {category_name}: {str(e)}")
-                return None
-        
-        def _refresh_category_cache(self):
-            """Refresh the category cache from the database."""
-            try:
-                self._active_categories_cache = {
-                    cat.url_code: cat for cat in AsdaCategory.objects.filter(is_active=True)
-                }
-                logger.debug(f"🔄 Refreshed category cache: {len(self._active_categories_cache)} categories")
-            except Exception as e:
-                logger.error(f"❌ Error refreshing category cache: {str(e)}")
+                category = AsdaCategory.objects.get(url_code=category_code, is_active=True)
+                # Add to cache
                 if not hasattr(self, '_active_categories_cache'):
                     self._active_categories_cache = {}
+                self._active_categories_cache[category_code] = category
+                return category
+            except AsdaCategory.DoesNotExist:
+                pass
+            
+            # Category doesn't exist, so create it
+            if category_code in category_names:
+                category_name = category_names[category_code]
+                
+                # Check if we should create this category (validate it first)
+                if self._should_create_category(category_code, category_name):
+                    category = self._create_new_category(category_code, category_name)
+                    if category:
+                        # Add to cache
+                        if not hasattr(self, '_active_categories_cache'):
+                            self._active_categories_cache = {}
+                        self._active_categories_cache[category_code] = category
+                        logger.info(f"🆕 Created new category: {category.name} ({category_code})")
+                        return category
+                else:
+                    logger.debug(f"🚫 Skipped creating category: {category_name} (validation failed)")
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting/creating category {category_code}: {str(e)}")
+            return None
+
+    def _should_create_category(self, category_code, category_name):
+        """
+        Determine if we should create a new category by testing if it's valid on ASDA.
         
-        def _clear_category_cache(self):
-            """Clear the category cache when categories change."""
-            if hasattr(self, '_active_categories_cache'):
-                delattr(self, '_active_categories_cache')
-                logger.debug("🗑️ Cleared category cache")
+        Args:
+            category_code: The numeric category code
+            category_name: The category name
+            
+        Returns:
+            bool: True if category should be created
+        """
+        try:
+            # Get the URL slug mapping for testing
+            category_url_map = {
+                '1215686352935': 'fruit-veg-flowers',
+                '1215135760597': 'meat-poultry-fish',
+                '1215660378320': 'chilled-food',
+                '1215338621416': 'frozen-food',
+                '1215337189632': 'food-cupboard',
+                '1215686354843': 'bakery',
+                '1215135760614': 'drinks',
+                '1215135760665': 'laundry-household',
+                '1215135760648': 'toiletries-beauty',
+                '1215686353929': 'health-wellness',
+                '1215686356579': 'sweets-treats-snacks',
+                '1215135760631': 'baby-toddler-kids',
+                '1215662103573': 'pet-food-accessories',
+                '1215686351451': 'world-food',
+                '1215686355606': 'dietary-lifestyle',
+            }
+            
+            url_slug = category_url_map.get(category_code)
+            if not url_slug:
+                logger.debug(f"🤔 No URL slug found for category {category_code}, skipping validation")
+                return False
+            
+            # Test the category URL to make sure it's valid
+            test_url = f"https://groceries.asda.com/cat/{url_slug}/{category_code}"
+            logger.debug(f"🧪 Validating new category: {category_name} → {test_url}")
+            
+            current_url = self.driver.current_url
+            self.driver.get(test_url)
+            time.sleep(2)
+            
+            # Check if page loaded successfully
+            page_title = self.driver.title.lower()
+            loaded_url = self.driver.current_url
+            
+            # Navigate back to the original page
+            self.driver.get(current_url)
+            time.sleep(1)
+            
+            is_valid = ('404' not in page_title and 
+                    'error' not in page_title and 
+                    'not found' not in page_title and
+                    url_slug in loaded_url)
+            
+            if is_valid:
+                logger.info(f"✅ Category validation successful: {category_name}")
+            else:
+                logger.warning(f"❌ Category validation failed: {category_name}")
+            
+            return is_valid
+            
+        except Exception as e:
+            logger.error(f"❌ Error validating category {category_name}: {str(e)}")
+            return False
+
+    def _create_new_category(self, category_code, category_name):
+        """
+        Create a new category in the database.
         
+        Args:
+            category_code: The numeric category code
+            category_name: The category name
+            
+        Returns:
+            AsdaCategory object or None if creation fails
+        """
+        try:
+            category, created = AsdaCategory.objects.get_or_create(
+                url_code=category_code,
+                defaults={
+                    'name': category_name,
+                    'is_active': True
+                }
+            )
+            
+            if created:
+                logger.info(f"🎉 Successfully created new category: {category.name}")
+                
+                # Update session statistics
+                if hasattr(self.session, 'categories_discovered'):
+                    self.session.categories_discovered += 1
+                else:
+                    self.session.categories_discovered = 1
+                self.session.save()
+                
+            return category
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating category {category_name}: {str(e)}")
+            return None
 
+    def _refresh_category_cache(self):
+        """Refresh the category cache from the database."""
+        try:
+            self._active_categories_cache = {
+                cat.url_code: cat for cat in AsdaCategory.objects.filter(is_active=True)
+            }
+            logger.debug(f"🔄 Refreshed category cache: {len(self._active_categories_cache)} categories")
+        except Exception as e:
+            logger.error(f"❌ Error refreshing category cache: {str(e)}")
+            if not hasattr(self, '_active_categories_cache'):
+                self._active_categories_cache = {}
 
-
-
-
-
-
-
-
-
-
-
-
-    def cleanup(self):
-        """Clean up resources."""
-        if self.driver:
-            try:
-                self.driver.quit()
-                logger.info("WebDriver cleanup complete")
-            except Exception as e:
-                logger.error(f"Error during cleanup: {str(e)}")
+    def _clear_category_cache(self):
+        """Clear the category cache when categories change."""
+        if hasattr(self, '_active_categories_cache'):
+            delattr(self, '_active_categories_cache')
+            logger.debug("🗑️ Cleared category cache")
 
     def _extract_products_from_current_page(self, category):
         """
@@ -1256,12 +1238,12 @@ class SeleniumAsdaScraper:
 
 
 
-        """
-    Optional updates for your Selenium scraper to better integrate with the enhanced link mapping system.
-
-    Add these methods to your existing SeleniumAsdaScraper class if you want better integration.
-    These are OPTIONAL - your current scraper works fine as-is.
     """
+Optional updates for your Selenium scraper to better integrate with the enhanced link mapping system.
+
+Add these methods to your existing SeleniumAsdaScraper class if you want better integration.
+These are OPTIONAL - your current scraper works fine as-is.
+"""
 
     # ADD THESE METHODS TO YOUR EXISTING SeleniumAsdaScraper CLASS:
 
@@ -1482,8 +1464,14 @@ class SeleniumAsdaScraper:
         else:
             logger.info("ℹ️ Enhanced crawler integration not available - running standalone")
 
-
-    
+    def cleanup(self):
+        """Clean up resources."""
+        if self.driver:
+            try:
+                self.driver.quit()
+                logger.info("WebDriver cleanup complete")
+            except Exception as e:
+                logger.error(f"Error during cleanup: {str(e)}")    
 
 
     """
