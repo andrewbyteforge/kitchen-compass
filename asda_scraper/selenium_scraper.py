@@ -806,3 +806,265 @@ class SeleniumAsdaScraper:
                 logger.info("WebDriver cleanup complete")
             except Exception as e:
                 logger.error(f"Error during cleanup: {str(e)}")
+
+
+
+
+
+
+
+        """
+    Optional updates for your Selenium scraper to better integrate with the enhanced link mapping system.
+
+    Add these methods to your existing SeleniumAsdaScraper class if you want better integration.
+    These are OPTIONAL - your current scraper works fine as-is.
+    """
+
+    # ADD THESE METHODS TO YOUR EXISTING SeleniumAsdaScraper CLASS:
+
+    def extract_page_links(self, current_url):
+        """
+        Extract all links from the current page for link mapping integration.
+        
+        This method can be called to contribute discovered links to the
+        enhanced link mapping system.
+        
+        Returns:
+            List of discovered links with metadata
+        """
+        try:
+            # Get page source and parse with BeautifulSoup
+            page_source = self.driver.page_source
+            soup = BeautifulSoup(page_source, 'html.parser')
+            
+            links = []
+            for i, anchor in enumerate(soup.find_all('a', href=True)):
+                try:
+                    # Resolve relative URLs
+                    absolute_url = urljoin(current_url, anchor['href'])
+                    
+                    # Skip invalid URLs
+                    if not self._is_valid_asda_url(absolute_url):
+                        continue
+                    
+                    # Extract link information
+                    link_info = {
+                        'url': absolute_url,
+                        'anchor_text': anchor.get_text(strip=True)[:500],
+                        'position': i + 1,
+                        'css_classes': ' '.join(anchor.get('class', [])),
+                        'id': anchor.get('id', ''),
+                        'title': anchor.get('title', ''),
+                        'link_type': self._classify_link_type(anchor, absolute_url),
+                    }
+                    
+                    links.append(link_info)
+                    
+                except Exception as e:
+                    logger.warning(f"Error processing link: {e}")
+                    continue
+            
+            logger.debug(f"Extracted {len(links)} links from {current_url}")
+            return links
+            
+        except Exception as e:
+            logger.error(f"Error extracting links from page: {e}")
+            return []
+
+    def _is_valid_asda_url(self, url):
+        """Check if URL is a valid ASDA URL for crawling."""
+        if not url or not isinstance(url, str):
+            return False
+        
+        # Must be ASDA domain
+        if not url.startswith('https://groceries.asda.com'):
+            return False
+        
+        # Skip certain file types and paths
+        skip_patterns = [
+            '/api/', '/ajax/', '.js', '.css', '.png', '.jpg', '.jpeg', 
+            '.gif', '.pdf', '.zip', '/checkout', '/account', '/login'
+        ]
+        
+        return not any(pattern in url.lower() for pattern in skip_patterns)
+
+    def _classify_link_type(self, anchor, url):
+        """Classify the type of link based on context and URL."""
+        # Check CSS classes and IDs for hints
+        classes = ' '.join(anchor.get('class', [])).lower()
+        anchor_id = anchor.get('id', '').lower()
+        text = anchor.get_text(strip=True).lower()
+        
+        # Navigation links
+        if any(keyword in classes for keyword in ['nav', 'menu', 'breadcrumb']):
+            if 'breadcrumb' in classes:
+                return 'breadcrumb'
+            return 'navigation'
+        
+        # Pagination
+        if any(keyword in classes or keyword in text for keyword in ['page', 'next', 'prev', 'more']):
+            return 'pagination'
+        
+        # Product links
+        if '/product/' in url or 'product' in classes:
+            return 'product'
+        
+        # Category links
+        if '/dept/' in url or '/cat/' in url or 'category' in classes:
+            return 'category'
+        
+        return 'other'
+
+    def update_url_map_if_exists(self, url, page_metadata):
+        """
+        Update URL map with Selenium-extracted data if the URL exists in the mapping system.
+        
+        This allows Selenium to contribute additional data to URLs discovered
+        by the enhanced crawler.
+        """
+        try:
+            from .models import UrlMap
+            
+            # Try to find this URL in the mapping system
+            url_hash = UrlMap.generate_url_hash(url)
+            
+            try:
+                url_map = UrlMap.objects.get(
+                    url_hash=url_hash,
+                    crawl_session=self.session
+                )
+                
+                # Update with Selenium-specific data
+                url_map.page_title = page_metadata.get('title', '')[:500]
+                url_map.meta_description = page_metadata.get('description', '')[:1000]
+                
+                # Add any additional metadata from Selenium
+                if 'products_found' in page_metadata:
+                    url_map.products_found = page_metadata['products_found']
+                
+                if 'categories_found' in page_metadata:
+                    url_map.categories_found = page_metadata['categories_found']
+                
+                url_map.save(update_fields=[
+                    'page_title', 'meta_description', 'products_found', 'categories_found'
+                ])
+                
+                logger.debug(f"Updated URL map for {url}")
+                
+            except UrlMap.DoesNotExist:
+                # URL not in mapping system, that's fine
+                logger.debug(f"URL not in mapping system: {url}")
+                
+        except ImportError:
+            # Enhanced mapping models not available
+            pass
+        except Exception as e:
+            logger.warning(f"Error updating URL map: {e}")
+
+    def extract_page_metadata(self):
+        """Extract metadata from the current page."""
+        try:
+            metadata = {
+                'title': self.driver.title,
+                'current_url': self.driver.current_url,
+                'page_source_length': len(self.driver.page_source),
+            }
+            
+            # Try to extract meta description
+            try:
+                meta_desc = self.driver.find_element(
+                    By.CSS_SELECTOR, 
+                    'meta[name="description"]'
+                )
+                metadata['description'] = meta_desc.get_attribute('content')
+            except:
+                metadata['description'] = ''
+            
+            return metadata
+            
+        except Exception as e:
+            logger.warning(f"Error extracting page metadata: {e}")
+            return {}
+
+    # MODIFY YOUR EXISTING crawl_category_products METHOD TO INCLUDE LINK EXTRACTION:
+
+    def crawl_category_products_enhanced(self, category):
+        """
+        Enhanced version of crawl_category_products that also extracts links.
+        
+        Replace your existing method with this if you want link extraction.
+        """
+        try:
+            # Your existing category crawling logic here...
+            # (keep all your existing URL construction and navigation code)
+            
+            # After navigating to the category page, extract metadata and links
+            current_url = self.driver.current_url
+            page_metadata = self.extract_page_metadata()
+            
+            # Extract links for the enhanced mapping system
+            discovered_links = self.extract_page_links(current_url)
+            
+            # Update URL map if it exists
+            self.update_url_map_if_exists(current_url, page_metadata)
+            
+            # Your existing product extraction logic...
+            # (keep all your existing product scraping code)
+            
+            # Log discovered links
+            if discovered_links:
+                logger.info(f"Discovered {len(discovered_links)} links on {category.name} page")
+            
+            # Continue with your existing logic...
+            return self._extract_products_from_current_page(category)
+            
+        except Exception as e:
+            logger.error(f"Error in enhanced category crawling: {e}")
+            return 0
+
+    # ADD THIS UTILITY METHOD FOR INTEGRATION:
+
+    def can_integrate_with_enhanced_crawler(self):
+        """Check if enhanced crawler models are available for integration."""
+        try:
+            from .models import UrlMap, LinkRelationship
+            return True
+        except ImportError:
+            return False
+
+    def log_integration_status(self):
+        """Log whether integration with enhanced crawler is available."""
+        if self.can_integrate_with_enhanced_crawler():
+            logger.info("✅ Enhanced crawler integration available")
+        else:
+            logger.info("ℹ️ Enhanced crawler integration not available - running standalone")
+
+
+    """
+    USAGE INSTRUCTIONS:
+
+    1. These updates are OPTIONAL - your current Selenium scraper works fine as-is.
+
+    2. If you want better integration with the enhanced link mapping system:
+    - Add the above methods to your SeleniumAsdaScraper class
+    - Optionally replace crawl_category_products with crawl_category_products_enhanced
+
+    3. The integration provides:
+    - Link discovery that feeds into the mapping system
+    - Metadata extraction from JavaScript-rendered pages
+    - Cross-system data sharing
+
+    4. Benefits of integration:
+    - Selenium can handle JavaScript-heavy pages that requests/BeautifulSoup can't
+    - Enhanced crawler gets more comprehensive link discovery
+    - Better overall website mapping
+
+    5. To use:
+    - Run enhanced crawler first to map basic structure
+    - Use Selenium scraper for complex pages and product extraction
+    - Both contribute to the same crawl session and URL mapping
+
+    6. If you prefer to keep it simple:
+    - Your current Selenium scraper works perfectly fine as-is
+    - No updates are required for functionality
+    """

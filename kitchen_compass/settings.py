@@ -248,3 +248,16 @@ DEFAULT_FROM_EMAIL = 'noreply@kitchencompass.com'
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
+# Add enhanced scraper settings to settings.py:
+ASDA_SCRAPER_SETTINGS = {
+    'MAX_CRAWL_DEPTH': 5,
+    'DEFAULT_DELAY': 2.0,
+    'MAX_PAGES_PER_SESSION': 10000,
+    'REQUEST_TIMEOUT': 30,
+    'MAX_RETRIES': 3,
+    'RESPECT_ROBOTS_TXT': True,
+    'USER_AGENT': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    'ALLOWED_DOMAINS': ['groceries.asda.com'],
+    'BLOCKED_EXTENSIONS': ['.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.pdf', '.zip'],
+    'PRIORITY_KEYWORDS': ['fresh', 'meat', 'dairy', 'bakery', 'fruit', 'vegetable'],
+}
