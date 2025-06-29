@@ -1068,3 +1068,51 @@ class CrawlQueue(models.Model):
         """Reschedule this URL for later crawling."""
         self.scheduled_time = timezone.now() + timedelta(minutes=delay_minutes)
         self.save(update_fields=['scheduled_time'])
+
+
+"""
+CrawlSession Model Method Additions
+
+Add these methods to your existing CrawlSession model in asda_scraper/models.py
+to ensure compatibility with the views.
+
+Add these methods to your CrawlSession class:
+"""
+
+# Add these methods to your existing CrawlSession class in asda_scraper/models.py
+
+def mark_completed(self):
+    """Mark the crawl session as completed."""
+    self.status = 'COMPLETED'
+    self.end_time = timezone.now()
+    self.save(update_fields=['status', 'end_time'])
+    logger.info(
+        f"Crawl session {self.pk} completed. "
+        f"Products found: {self.products_found}, "
+        f"Products updated: {self.products_updated}"
+    )
+
+def mark_failed(self, error_message):
+    """Mark the crawl session as failed with error message."""
+    self.status = 'FAILED'
+    self.end_time = timezone.now()
+    if error_message:
+        # Append to existing error_log or create new
+        if self.error_log:
+            self.error_log = f"{self.error_log}\n\n[{timezone.now().isoformat()}] {error_message}"
+        else:
+            self.error_log = f"[{timezone.now().isoformat()}] {error_message}"
+    self.save(update_fields=['status', 'end_time', 'error_log'])
+    logger.error(f"Crawl session {self.pk} failed: {error_message}")
+
+def get_duration(self):
+    """Get the duration of the crawl session."""
+    if self.start_time:
+        end_time = self.end_time or timezone.now()
+        return end_time - self.start_time
+    return None
+
+@property
+def error_message(self):
+    """Provide backwards compatibility for views expecting error_message."""
+    return self.error_log

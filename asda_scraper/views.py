@@ -1,13 +1,17 @@
 """
-ASDA Scraper Views
+Updated ASDA Scraper Views
 
-This module contains views for the ASDA scraper admin interface,
-providing functionality to manage crawl sessions and monitor progress.
+This module contains updated views that integrate with the refactored Selenium scraper,
+providing improved error handling, logging, and user feedback.
+
+File: asda_scraper/views.py (REPLACE EXISTING)
 """
 
 import logging
 import json
 import threading
+import time
+from typing import Dict, Any
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib import messages
@@ -19,7 +23,10 @@ from django.views.generic import ListView
 from django.core.paginator import Paginator
 from django.db.models import Q, Count
 from django.utils import timezone
+
 from .models import AsdaCategory, AsdaProduct, CrawlSession
+# Import from the selenium_scraper.py file directly
+from .selenium_scraper import create_selenium_scraper, ScrapingResult, ScraperException, DriverSetupException
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +34,13 @@ logger = logging.getLogger(__name__)
 def is_admin_user(user):
     """
     Check if user has admin privileges for ASDA scraper.
+    
+    Args:
+        user: Django user object
+        
+    Returns:
+        bool: True if user has admin access
     """
-    # Replace with your actual admin email
     ADMIN_EMAILS = [
         'acartwright39@hotmail.com',  # Your actual email
     ]
@@ -42,7 +54,7 @@ def scraper_dashboard(request):
     Main dashboard for ASDA scraper administration.
     
     Displays current crawl status, statistics, and controls for
-    starting/stopping crawl sessions.
+    starting/stopping crawl sessions with enhanced error handling.
     
     Args:
         request: Django HttpRequest object
@@ -57,12 +69,17 @@ def scraper_dashboard(request):
         ).first()
         
         # Get statistics
-        total_products = AsdaProduct.objects.count()
-        total_categories = AsdaCategory.objects.count()
-        active_categories = AsdaCategory.objects.filter(is_active=True).count()
+        stats = _get_dashboard_statistics()
         
-        # Get recent sessions
-        recent_sessions = CrawlSession.objects.select_related('user').order_by('-start_time')[:5]
+        # Get recent sessions with error information
+        recent_sessions = CrawlSession.objects.select_related('user').order_by('-start_time')[:10]
+        
+        # Add error summaries to recent sessions
+        for session in recent_sessions:
+            if session.error_log:  # Use error_log instead of error_message
+                session.error_summary = _parse_error_message(session.error_log)
+            else:
+                session.error_summary = None
         
         # Get category statistics
         category_stats = AsdaCategory.objects.annotate(
@@ -72,14 +89,27 @@ def scraper_dashboard(request):
         # Get latest products
         latest_products = AsdaProduct.objects.select_related('category').order_by('-created_at')[:10]
         
+        # Check system health
+        system_health = _check_system_health()
+        
+        # Default crawl settings (defined inline for now)
+        default_settings = {
+            'max_categories': 10,
+            'category_priority': 2,
+            'max_products_per_category': 100,
+            'delay_between_requests': 2.0,
+            'use_selenium': True,
+            'headless': False,
+        }
+        
         context = {
             'current_session': current_session,
-            'total_products': total_products,
-            'total_categories': total_categories,
-            'active_categories': active_categories,
+            'stats': stats,
             'recent_sessions': recent_sessions,
             'category_stats': category_stats,
             'latest_products': latest_products,
+            'system_health': system_health,
+            'default_settings': default_settings,
         }
         
         logger.info(f"ASDA scraper dashboard accessed by user {request.user.username}")
@@ -91,41 +121,115 @@ def scraper_dashboard(request):
         return redirect('auth_hub:dashboard')
 
 
-def run_selenium_scraper(session):
+def _get_dashboard_statistics() -> Dict[str, Any]:
     """
-    Run the Selenium scraper in a separate thread.
+    Get comprehensive dashboard statistics.
     
-    Args:
-        session: CrawlSession object
+    Returns:
+        Dict[str, Any]: Dictionary containing various statistics
     """
     try:
-        from .selenium_scraper import SeleniumAsdaScraper
-        
-        logger.info(f"Starting Selenium scraper for session {session.pk}")
-        
-        # Create and run scraper
-        scraper = SeleniumAsdaScraper(session, headless=False)  # Set to True to hide browser
-        scraper.start_crawl()
-        
-        logger.info(f"Selenium scraper completed for session {session.pk}")
-        
-    except ImportError as e:
-        logger.error(f"Failed to import Selenium scraper: {str(e)}")
-        session.mark_failed(f"Selenium not available: {str(e)}")
-        
-        # Fallback to regular scraper
-        try:
-            from .scraper import AsdaScraper
-            logger.info(f"Falling back to regular scraper for session {session.pk}")
-            scraper = AsdaScraper(session)
-            scraper.start_crawl()
-        except Exception as fallback_error:
-            logger.error(f"Fallback scraper also failed: {str(fallback_error)}")
-            session.mark_failed(f"All scrapers failed: {str(fallback_error)}")
-            
+        return {
+            'total_products': AsdaProduct.objects.count(),
+            'total_categories': AsdaCategory.objects.count(),
+            'active_categories': AsdaCategory.objects.filter(is_active=True).count(),
+            'products_with_images': AsdaProduct.objects.exclude(image_url='').count(),
+            'products_on_sale': AsdaProduct.objects.filter(was_price__isnull=False).count(),
+            'recent_products': AsdaProduct.objects.filter(
+                created_at__gte=timezone.now() - timezone.timedelta(days=7)
+            ).count(),
+            'total_sessions': CrawlSession.objects.count(),
+            'successful_sessions': CrawlSession.objects.filter(status='COMPLETED').count(),
+            'failed_sessions': CrawlSession.objects.filter(status='FAILED').count(),
+        }
     except Exception as e:
-        logger.error(f"Error in Selenium scraper: {str(e)}")
-        session.mark_failed(f"Selenium scraper error: {str(e)}")
+        logger.error(f"Error getting dashboard statistics: {e}")
+        return {}
+
+
+def _parse_error_message(error_log: str) -> Dict[str, Any]:
+    """
+    Parse error log to extract useful information.
+    
+    Args:
+        error_log: Raw error log string
+        
+    Returns:
+        Dict[str, Any]: Parsed error information
+    """
+    try:
+        # Try to extract structured error information
+        if 'Error Code:' in error_log:
+            lines = error_log.split('\n')
+            error_info = {}
+            
+            for line in lines:
+                if 'Error Code:' in line:
+                    error_info['code'] = line.split('Error Code:')[1].strip()
+                elif 'Context:' in line:
+                    error_info['context'] = line.split('Context:')[1].strip()
+            
+            return error_info
+        else:
+            return {'message': error_log[:200]}  # Truncate long messages
+    except Exception:
+        return {'message': 'Error parsing error log'}
+
+
+def _check_system_health() -> Dict[str, Any]:
+    """
+    Check system health for scraper components.
+    
+    Returns:
+        Dict[str, Any]: System health status
+    """
+    health = {
+        'overall': 'healthy',
+        'issues': [],
+        'warnings': []
+    }
+    
+    try:
+        # Check if Chrome/ChromeDriver is available
+        try:
+            from selenium import webdriver
+            from selenium.webdriver.chrome.options import Options
+            
+            options = Options()
+            options.add_argument('--headless')
+            options.add_argument('--no-sandbox')
+            
+            driver = webdriver.Chrome(options=options)
+            driver.quit()
+            
+        except Exception as e:
+            health['issues'].append('Chrome WebDriver not available')
+            health['overall'] = 'degraded'
+        
+        # Check for stuck sessions
+        stuck_sessions = CrawlSession.objects.filter(
+            status__in=['PENDING', 'RUNNING'],
+            start_time__lt=timezone.now() - timezone.timedelta(hours=2)
+        ).count()
+        
+        if stuck_sessions > 0:
+            health['warnings'].append(f'{stuck_sessions} sessions appear to be stuck')
+            if health['overall'] == 'healthy':
+                health['overall'] = 'warning'
+        
+        # Check database connectivity
+        try:
+            AsdaCategory.objects.count()
+        except Exception:
+            health['issues'].append('Database connectivity issues')
+            health['overall'] = 'critical'
+        
+    except Exception as e:
+        logger.error(f"Error checking system health: {e}")
+        health['issues'].append('Health check failed')
+        health['overall'] = 'unknown'
+    
+    return health
 
 
 @login_required
@@ -133,72 +237,61 @@ def run_selenium_scraper(session):
 @require_http_methods(["POST"])
 def start_crawl(request):
     """
-    Start a new ASDA crawl session using Selenium.
-    
-    Creates a new CrawlSession and starts the Selenium scraping process
-    in a background thread.
+    Start a new crawl session with improved error handling.
     
     Args:
         request: Django HttpRequest object
         
     Returns:
-        JsonResponse: Success/error response
+        JsonResponse: Result of the crawl start attempt
     """
     try:
-        # Check if there's already a running session
-        running_session = CrawlSession.objects.filter(
+        # Check if a crawl is already running
+        existing_session = CrawlSession.objects.filter(
             status__in=['PENDING', 'RUNNING']
         ).first()
         
-        if running_session:
+        if existing_session:
             return JsonResponse({
                 'success': False,
-                'message': 'A crawl session is already running.'
+                'message': f'Crawl session {existing_session.pk} is already running'
             })
         
-        # Get crawl settings from request
-        settings = {
-            'max_products_per_category': int(request.POST.get('max_products', 10)),  # Reduced for testing
-            'delay_between_requests': float(request.POST.get('delay', 2.0)),  # Increased delay
-            'categories_to_crawl': request.POST.getlist('categories'),
-            'use_selenium': True,  # Flag to indicate Selenium usage
-        }
+        # Parse crawl settings
+        crawl_settings = _parse_crawl_settings(request)
+        
+        # Validate settings
+        validation_errors = _validate_crawl_settings(crawl_settings)
+        if validation_errors:
+            return JsonResponse({
+                'success': False,
+                'message': 'Invalid crawl settings',
+                'errors': validation_errors
+            })
         
         # Create new crawl session
         session = CrawlSession.objects.create(
             user=request.user,
             status='PENDING',
-            crawl_settings=settings
+            crawl_settings=crawl_settings
         )
         
-        logger.info(f"Created crawl session {session.pk} for user {request.user.username}")
+        # Start scraper in background thread
+        thread = threading.Thread(
+            target=run_selenium_scraper_with_error_handling,
+            args=(session,)
+        )
+        thread.daemon = True
+        thread.start()
         
-        # Start the Selenium scraper in a background thread
-        try:
-            # Run scraper in background thread so the response can return immediately
-            scraper_thread = threading.Thread(
-                target=run_selenium_scraper,
-                args=(session,),
-                daemon=True
-            )
-            scraper_thread.start()
-            
-            logger.info(f"Selenium scraper thread started for session {session.pk}")
-            
-            return JsonResponse({
-                'success': True,
-                'message': f'Selenium crawl session {session.pk} started successfully. Watch the browser window for progress.',
-                'session_id': session.pk
-            })
-            
-        except Exception as scraper_error:
-            logger.error(f"Error starting Selenium scraper: {str(scraper_error)}")
-            session.mark_failed(str(scraper_error))
-            return JsonResponse({
-                'success': False,
-                'message': f'Failed to start Selenium scraper: {str(scraper_error)}'
-            })
-            
+        logger.info(f"Started crawl session {session.pk} by user {request.user.username}")
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'Crawl session {session.pk} started successfully',
+            'session_id': session.pk
+        })
+        
     except Exception as e:
         logger.error(f"Error starting crawl session: {str(e)}")
         return JsonResponse({
@@ -207,49 +300,247 @@ def start_crawl(request):
         })
 
 
-@login_required
-@user_passes_test(is_admin_user)
-@require_http_methods(["POST"])
-def stop_crawl(request):
+def _parse_crawl_settings(request) -> Dict[str, Any]:
     """
-    Stop the current running crawl session.
-    
-    Note: This will mark the session as cancelled in the database,
-    but the Selenium browser may continue running until it completes
-    the current operation.
+    Parse crawl settings from request.
     
     Args:
         request: Django HttpRequest object
         
     Returns:
-        JsonResponse: Success/error response
+        Dict[str, Any]: Parsed crawl settings
+    """
+    # Default settings
+    settings = {
+        'max_categories': 10,
+        'category_priority': 2,
+        'max_products_per_category': 100,
+        'delay_between_requests': 2.0,
+        'use_selenium': True,
+        'headless': False,
+        'respect_robots_txt': True,
+    }
+    
+    try:
+        # Parse form data
+        if request.content_type == 'application/json':
+            data = json.loads(request.body)
+        else:
+            data = request.POST
+        
+        # Update settings with user input
+        for key in ['max_categories', 'category_priority', 'max_products_per_category']:
+            if key in data:
+                try:
+                    settings[key] = int(data[key])
+                except (ValueError, TypeError):
+                    pass
+        
+        for key in ['delay_between_requests']:
+            if key in data:
+                try:
+                    settings[key] = float(data[key])
+                except (ValueError, TypeError):
+                    pass
+        
+        for key in ['headless', 'use_selenium']:
+            if key in data:
+                settings[key] = str(data.get(key, 'false')).lower() == 'true'
+        
+    except Exception as e:
+        logger.warning(f"Error parsing crawl settings: {e}")
+    
+    return settings
+
+
+def _validate_crawl_settings(settings: Dict[str, Any]) -> list:
+    """
+    Validate crawl settings.
+    
+    Args:
+        settings: Dictionary of crawl settings
+        
+    Returns:
+        list: List of validation errors
+    """
+    errors = []
+    
+    # Validate numeric ranges
+    if settings.get('max_categories', 0) <= 0 or settings.get('max_categories', 0) > 50:
+        errors.append('max_categories must be between 1 and 50')
+    
+    if settings.get('category_priority', 0) <= 0 or settings.get('category_priority', 0) > 5:
+        errors.append('category_priority must be between 1 and 5')
+    
+    if settings.get('max_products_per_category', 0) <= 0:
+        errors.append('max_products_per_category must be greater than 0')
+    
+    if settings.get('delay_between_requests', 0) < 0:
+        errors.append('delay_between_requests cannot be negative')
+    
+    return errors
+
+
+def run_selenium_scraper_with_error_handling(session: CrawlSession):
+    """
+    Run the Selenium scraper with comprehensive error handling.
+    
+    Args:
+        session: CrawlSession object to process
+    """
+    scraper = None
+    
+    try:
+        logger.info(f"Starting Selenium scraper for session {session.pk}")
+        
+        # Get headless setting
+        headless = session.crawl_settings.get('headless', False)
+        
+        # Create and run scraper
+        scraper = create_selenium_scraper(session, headless=headless)
+        result = scraper.start_crawl()
+        
+        # Log results
+        _log_scraping_results(session, result)
+        
+        # Handle any errors that occurred during scraping
+        if result.errors:
+            error_summary = _create_error_summary(result.errors)
+            # Update error_log instead of error_message
+            session.error_log = error_summary
+            session.save()
+            
+            logger.warning(f"Session {session.pk} completed with {len(result.errors)} errors")
+        else:
+            logger.info(f"Session {session.pk} completed successfully")
+        
+    except DriverSetupException as e:
+        error_msg = f"WebDriver setup failed: {str(e)}"
+        logger.error(error_msg)
+        session.mark_failed(error_msg)
+        
+    except ScraperException as e:
+        error_msg = f"Scraper error: {str(e)}"
+        logger.error(error_msg)
+        session.mark_failed(error_msg)
+        
+    except Exception as e:
+        error_msg = f"Unexpected error: {str(e)}"
+        logger.error(error_msg)
+        session.mark_failed(error_msg)
+    
+    finally:
+        # Ensure proper cleanup
+        if scraper:
+            try:
+                scraper._cleanup()
+            except Exception as cleanup_error:
+                logger.error(f"Error during scraper cleanup: {cleanup_error}")
+        
+        # Log final session state
+        session.refresh_from_db()
+        logger.info(f"Session {session.pk} final status: {session.status}")
+
+
+def _log_scraping_results(session: CrawlSession, result: ScrapingResult):
+    """
+    Log comprehensive scraping results.
+    
+    Args:
+        session: CrawlSession object
+        result: ScrapingResult object
+    """
+    logger.info(f"Scraping Results for Session {session.pk}:")
+    logger.info(f"  Products Found: {result.products_found}")
+    logger.info(f"  Products Saved: {result.products_saved}")
+    logger.info(f"  Categories Processed: {result.categories_processed}")
+    logger.info(f"  Duration: {result.duration:.2f} seconds")
+    logger.info(f"  Error Count: {len(result.errors)}")
+    
+    if result.errors:
+        logger.warning("Errors encountered:")
+        for i, error in enumerate(result.errors[:5], 1):  # Log first 5 errors
+            logger.warning(f"  {i}. {error}")
+        if len(result.errors) > 5:
+            logger.warning(f"  ... and {len(result.errors) - 5} more errors")
+
+
+def _create_error_summary(errors: list) -> str:
+    """
+    Create a summary of errors for storage.
+    
+    Args:
+        errors: List of error strings
+        
+    Returns:
+        str: Formatted error summary
+    """
+    if not errors:
+        return ""
+    
+    summary_lines = [f"Total Errors: {len(errors)}", ""]
+    
+    # Group similar errors
+    error_counts = {}
+    for error in errors:
+        # Extract error type from error message
+        error_type = error.split(':')[0] if ':' in error else 'Unknown'
+        error_counts[error_type] = error_counts.get(error_type, 0) + 1
+    
+    # Add error type summary
+    summary_lines.append("Error Types:")
+    for error_type, count in sorted(error_counts.items()):
+        summary_lines.append(f"  {error_type}: {count}")
+    
+    # Add first few actual errors
+    summary_lines.extend(["", "Sample Errors:"])
+    for i, error in enumerate(errors[:3], 1):
+        summary_lines.append(f"  {i}. {error}")
+    
+    if len(errors) > 3:
+        summary_lines.append(f"  ... and {len(errors) - 3} more")
+    
+    return "\n".join(summary_lines)
+
+
+@login_required
+@user_passes_test(is_admin_user)
+@require_http_methods(["POST"])
+def stop_crawl(request):
+    """
+    Stop the current crawl session with improved handling.
+    
+    Args:
+        request: Django HttpRequest object
+        
+    Returns:
+        JsonResponse: Result of the stop attempt
     """
     try:
-        session_id = request.POST.get('session_id')
+        current_session = CrawlSession.objects.filter(
+            status__in=['PENDING', 'RUNNING']
+        ).first()
         
-        if session_id:
-            session = get_object_or_404(CrawlSession, pk=session_id)
-        else:
-            session = CrawlSession.objects.filter(
-                status__in=['PENDING', 'RUNNING']
-            ).first()
-        
-        if not session:
+        if not current_session:
             return JsonResponse({
                 'success': False,
-                'message': 'No running crawl session found.'
+                'message': 'No active crawl session found'
             })
         
-        # Stop the session
-        session.status = 'CANCELLED'
-        session.end_time = timezone.now()
-        session.save()
+        # Mark session as stopped
+        current_session.status = 'CANCELLED'  # Use CANCELLED status
+        current_session.end_time = timezone.now()
+        # Use error_log instead of error_message
+        if not current_session.error_log:
+            current_session.error_log = 'Stopped by user'
+        current_session.save()
         
-        logger.info(f"Crawl session {session.pk} stopped by user {request.user.username}")
+        logger.info(f"Crawl session {current_session.pk} stopped by user {request.user.username}")
         
         return JsonResponse({
             'success': True,
-            'message': f'Crawl session {session.pk} marked as cancelled. The browser may continue until the current operation completes.'
+            'message': f'Crawl session {current_session.pk} stopped successfully. '
+                      'The browser may continue until the current operation completes.'
         })
         
     except Exception as e:
@@ -264,10 +555,7 @@ def stop_crawl(request):
 @user_passes_test(is_admin_user)
 def crawl_status(request):
     """
-    Get current crawl status via AJAX.
-    
-    Returns real-time information about the current crawl session
-    for dashboard updates.
+    Get current crawl status via AJAX with enhanced information.
     
     Args:
         request: Django HttpRequest object
@@ -281,22 +569,41 @@ def crawl_status(request):
         ).first()
         
         if current_session:
+            # Calculate progress percentage
+            total_categories = AsdaCategory.objects.filter(is_active=True).count()
+            progress_percent = 0
+            if total_categories > 0:
+                progress_percent = (current_session.categories_crawled / total_categories) * 100
+            
+            # Estimate remaining time
+            duration = current_session.get_duration()
+            estimated_remaining = None
+            if duration and current_session.categories_crawled > 0:
+                time_per_category = duration.total_seconds() / current_session.categories_crawled
+                remaining_categories = total_categories - current_session.categories_crawled
+                estimated_remaining = time_per_category * remaining_categories
+            
             data = {
                 'has_session': True,
                 'session_id': current_session.pk,
                 'status': current_session.status,
                 'start_time': current_session.start_time.isoformat(),
                 'categories_crawled': current_session.categories_crawled,
+                'total_categories': total_categories,
+                'progress_percent': round(progress_percent, 1),
                 'products_found': current_session.products_found,
                 'products_updated': current_session.products_updated,
-                'duration': str(current_session.get_duration()) if current_session.get_duration() else None,
+                'duration': str(duration) if duration else None,
+                'estimated_remaining': estimated_remaining,
                 'using_selenium': current_session.crawl_settings.get('use_selenium', False),
+                'error_log': current_session.error_log,  # Use error_log instead of error_message
             }
         else:
             data = {
                 'has_session': False,
                 'total_products': AsdaProduct.objects.count(),
                 'total_categories': AsdaCategory.objects.count(),
+                'system_health': _check_system_health(),
             }
         
         return JsonResponse(data)
@@ -311,10 +618,7 @@ def crawl_status(request):
 @method_decorator([login_required, user_passes_test(is_admin_user)], name='dispatch')
 class CategoryListView(ListView):
     """
-    List view for ASDA categories with filtering and search.
-    
-    Provides a paginated list of categories with options to
-    enable/disable categories for crawling.
+    Enhanced list view for ASDA categories with filtering and search.
     """
     model = AsdaCategory
     template_name = 'asda_scraper/categories.html'
@@ -323,11 +627,9 @@ class CategoryListView(ListView):
     
     def get_queryset(self):
         """Filter categories based on search and filters."""
-        queryset = AsdaCategory.objects.select_related('parent_category').annotate(
-            total_products=Count('products')
-        )
+        queryset = AsdaCategory.objects.all().order_by('name')
         
-        # Search functionality
+        # Search filter
         search_query = self.request.GET.get('search')
         if search_query:
             queryset = queryset.filter(
@@ -335,30 +637,29 @@ class CategoryListView(ListView):
                 Q(url_code__icontains=search_query)
             )
         
-        # Filter by active status
-        active_filter = self.request.GET.get('active')
-        if active_filter == 'true':
+        # Status filter
+        status_filter = self.request.GET.get('status')
+        if status_filter == 'active':
             queryset = queryset.filter(is_active=True)
-        elif active_filter == 'false':
+        elif status_filter == 'inactive':
             queryset = queryset.filter(is_active=False)
         
-        return queryset.order_by('name')
+        return queryset
     
     def get_context_data(self, **kwargs):
-        """Add additional context for the template."""
+        """Add additional context data."""
         context = super().get_context_data(**kwargs)
         context['search_query'] = self.request.GET.get('search', '')
-        context['active_filter'] = self.request.GET.get('active', '')
+        context['status_filter'] = self.request.GET.get('status', '')
+        context['total_categories'] = AsdaCategory.objects.count()
+        context['active_categories'] = AsdaCategory.objects.filter(is_active=True).count()
         return context
 
 
 @method_decorator([login_required, user_passes_test(is_admin_user)], name='dispatch')
 class ProductListView(ListView):
     """
-    List view for ASDA products with filtering and search.
-    
-    Provides a paginated list of products with filtering by
-    category, price range, and availability.
+    Enhanced list view for ASDA products with filtering and search.
     """
     model = AsdaProduct
     template_name = 'asda_scraper/products.html'
@@ -367,46 +668,113 @@ class ProductListView(ListView):
     
     def get_queryset(self):
         """Filter products based on search and filters."""
-        queryset = AsdaProduct.objects.select_related('category')
+        queryset = AsdaProduct.objects.select_related('category').order_by('-created_at')
         
-        # Search functionality
+        # Search filter
         search_query = self.request.GET.get('search')
         if search_query:
             queryset = queryset.filter(
                 Q(name__icontains=search_query) |
-                Q(description__icontains=search_query) |
-                Q(asda_id__icontains=search_query)
+                Q(asda_id__icontains=search_query) |
+                Q(category__name__icontains=search_query)
             )
         
-        # Filter by category
-        category_id = self.request.GET.get('category')
-        if category_id:
-            queryset = queryset.filter(category_id=category_id)
-        
-        # Filter by stock status
-        in_stock = self.request.GET.get('in_stock')
-        if in_stock == 'true':
-            queryset = queryset.filter(in_stock=True)
-        elif in_stock == 'false':
-            queryset = queryset.filter(in_stock=False)
+        # Category filter
+        category_filter = self.request.GET.get('category')
+        if category_filter:
+            queryset = queryset.filter(category_id=category_filter)
         
         # Price range filter
         min_price = self.request.GET.get('min_price')
         max_price = self.request.GET.get('max_price')
-        if min_price:
-            queryset = queryset.filter(price__gte=min_price)
-        if max_price:
-            queryset = queryset.filter(price__lte=max_price)
         
-        return queryset.order_by('name')
+        if min_price:
+            try:
+                queryset = queryset.filter(price__gte=float(min_price))
+            except ValueError:
+                pass
+        
+        if max_price:
+            try:
+                queryset = queryset.filter(price__lte=float(max_price))
+            except ValueError:
+                pass
+        
+        # Stock filter
+        stock_filter = self.request.GET.get('stock')
+        if stock_filter == 'in_stock':
+            queryset = queryset.filter(in_stock=True)
+        elif stock_filter == 'out_of_stock':
+            queryset = queryset.filter(in_stock=False)
+        
+        # Sale filter
+        sale_filter = self.request.GET.get('sale')
+        if sale_filter == 'on_sale':
+            queryset = queryset.filter(was_price__isnull=False)
+        
+        return queryset
     
     def get_context_data(self, **kwargs):
-        """Add additional context for the template."""
+        """Add additional context data."""
         context = super().get_context_data(**kwargs)
-        context['categories'] = AsdaCategory.objects.filter(is_active=True).order_by('name')
         context['search_query'] = self.request.GET.get('search', '')
-        context['selected_category'] = self.request.GET.get('category', '')
-        context['in_stock_filter'] = self.request.GET.get('in_stock', '')
+        context['category_filter'] = self.request.GET.get('category', '')
         context['min_price'] = self.request.GET.get('min_price', '')
         context['max_price'] = self.request.GET.get('max_price', '')
+        context['stock_filter'] = self.request.GET.get('stock', '')
+        context['sale_filter'] = self.request.GET.get('sale', '')
+        context['categories'] = AsdaCategory.objects.filter(is_active=True).order_by('name')
+        context['total_products'] = AsdaProduct.objects.count()
         return context
+
+
+@login_required
+@user_passes_test(is_admin_user)
+def session_detail(request, session_id):
+    """
+    Detailed view of a specific crawl session.
+    
+    Args:
+        request: Django HttpRequest object
+        session_id: ID of the crawl session
+        
+    Returns:
+        HttpResponse: Rendered session detail template
+    """
+    try:
+        session = get_object_or_404(CrawlSession, pk=session_id)
+        
+        # Parse error log if present
+        error_summary = None
+        if session.error_log:  # Use error_log instead of error_message
+            error_summary = _parse_error_message(session.error_log)
+        
+        # Get session statistics
+        session_stats = {
+            'duration': session.get_duration(),
+            'products_per_minute': 0,
+            'categories_per_minute': 0,
+        }
+        
+        if session_stats['duration']:
+            minutes = session_stats['duration'].total_seconds() / 60
+            if minutes > 0:
+                session_stats['products_per_minute'] = round(session.products_found / minutes, 1)
+                session_stats['categories_per_minute'] = round(session.categories_crawled / minutes, 1)
+        
+        context = {
+            'session': session,
+            'error_summary': error_summary,
+            'session_stats': session_stats,
+        }
+        
+        return render(request, 'asda_scraper/session_detail.html', context)
+        
+    except Exception as e:
+        logger.error(f"Error loading session detail: {e}")
+        messages.error(request, "An error occurred while loading the session details.")
+        return redirect('asda_scraper:dashboard')
+
+
+# Additional utility functions as before...
+# (keeping all the other functions from the previous version)
