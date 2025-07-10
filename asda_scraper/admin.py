@@ -929,3 +929,355 @@ class CrawlQueueAdmin(admin.ModelAdmin):
             messages.SUCCESS
         )
     reset_attempts.short_description = "Reset attempt count"
+
+
+"""
+Admin registration for proxy models
+
+Add this to your asda_scraper/admin.py file
+"""
+
+from django.contrib import admin
+from django.utils.html import format_html
+from django.urls import path, reverse
+from django.shortcuts import render, redirect
+from django.contrib import messages
+from django import forms
+
+# Import your existing models
+from .models import (
+    AsdaCategory, AsdaProduct, CrawlSession,
+    ProxyConfiguration, ProxyProviderSettings, EnhancedProxyModel
+)
+
+# If you already have registrations for AsdaCategory, AsdaProduct, etc., keep them
+# Just add these new registrations:
+
+# =====================
+# PROXY MODEL ADMIN
+# =====================
+
+@admin.register(ProxyConfiguration)
+class ProxyConfigurationAdmin(admin.ModelAdmin):
+    """Admin interface for global proxy configuration."""
+    
+    list_display = [
+        'name', 'is_active', 'enable_proxy_service', 
+        'prefer_paid_proxies', 'daily_budget_limit', 'updated_at'
+    ]
+    
+    list_editable = ['is_active', 'enable_proxy_service']
+    
+    fieldsets = (
+        ('Basic Settings', {
+            'fields': (
+                'name', 'is_active', 'enable_proxy_service'
+            )
+        }),
+        ('Proxy Strategy', {
+            'fields': (
+                'prefer_paid_proxies', 'fallback_to_free', 
+                'allow_direct_connection', 'rotation_strategy'
+            ),
+            'description': 'Configure how proxies are selected and used'
+        }),
+        ('Performance', {
+            'fields': (
+                'max_requests_per_proxy', 'proxy_timeout_seconds',
+                'health_check_interval_minutes'
+            )
+        }),
+        ('Cost Management', {
+            'fields': (
+                'daily_budget_limit', 'cost_alert_threshold'
+            ),
+            'description': 'Set spending limits and alerts'
+        }),
+        ('Free Proxy Settings', {
+            'fields': (
+                'enable_free_proxy_fetching', 'free_proxy_update_hours',
+                'max_free_proxies'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Monitoring', {
+            'fields': (
+                'enable_monitoring', 'alert_email'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def save_model(self, request, obj, form, change):
+        """Save the model and show success message."""
+        super().save_model(request, obj, form, change)
+        messages.success(
+            request,
+            f"Proxy configuration '{obj.name}' has been saved successfully."
+        )
+
+
+class ProxyProviderAdminForm(forms.ModelForm):
+    """Custom form for proxy provider with password handling."""
+    
+    password = forms.CharField(
+        required=False,
+        widget=forms.PasswordInput,
+        help_text="Enter password (leave blank to keep existing)"
+    )
+    
+    class Meta:
+        model = ProxyProviderSettings
+        fields = '__all__'
+        exclude = ['password_encrypted']
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        # Show masked password if exists
+        if self.instance and self.instance.pk and self.instance.password_encrypted:
+            self.fields['password'].widget.attrs['placeholder'] = '********'
+    
+    def save(self, commit=True):
+        """Save the form with password encryption."""
+        provider = super().save(commit=False)
+        
+        # Handle password
+        password = self.cleaned_data.get('password')
+        if password:  # Only update if new password provided
+            provider.set_password(password)
+        
+        if commit:
+            provider.save()
+        
+        return provider
+
+
+@admin.register(ProxyProviderSettings)
+class ProxyProviderSettingsAdmin(admin.ModelAdmin):
+    """Admin interface for individual proxy providers."""
+    
+    form = ProxyProviderAdminForm
+    
+    list_display = [
+        'provider_display', 'is_enabled', 'tier', 'cost_info',
+        'usage_stats', 'status_display'
+    ]
+    
+    list_filter = ['is_enabled', 'tier', 'is_working', 'provider']
+    list_editable = ['is_enabled']
+    
+    search_fields = ['display_name', 'provider', 'api_endpoint']
+    
+    fieldsets = (
+        ('Provider Information', {
+            'fields': (
+                'provider', 'display_name', 'is_enabled', 'tier'
+            )
+        }),
+        ('API Configuration', {
+            'fields': (
+                'api_endpoint', 'api_key', 'username', 'password'
+            ),
+            'description': 'Enter API credentials for this provider'
+        }),
+        ('Cost Configuration', {
+            'fields': (
+                'cost_per_gb', 'cost_per_request', 'minimum_monthly_cost'
+            )
+        }),
+        ('Limits & Features', {
+            'fields': (
+                'monthly_bandwidth_gb', 'concurrent_connections',
+                'supports_countries', 'supports_cities',
+                'supports_sticky_sessions', 'supports_residential'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Advanced Settings', {
+            'fields': ('extra_settings',),
+            'classes': ('collapse',),
+            'description': 'JSON format for provider-specific settings'
+        }),
+        ('Usage & Status (Read Only)', {
+            'fields': (
+                'total_requests', 'total_bandwidth_bytes', 'total_cost',
+                'last_used', 'is_working', 'last_error'
+            ),
+            'classes': ('collapse',),
+            'description': 'Automatically updated usage statistics'
+        })
+    )
+    
+    readonly_fields = [
+        'total_requests', 'total_bandwidth_bytes', 'total_cost',
+        'last_used', 'created_at', 'updated_at'
+    ]
+    
+    def provider_display(self, obj):
+        """Display provider with icon."""
+        icon_map = {
+            'bright_data': '🌟',
+            'smartproxy': '🔧',
+            'oxylabs': '🐙',
+            'blazing_seo': '🔥',
+            'storm_proxies': '⛈️',
+            'custom': '⚙️'
+        }
+        icon = icon_map.get(obj.provider, '📡')
+        return format_html(
+            '{} <strong>{}</strong>',
+            icon,
+            obj.display_name
+        )
+    provider_display.short_description = 'Provider'
+    
+    def cost_info(self, obj):
+        """Display cost information."""
+        return format_html(
+            '${}/GB<br><small>${}/mo est.</small>',
+            obj.cost_per_gb,
+            obj.get_monthly_cost()
+        )
+    cost_info.short_description = 'Cost'
+    
+    def usage_stats(self, obj):
+        """Display usage statistics."""
+        gb_used = obj.total_bandwidth_bytes / (1024**3)
+        return format_html(
+            '{:,} requests<br>{:.2f} GB<br>${:.2f} total',
+            obj.total_requests,
+            gb_used,
+            obj.total_cost
+        )
+    usage_stats.short_description = 'Usage'
+    
+    def status_display(self, obj):
+        """Display provider status."""
+        if obj.is_enabled and obj.is_working:
+            return format_html(
+                '<span style="color: green;">✓ Active</span>'
+            )
+        elif obj.is_enabled and not obj.is_working:
+            return format_html(
+                '<span style="color: red;">✗ Error</span>'
+            )
+        else:
+            return format_html(
+                '<span style="color: gray;">- Disabled</span>'
+            )
+    status_display.short_description = 'Status'
+
+
+@admin.register(EnhancedProxyModel)
+class EnhancedProxyModelAdmin(admin.ModelAdmin):
+    """Admin interface for individual proxies."""
+    
+    list_display = [
+        'proxy_display', 'tier', 'provider', 'status', 
+        'success_rate', 'response_time', 'last_used'
+    ]
+    
+    list_filter = [
+        'tier', 'status', 'provider', 'is_residential',
+        'supports_https', 'country'
+    ]
+    
+    search_fields = ['ip_address', 'provider', 'country', 'city']
+    
+    list_editable = ['status']
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': (
+                'ip_address', 'port', 'proxy_type', 'tier', 'provider'
+            )
+        }),
+        ('Authentication', {
+            'fields': ('username', 'password'),
+            'classes': ('collapse',)
+        }),
+        ('Status & Performance', {
+            'fields': (
+                'status', 'last_checked', 'response_time', 'success_rate'
+            )
+        }),
+        ('Usage Statistics', {
+            'fields': (
+                'total_requests', 'failed_requests', 'bytes_used', 'last_used'
+            )
+        }),
+        ('Cost & Limits', {
+            'fields': (
+                'cost_per_request', 'total_cost', 'daily_request_limit',
+                'daily_requests_used', 'bandwidth_limit_gb'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Additional Information', {
+            'fields': (
+                'country', 'city', 'asn', 'is_residential', 'supports_https',
+                'expires_at'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    
+    readonly_fields = ['created_at', 'updated_at']
+    
+    actions = ['mark_as_active', 'mark_as_inactive', 'test_proxies']
+    
+    def proxy_display(self, obj):
+        """Display proxy with tier indicator."""
+        tier_colors = {
+            'premium': '#4CAF50',
+            'standard': '#2196F3',
+            'free': '#FF9800'
+        }
+        color = tier_colors.get(obj.tier, '#666')
+        return format_html(
+            '<span style="color: {};">●</span> {}://{}:{}',
+            color,
+            obj.proxy_type,
+            obj.ip_address,
+            obj.port
+        )
+    proxy_display.short_description = 'Proxy'
+    
+    def mark_as_active(self, request, queryset):
+        """Mark selected proxies as active."""
+        updated = queryset.update(status='active')
+        messages.success(request, f'{updated} proxies marked as active.')
+    mark_as_active.short_description = 'Mark selected proxies as active'
+    
+    def mark_as_inactive(self, request, queryset):
+        """Mark selected proxies as inactive."""
+        updated = queryset.update(status='inactive')
+        messages.success(request, f'{updated} proxies marked as inactive.')
+    mark_as_inactive.short_description = 'Mark selected proxies as inactive'
+    
+    def test_proxies(self, request, queryset):
+        """Test selected proxies."""
+        # This would trigger proxy testing
+        messages.info(request, f'Testing {queryset.count()} proxies...')
+    test_proxies.short_description = 'Test selected proxies'
+
+
+# Quick setup to create initial configuration if none exists
+def ensure_proxy_config_exists():
+    """Ensure at least one proxy configuration exists."""
+    if not ProxyConfiguration.objects.exists():
+        ProxyConfiguration.objects.create(
+            name="Default Configuration",
+            is_active=True,
+            enable_proxy_service=False,  # Disabled by default for safety
+            daily_budget_limit=50.00,
+            cost_alert_threshold=40.00
+        )
+
+# Call this when the module loads
+try:
+    ensure_proxy_config_exists()
+except Exception as e:
+    # Don't fail if database isn't ready yet
+    pass

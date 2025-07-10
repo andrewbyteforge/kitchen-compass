@@ -1,0 +1,127 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content %}
+<div class="proxy-setup-wizard">
+    <h1>Proxy Provider Setup Wizard</h1>
+    
+    <form method="post" class="wizard-form">
+        {% csrf_token %}
+        
+        <div class="wizard-step">
+            <h2>Step 1: Choose Provider</h2>
+            <div class="provider-options">
+                <label class="provider-option">
+                    <input type="radio" name="provider_type" value="bright_data" required>
+                    <div class="provider-card">
+                        <h3>🌟 Bright Data</h3>
+                        <p>Premium residential proxies</p>
+                        <small>~$3/GB • Best success rate</small>
+                    </div>
+                </label>
+                
+                <label class="provider-option">
+                    <input type="radio" name="provider_type" value="smartproxy" required>
+                    <div class="provider-card">
+                        <h3>🔧 SmartProxy</h3>
+                        <p>Reliable datacenter proxies</p>
+                        <small>~$1.5/GB • Good balance</small>
+                    </div>
+                </label>
+                
+                <label class="provider-option">
+                    <input type="radio" name="provider_type" value="blazing_seo" required>
+                    <div class="provider-card">
+                        <h3>🔥 Blazing SEO</h3>
+                        <p>Budget datacenter proxies</p>
+                        <small>~$0.5/GB • Basic option</small>
+                    </div>
+                </label>
+            </div>
+        </div>
+        
+        <div class="wizard-step">
+            <h2>Step 2: Enter Credentials</h2>
+            <div class="form-row">
+                <label>Username:</label>
+                <input type="text" name="username" required>
+            </div>
+            <div class="form-row">
+                <label>Password:</label>
+                <input type="password" name="password" required>
+            </div>
+            <div class="form-row">
+                <label>API Key (if required):</label>
+                <input type="text" name="api_key">
+            </div>
+        </div>
+        
+        <div class="form-actions">
+            <button type="submit" class="button button-primary">Configure Provider</button>
+            <a href="{% url 'admin:asda_scraper_proxyprovidersettings_changelist' %}" class="button">Cancel</a>
+        </div>
+    </form>
+</div>
+
+<style>
+.proxy-setup-wizard {
+    max-width: 800px;
+    margin: 20px 0;
+}
+
+.wizard-form {
+    background: white;
+    padding: 20px;
+    border-radius: 4px;
+}
+
+.wizard-step {
+    margin-bottom: 30px;
+}
+
+.provider-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-top: 15px;
+}
+
+.provider-option {
+    cursor: pointer;
+}
+
+.provider-card {
+    border: 2px solid #ddd;
+    padding: 15px;
+    border-radius: 4px;
+    text-align: center;
+    transition: all 0.2s;
+}
+
+.provider-option input[type="radio"] {
+    display: none;
+}
+
+.provider-option input[type="radio"]:checked + .provider-card {
+    border-color: #0066cc;
+    background-color: #f0f7ff;
+}
+
+.form-row {
+    margin-bottom: 15px;
+}
+
+.form-row label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+.form-row input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+</style>
+{% endblock %}

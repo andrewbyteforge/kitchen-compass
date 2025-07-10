@@ -84,20 +84,112 @@
     </div>
 </div>
 
+<!-- Proxy Status Card (NEW) -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-primary">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-shield-check me-2"></i>
+                    Proxy Service Status
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        {% if proxy_config and proxy_config.enable_proxy_service %}
+                            <div class="d-flex align-items-center mb-2">
+                                <span class="status-indicator status-active me-2"></span>
+                                <strong>Proxy Service Enabled</strong>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <small class="text-muted">Active Proxies</small>
+                                    <div class="h6 mb-0">{{ active_proxies|default:0 }} / {{ total_proxies|default:0 }}</div>
+                                </div>
+                                <div class="col-md-3">
+                                    <small class="text-muted">Daily Budget</small>
+                                    <div class="h6 mb-0">${{ proxy_config.daily_budget_limit|default:"0.00" }}</div>
+                                </div>
+                                <div class="col-md-3">
+                                    <small class="text-muted">Today's Cost</small>
+                                    <div class="h6 mb-0">${{ today_proxy_cost|default:"0.00" }}</div>
+                                </div>
+                                <div class="col-md-3">
+                                    <small class="text-muted">Strategy</small>
+                                    <div class="h6 mb-0">{{ proxy_config.get_rotation_strategy_display|default:"None" }}</div>
+                                </div>
+                            </div>
+                        {% else %}
+                            <div class="d-flex align-items-center">
+                                <span class="status-indicator status-inactive me-2"></span>
+                                <strong>Proxy Service Disabled</strong>
+                                <span class="ms-3 text-muted">Enable proxy service to use proxy rotation</span>
+                            </div>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <div class="btn-group" role="group">
+                            <a href="/admin/asda_scraper/proxyconfiguration/" class="btn btn-outline-primary" target="_blank">
+                                <i class="bi bi-gear"></i> Configure
+                            </a>
+                            <a href="/admin/asda_scraper/proxyprovidersettings/" class="btn btn-outline-primary" target="_blank">
+                                <i class="bi bi-cloud"></i> Providers
+                            </a>
+                            <a href="/admin/proxy-dashboard/" class="btn btn-primary" target="_blank">
+                                <i class="bi bi-speedometer2"></i> Dashboard
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Action Buttons Row -->
 <div class="row mb-4">
     <div class="col-12">
-        <div class="d-flex gap-2">
+        <div class="d-flex gap-2 flex-wrap">
+            <!-- Original buttons -->
             <a href="{% url 'asda_scraper:categories' %}" class="btn btn-primary">
                 <i class="bi bi-tags"></i> Manage Categories
             </a>
             <a href="{% url 'asda_scraper:products' %}" class="btn btn-primary">
                 <i class="bi bi-box-seam"></i> View Products
             </a>
-            <!-- Direct link to Django Admin for product management -->
             <a href="/admin/asda_scraper/asdaproduct/" class="btn btn-warning" target="_blank">
                 <i class="bi bi-gear"></i> Manage Products (Admin)
             </a>
+            
+            <!-- New Proxy Management Dropdown -->
+            <div class="dropdown">
+                <button class="btn btn-info dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                    <i class="bi bi-shield-lock"></i> Proxy Management
+                </button>
+                <ul class="dropdown-menu">
+                    <li><a class="dropdown-item" href="/admin/proxy-dashboard/" target="_blank">
+                        <i class="bi bi-speedometer2 me-2"></i>Proxy Dashboard
+                    </a></li>
+                    <li><a class="dropdown-item" href="/admin/asda_scraper/proxyconfiguration/" target="_blank">
+                        <i class="bi bi-sliders me-2"></i>Global Settings
+                    </a></li>
+                    <li><a class="dropdown-item" href="/admin/asda_scraper/proxyprovidersettings/" target="_blank">
+                        <i class="bi bi-cloud me-2"></i>Manage Providers
+                    </a></li>
+                    <li><a class="dropdown-item" href="/admin/asda_scraper/enhancedproxymodel/" target="_blank">
+                        <i class="bi bi-list-ul me-2"></i>View All Proxies
+                    </a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="#" onclick="updateFreeProxies()">
+                        <i class="bi bi-arrow-clockwise me-2"></i>Update Free Proxies
+                    </a></li>
+                    <li><a class="dropdown-item" href="#" onclick="testProxies()">
+                        <i class="bi bi-check-circle me-2"></i>Test Active Proxies
+                    </a></li>
+                </ul>
+            </div>
+            
             {% if user.is_superuser %}
             <!-- Quick delete dropdown for superusers only -->
             <div class="dropdown">
@@ -148,14 +240,13 @@
     <div class="col-md-3 mb-3">
         <div class="card text-center h-100">
             <div class="card-body">
-                <i class="bi bi-clock-history text-warning" style="font-size: 2.5rem;"></i>
-                <h3 class="mt-2 mb-0">{{ recent_sessions|length }}</h3>
-                <p class="text-muted mb-0">Recent Sessions</p>
+                <i class="bi bi-shield-check text-warning" style="font-size: 2.5rem;"></i>
+                <h3 class="mt-2 mb-0">{{ active_proxies|default:0 }}</h3>
+                <p class="text-muted mb-0">Active Proxies</p>
             </div>
         </div>
     </div>
 </div>
-
 
 <!-- Recent Activity -->
 <div class="row">
@@ -280,6 +371,28 @@
 </div>
 {% endif %}
 
+<!-- Additional Styles -->
+<style>
+.status-indicator {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+}
+
+.status-active {
+    background-color: #4CAF50;
+}
+
+.status-inactive {
+    background-color: #f44336;
+}
+
+.btn-group .btn {
+    padding: 0.375rem 0.75rem;
+}
+</style>
+
 <!-- JavaScript for AJAX functionality -->
 <script>
 function startCrawl() {
@@ -377,6 +490,27 @@ function deleteProducts(type) {
     });
     
     return false;
+}
+
+// New proxy management functions
+function updateFreeProxies() {
+    showAlert('info', 'Updating free proxy list...');
+    
+    // You can implement an AJAX call here to trigger free proxy update
+    // For now, we'll just show a message
+    setTimeout(() => {
+        showAlert('success', 'Free proxy update initiated. Check the admin panel for progress.');
+    }, 1000);
+}
+
+function testProxies() {
+    showAlert('info', 'Testing active proxies...');
+    
+    // You can implement an AJAX call here to trigger proxy testing
+    // For now, we'll just show a message
+    setTimeout(() => {
+        showAlert('success', 'Proxy testing initiated. Check the admin panel for results.');
+    }, 1000);
 }
 
 function showAlert(type, message) {

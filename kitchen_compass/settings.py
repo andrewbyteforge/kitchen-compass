@@ -367,3 +367,217 @@ ASDA_SCRAPER_SETTINGS = {
     'BLOCKED_EXTENSIONS': ['.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.pdf', '.zip'],
     'PRIORITY_KEYWORDS': ['fresh', 'meat', 'dairy', 'bakery', 'fruit', 'vegetable'],
 }
+
+
+# ===========================
+# PROXY PROVIDER CONFIGURATION
+# ===========================
+
+PROXY_PROVIDERS = {
+    # Premium Residential Proxies (Most Expensive, Highest Quality)
+    'bright_data': {
+        'tier': 'premium',
+        'api_key': config('BRIGHT_DATA_API_KEY', default=''),
+        'username': config('BRIGHT_DATA_USERNAME', default=''),
+        'password': config('BRIGHT_DATA_PASSWORD', default=''),
+        'api_endpoint': 'zproxy.lum-superproxy.io:22225',
+        'cost_per_gb': 3.0,  # $3 per GB
+        'supports_targeting': True,
+        'sticky_sessions': True,
+        'countries': ['US', 'UK', 'CA'],  # Limit to specific countries
+    },
+    
+    # Standard Datacenter Proxies (Good Balance)
+    'smartproxy': {
+        'tier': 'standard',
+        'username': config('SMARTPROXY_USERNAME', default=''),
+        'password': config('SMARTPROXY_PASSWORD', default=''),
+        'api_endpoint': 'gate.smartproxy.com:10000',
+        'cost_per_gb': 1.5,  # $1.5 per GB
+        'supports_targeting': True,
+        'pool_size': 40000,  # Number of IPs in pool
+    },
+    
+    # Budget Datacenter Proxies
+    'blazing_seo': {
+        'tier': 'standard',
+        'username': config('BLAZING_USERNAME', default=''),
+        'password': config('BLAZING_PASSWORD', default=''),
+        'api_endpoint': 'premium.blazingseollc.com:5432',
+        'cost_per_gb': 0.5,  # $0.50 per GB
+        'pool_size': 300,
+    },
+    
+    # Storm Proxies (Rotating Residential)
+    'storm_proxies': {
+        'tier': 'premium',
+        'username': config('STORM_USERNAME', default=''),
+        'password': config('STORM_PASSWORD', default=''),
+        'api_endpoint': 'rotating.stormproxies.com:9040',
+        'cost_per_gb': 2.5,  # $2.5 per GB
+        'rotation_time': 300,  # Rotate every 5 minutes
+    }
+}
+
+# ===========================
+# PROXY BEHAVIOR SETTINGS
+# ===========================
+
+PROXY_SETTINGS = {
+    # Priority Settings
+    'prefer_paid': True,  # Use paid proxies first
+    'fallback_to_free': True,  # Fallback to free if paid fail
+    'tier_preference': ['premium', 'standard', 'free'],  # Order of preference
+    
+    # Free Proxy Settings
+    'free_proxy_sources': [
+        'free_proxy_list',
+        'ssl_proxies',
+        'proxy_scrape',
+    ],
+    'free_proxy_update_interval': 3600,  # Update every hour
+    'free_proxy_validation_timeout': 5,  # 5 seconds timeout for validation
+    'max_free_proxies': 200,  # Limit number of free proxies to store
+    
+    # Performance Settings
+    'max_consecutive_failures': 3,  # Blacklist after 3 failures
+    'health_check_interval': 300,  # Check proxy health every 5 minutes
+    'performance_threshold': 5.0,  # Max acceptable response time (seconds)
+    'min_success_rate': 70,  # Minimum success rate to keep proxy active
+    
+    # Rotation Settings
+    'rotation_strategy': 'performance_based',  # Options: round_robin, random, least_used, performance_based
+    'max_requests_per_proxy': 100,  # Rotate after X requests
+    'session_duration': 600,  # Keep same proxy for 10 minutes (sticky sessions)
+    
+    # Cost Management
+    'cost_alert_threshold': 100.0,  # Alert if daily cost exceeds $100
+    'budget_daily_limit': 150.0,  # Stop using paid proxies if daily limit exceeded
+    'cost_optimization': True,  # Automatically switch to cheaper proxies when possible
+}
+
+# ===========================
+# PROXY AUTHENTICATION
+# ===========================
+
+# Some providers require special authentication methods
+PROXY_AUTH_METHODS = {
+    'bright_data': 'username-session',  # username-session-sessionid
+    'smartproxy': 'username-password',  # standard auth
+    'oxylabs': 'username-password',
+    'storm_proxies': 'gateway',  # Single gateway with auth
+}
+
+# ===========================
+# FALLBACK CONFIGURATION
+# ===========================
+
+PROXY_FALLBACK_CHAIN = [
+    # Try these in order if previous fails
+    {'tier': 'premium', 'max_attempts': 2},
+    {'tier': 'standard', 'max_attempts': 3},
+    {'tier': 'free', 'max_attempts': 5},
+    {'tier': 'direct', 'max_attempts': 1},  # Direct connection as last resort
+]
+
+# ===========================
+# MONITORING AND ALERTS
+# ===========================
+
+PROXY_MONITORING = {
+    'enabled': True,
+    'metrics_retention_days': 30,  # Keep metrics for 30 days
+    'alert_email': config('ADMIN_EMAIL', default=''),
+    'alert_conditions': {
+        'all_proxies_failed': True,
+        'success_rate_below': 50,  # Alert if overall success < 50%
+        'daily_cost_exceeded': True,
+        'free_proxy_shortage': 10,  # Alert if less than 10 free proxies
+    },
+    'webhook_url': config('SLACK_WEBHOOK_URL', default=''),  # For Slack alerts
+}
+
+# ===========================
+# SCRAPING PROFILE SETTINGS
+# ===========================
+
+# Different proxy configurations for different scraping scenarios
+PROXY_PROFILES = {
+    'aggressive': {
+        # Fast scraping, cost is not a concern
+        'prefer_tier': 'premium',
+        'concurrent_requests': 10,
+        'timeout': 5,
+        'retry_count': 2,
+    },
+    'balanced': {
+        # Default profile - balance between cost and performance
+        'prefer_tier': 'standard',
+        'concurrent_requests': 5,
+        'timeout': 10,
+        'retry_count': 3,
+    },
+    'conservative': {
+        # Slow, careful scraping to avoid detection
+        'prefer_tier': 'free',
+        'concurrent_requests': 2,
+        'timeout': 15,
+        'retry_count': 5,
+        'delay_between_requests': 5,
+    },
+    'test': {
+        # For testing - use only free proxies
+        'prefer_tier': 'free',
+        'concurrent_requests': 1,
+        'timeout': 10,
+        'retry_count': 1,
+    }
+}
+
+# ===========================
+# INTEGRATION WITH SELENIUM
+# ===========================
+
+SELENIUM_PROXY_CONFIG = {
+    'proxy_auth_plugin_path': os.path.join(BASE_DIR, 'extensions', 'proxy_auth_plugin.zip'),
+    'use_proxy_rotation': True,
+    'rotate_user_agent_with_proxy': True,
+    'clear_cookies_on_rotation': True,
+    'handle_proxy_errors': True,
+    'proxy_error_patterns': [
+        'ERR_PROXY_CONNECTION_FAILED',
+        'ERR_TUNNEL_CONNECTION_FAILED',
+        'proxy authentication required',
+        'access denied',
+    ]
+}
+
+# ===========================
+# EXAMPLE USAGE IN CODE
+# ===========================
+
+"""
+Example of how to use in your scraper:
+
+from django.conf import settings
+from asda_scraper.tiered_proxy_manager import TieredProxyManager
+
+# Initialize manager with settings
+manager = TieredProxyManager(
+    prefer_paid=settings.PROXY_SETTINGS['prefer_paid'],
+    fallback_to_free=settings.PROXY_SETTINGS['fallback_to_free']
+)
+
+# Get proxy based on profile
+profile = settings.PROXY_PROFILES['balanced']
+proxy = manager.get_proxy(tier_preference=[profile['prefer_tier']])
+
+# Use different profiles for different tasks
+if is_critical_task:
+    proxy = manager.get_proxy(tier_preference=['premium'])
+else:
+    proxy = manager.get_proxy(tier_preference=['free', 'standard'])
+"""
+
+
+

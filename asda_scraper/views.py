@@ -12,6 +12,7 @@ import json
 import threading
 import time
 from typing import Dict, Any
+from decimal import Decimal  # ADD THIS IMPORT
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib import messages
@@ -21,9 +22,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.views.generic import ListView
 from django.core.paginator import Paginator
-from django.db.models import Q, Count
+from django.db.models import Q, Count, Sum  # ADD Sum HERE
 from django.utils import timezone
-from django.db import transaction
+from django.db import transaction, connection  # ADD connection HERE
 import os
 
 from .models import AsdaCategory, AsdaProduct, CrawlSession
@@ -53,82 +54,121 @@ def is_admin_user(user):
 @user_passes_test(is_admin_user)
 def scraper_dashboard(request):
     """
-    Main dashboard for ASDA scraper administration.
+    Enhanced dashboard view with proxy information.
     
-    Displays current crawl status, statistics, and controls for
-    starting/stopping crawl sessions with enhanced error handling.
-    
-    Args:
-        request: Django HttpRequest object
-        
-    Returns:
-        HttpResponse: Rendered dashboard template
+    Update your existing scraper_dashboard function with this code.
     """
+    # Get comprehensive statistics using the helper function
+    stats = _get_dashboard_statistics()
+    
+    # Get recent crawl sessions
+    recent_sessions = CrawlSession.objects.select_related('user').order_by('-start_time')[:5]
+    
+    # Get current/active session
+    current_session = CrawlSession.objects.filter(
+        status__in=['PENDING', 'RUNNING']
+    ).first()
+    
+    # Get category statistics
+    category_stats = AsdaCategory.objects.annotate(
+        total_products=Count('products')
+    ).filter(total_products__gt=0).order_by('-total_products')[:5]
+    
+    # Get latest products
+    latest_products = AsdaProduct.objects.select_related('category').order_by('-created_at')[:6]
+    
+    # NEW: Get proxy configuration and statistics
+    proxy_config = None
+    active_proxies = 0
+    total_proxies = 0
+    today_proxy_cost = Decimal('0.00')
+    
     try:
-        # Get current crawl session if any
-        current_session = CrawlSession.objects.filter(
-            status__in=['PENDING', 'RUNNING']
-        ).first()
+        # Import proxy models - use conditional import in case models don't exist yet
+        from asda_scraper.models import ProxyConfiguration, EnhancedProxyModel
         
-        # Get statistics
-        stats = _get_dashboard_statistics()
+        # Get active proxy configuration
+        proxy_config = ProxyConfiguration.objects.filter(is_active=True).first()
         
-        # Get recent sessions with error information
-        recent_sessions = CrawlSession.objects.select_related('user').order_by('-start_time')[:10]
-        
-        # Add error summaries to recent sessions
-        for session in recent_sessions:
-            if session.error_log:  # Use error_log instead of error_message
-                session.error_summary = _parse_error_message(session.error_log)
-            else:
-                session.error_summary = None
-
-        print(f"Using template: {os.path.abspath('asda_scraper/templates/asda_scraper/dashboard.html')}")
-        
-        # Get category statistics
-        category_stats = AsdaCategory.objects.annotate(
-            total_products=Count('products')
-        ).order_by('-total_products')[:10]
-        
-        # Get latest products
-        latest_products = AsdaProduct.objects.select_related('category').order_by('-created_at')[:10]
-        
-        # Check system health
-        system_health = _check_system_health()
-        
-        # Default crawl settings (defined inline for now)
-        default_settings = {
-            'max_categories': 10,
-            'category_priority': 2,
-            'max_products_per_category': 100,
-            'delay_between_requests': 2.0,
-            'use_selenium': True,
-            'headless': False,
-        }
-        
-        context = {
-            'current_session': current_session,
-            'stats': stats,
-            'recent_sessions': recent_sessions,
-            'category_stats': category_stats,
-            'latest_products': latest_products,
-            'system_health': system_health,
-            'default_settings': default_settings,
-        }
-        
-        logger.info(f"ASDA scraper dashboard accessed by user {request.user.username}")
-        return render(request, 'asda_scraper/dashboard.html', context)
-        
+        # Get proxy counts
+        if EnhancedProxyModel._meta.db_table in connection.introspection.table_names():
+            total_proxies = EnhancedProxyModel.objects.count()
+            active_proxies = EnhancedProxyModel.objects.filter(status='active').count()
+            
+            # Calculate today's proxy cost
+            today = timezone.now().date()
+            today_cost = EnhancedProxyModel.objects.filter(
+                tier__in=['premium', 'standard'],
+                last_used__date=today
+            ).aggregate(
+                total=Sum('total_cost')
+            )['total'] or Decimal('0.00')
+            today_proxy_cost = today_cost
+            
     except Exception as e:
-        logger.error(f"Error loading ASDA scraper dashboard: {str(e)}")
-        messages.error(request, "An error occurred while loading the dashboard.")
-        return redirect('auth_hub:dashboard')
+        # If proxy models don't exist yet, continue without them
+        logger.debug(f"Proxy models not available: {e}")
+    
+    context = {
+        # Use values from the statistics function
+        'total_products': stats.get('total_products', 0),
+        'total_categories': stats.get('total_categories', 0),
+        'active_categories': stats.get('active_categories', 0),
+        'products_on_sale': stats.get('products_on_sale', 0),
+        'recent_products': stats.get('recent_products', 0),
+        'products_with_images': stats.get('products_with_images', 0),
+        
+        # Session data
+        'recent_sessions': recent_sessions,
+        'current_session': current_session,
+        'total_sessions': stats.get('total_sessions', 0),
+        'successful_sessions': stats.get('successful_sessions', 0),
+        'failed_sessions': stats.get('failed_sessions', 0),
+        
+        # Other data
+        'category_stats': category_stats,
+        'latest_products': latest_products,
+        
+        # Proxy-related context
+        'proxy_config': proxy_config,
+        'active_proxies': active_proxies,
+        'total_proxies': total_proxies,
+        'today_proxy_cost': today_proxy_cost,
+    }
+    
+    return render(request, 'asda_scraper/dashboard.html', context)
+
+def get_proxy_status_summary():
+    """Get a summary of proxy system status."""
+    try:
+        from asda_scraper.models import ProxyConfiguration, EnhancedProxyModel
+        
+        config = ProxyConfiguration.objects.filter(is_active=True).first()
+        if not config or not config.enable_proxy_service:
+            return {
+                'enabled': False,
+                'message': 'Proxy service is disabled'
+            }
+        
+        active_count = EnhancedProxyModel.objects.filter(status='active').count()
+        
+        return {
+            'enabled': True,
+            'active_proxies': active_count,
+            'config': config,
+            'message': f'{active_count} active proxies available'
+        }
+    except:
+        return {
+            'enabled': False,
+            'message': 'Proxy system not configured'
+        }
 
 
 def _get_dashboard_statistics() -> Dict[str, Any]:
     """
     Get comprehensive dashboard statistics.
-    
+
     Returns:
         Dict[str, Any]: Dictionary containing various statistics
     """
