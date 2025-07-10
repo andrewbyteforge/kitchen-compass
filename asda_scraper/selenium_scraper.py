@@ -48,34 +48,44 @@ logs_dir.mkdir(exist_ok=True)
 
 # Configure logging manually for the asda_scraper module
 def setup_asda_logging():
-    """Setup logging for ASDA scraper with console and file handlers."""
+    """
+    Setup logging for ASDA scraper with console and file handlers.
     
-    # Create formatter
-    formatter = logging.Formatter(
+    This function configures logging with proper Unicode handling for Windows.
+    
+    Returns:
+        logging.Logger: Configured logger instance
+    """
+    
+    # Import SafeUnicodeFormatter from logging_config
+    from .logging_config import SafeUnicodeFormatter
+    
+    # Create formatter for console (with emoji replacement on Windows)
+    console_formatter = SafeUnicodeFormatter(
         '[%(levelname)s] %(asctime)s [%(name)s] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
-    # Console handler with UTF-8 encoding
+    # Create formatter for file (supports full Unicode)
+    file_formatter = logging.Formatter(
+        '[%(levelname)s] %(asctime)s [%(name)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Console handler with SafeUnicodeFormatter
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.DEBUG)
-    console_handler.setFormatter(formatter)
+    console_handler.setFormatter(console_formatter)
     
-    # Force UTF-8 encoding for Windows console
-    if sys.platform == 'win32':
-        import io
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
-    
-    # File handler
+    # File handler with UTF-8 encoding
     file_handler = logging.handlers.RotatingFileHandler(
         logs_dir / 'asda_scraper.log',
         maxBytes=10*1024*1024,  # 10MB
         backupCount=5,
-        encoding='utf-8'  # Ensure file handler also uses UTF-8
+        encoding='utf-8'  # Ensure file handler uses UTF-8
     )
     file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(formatter)
+    file_handler.setFormatter(file_formatter)
     
     # Get the asda_scraper logger and configure it
     asda_logger = logging.getLogger('asda_scraper')
@@ -95,7 +105,6 @@ def setup_asda_logging():
         sublogger.propagate = False
     
     return asda_logger
-
 
 
 
