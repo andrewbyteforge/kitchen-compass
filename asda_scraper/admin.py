@@ -19,8 +19,15 @@ from .models import (
     UrlMap, LinkRelationship, CrawlQueue
 )
 
+from .proxy_admin import (
+    ProxyConfigurationAdmin, 
+    ProxyProviderSettingsAdmin,    
+)
+
 logger = logging.getLogger(__name__)
 
+
+admin.site.index_template = 'asda_scraper/admin/index.html'
 
 @admin.register(AsdaCategory)
 class AsdaCategoryAdmin(admin.ModelAdmin):
@@ -1053,120 +1060,6 @@ class ProxyProviderAdminForm(forms.ModelForm):
         return provider
 
 
-@admin.register(ProxyProviderSettings)
-class ProxyProviderSettingsAdmin(admin.ModelAdmin):
-    """Admin interface for individual proxy providers."""
-    
-    form = ProxyProviderAdminForm
-    
-    list_display = [
-        'provider_display', 'is_enabled', 'tier', 'cost_info',
-        'usage_stats', 'status_display'
-    ]
-    
-    list_filter = ['is_enabled', 'tier', 'is_working', 'provider']
-    list_editable = ['is_enabled']
-    
-    search_fields = ['display_name', 'provider', 'api_endpoint']
-    
-    fieldsets = (
-        ('Provider Information', {
-            'fields': (
-                'provider', 'display_name', 'is_enabled', 'tier'
-            )
-        }),
-        ('API Configuration', {
-            'fields': (
-                'api_endpoint', 'api_key', 'username', 'password'
-            ),
-            'description': 'Enter API credentials for this provider'
-        }),
-        ('Cost Configuration', {
-            'fields': (
-                'cost_per_gb', 'cost_per_request', 'minimum_monthly_cost'
-            )
-        }),
-        ('Limits & Features', {
-            'fields': (
-                'monthly_bandwidth_gb', 'concurrent_connections',
-                'supports_countries', 'supports_cities',
-                'supports_sticky_sessions', 'supports_residential'
-            ),
-            'classes': ('collapse',)
-        }),
-        ('Advanced Settings', {
-            'fields': ('extra_settings',),
-            'classes': ('collapse',),
-            'description': 'JSON format for provider-specific settings'
-        }),
-        ('Usage & Status (Read Only)', {
-            'fields': (
-                'total_requests', 'total_bandwidth_bytes', 'total_cost',
-                'last_used', 'is_working', 'last_error'
-            ),
-            'classes': ('collapse',),
-            'description': 'Automatically updated usage statistics'
-        })
-    )
-    
-    readonly_fields = [
-        'total_requests', 'total_bandwidth_bytes', 'total_cost',
-        'last_used', 'created_at', 'updated_at'
-    ]
-    
-    def provider_display(self, obj):
-        """Display provider with icon."""
-        icon_map = {
-            'bright_data': '🌟',
-            'smartproxy': '🔧',
-            'oxylabs': '🐙',
-            'blazing_seo': '🔥',
-            'storm_proxies': '⛈️',
-            'custom': '⚙️'
-        }
-        icon = icon_map.get(obj.provider, '📡')
-        return format_html(
-            '{} <strong>{}</strong>',
-            icon,
-            obj.display_name
-        )
-    provider_display.short_description = 'Provider'
-    
-    def cost_info(self, obj):
-        """Display cost information."""
-        return format_html(
-            '${}/GB<br><small>${}/mo est.</small>',
-            obj.cost_per_gb,
-            obj.get_monthly_cost()
-        )
-    cost_info.short_description = 'Cost'
-    
-    def usage_stats(self, obj):
-        """Display usage statistics."""
-        gb_used = obj.total_bandwidth_bytes / (1024**3)
-        return format_html(
-            '{:,} requests<br>{:.2f} GB<br>${:.2f} total',
-            obj.total_requests,
-            gb_used,
-            obj.total_cost
-        )
-    usage_stats.short_description = 'Usage'
-    
-    def status_display(self, obj):
-        """Display provider status."""
-        if obj.is_enabled and obj.is_working:
-            return format_html(
-                '<span style="color: green;">✓ Active</span>'
-            )
-        elif obj.is_enabled and not obj.is_working:
-            return format_html(
-                '<span style="color: red;">✗ Error</span>'
-            )
-        else:
-            return format_html(
-                '<span style="color: gray;">- Disabled</span>'
-            )
-    status_display.short_description = 'Status'
 
 
 # Update the proxy-related admin classes in your admin.py file
@@ -1305,135 +1198,6 @@ class EnhancedProxyModelAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related('provider')
 
 
-@admin.register(ProxyProviderSettings)
-class ProxyProviderSettingsAdmin(admin.ModelAdmin):
-    """Admin interface for individual proxy providers."""
-    
-    form = ProxyProviderAdminForm
-    
-    list_display = [
-        'provider_display', 'is_enabled', 'tier', 'cost_info',
-        'usage_stats', 'status_display'
-    ]
-    
-    list_filter = ['is_enabled', 'tier', 'provider']  # Removed 'is_working'
-    list_editable = ['is_enabled']
-    
-    search_fields = ['display_name', 'provider', 'api_endpoint']
-    
-    fieldsets = (
-        ('Provider Information', {
-            'fields': (
-                'provider', 'display_name', 'is_enabled', 'tier'
-            )
-        }),
-        ('API Configuration', {
-            'fields': (
-                'api_endpoint', 'api_key', 'username', 'password'
-            ),
-            'description': 'Enter API credentials for this provider'
-        }),
-        ('Cost Configuration', {
-            'fields': (
-                'cost_per_gb', 'cost_per_request', 'minimum_monthly_cost'
-            )
-        }),
-        ('Limits & Features', {
-            'fields': (
-                'monthly_bandwidth_gb', 'concurrent_connections',
-                'supports_countries', 'supports_cities',
-                'supports_sticky_sessions', 'supports_residential'
-            ),
-            'classes': ('collapse',)
-        }),
-        ('Statistics', {
-            'fields': (
-                'total_requests', 'total_bandwidth_mb', 'total_cost',
-                'success_rate', 'average_response_time', 'last_used'
-            ),
-            'classes': ('collapse',),
-            'description': 'Automatically updated usage statistics'
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',)
-        })
-    )
-    
-    readonly_fields = [
-        'total_requests', 'total_bandwidth_mb', 'total_cost',
-        'success_rate', 'average_response_time', 'last_used',
-        'created_at', 'updated_at'
-    ]
-    
-    def provider_display(self, obj):
-        """Display provider with icon."""
-        icon_map = {
-            'bright_data': '🌟',
-            'smartproxy': '🔧',
-            'oxylabs': '🐙',
-            'blazing_seo': '🔥',
-            'storm_proxies': '⛈️',
-            'custom': '⚙️'
-        }
-        icon = icon_map.get(obj.provider, '📡')
-        return format_html(
-            '{} <strong>{}</strong>',
-            icon,
-            obj.display_name
-        )
-    provider_display.short_description = 'Provider'
-    
-    def cost_info(self, obj):
-        """Display cost information."""
-        monthly_cost = obj.get_estimated_monthly_cost()
-        return format_html(
-            '${:.2f}/GB<br><small>${:.2f}/mo est.</small>',
-            obj.cost_per_gb,
-            monthly_cost
-        )
-    cost_info.short_description = 'Cost'
-    
-    def usage_stats(self, obj):
-        """Display usage statistics."""
-        gb_used = float(obj.total_bandwidth_mb) / 1024
-        return format_html(
-            '{:,} requests<br>{:.2f} GB<br>${:.2f} total',
-            obj.total_requests,
-            gb_used,
-            obj.total_cost
-        )
-    usage_stats.short_description = 'Usage'
-    
-    def status_display(self, obj):
-        """Display provider status based on recent usage."""
-        if not obj.is_enabled:
-            return format_html(
-                '<span style="color: gray;">- Disabled</span>'
-            )
-        
-        # Check if recently used
-        if obj.last_used and (timezone.now() - obj.last_used).days < 1:
-            return format_html(
-                '<span style="color: green;">✓ Active</span>'
-            )
-        elif obj.last_used and (timezone.now() - obj.last_used).days < 7:
-            return format_html(
-                '<span style="color: orange;">⚡ Idle</span>'
-            )
-        else:
-            return format_html(
-                '<span style="color: red;">✗ Inactive</span>'
-            )
-    status_display.short_description = 'Status'
-    
-    def save_model(self, request, obj, form, change):
-        """Save the model and show success message."""
-        super().save_model(request, obj, form, change)
-        messages.success(
-            request,
-            f"Proxy provider '{obj.display_name}' has been saved successfully."
-        )
 
 # Quick setup to create initial configuration if none exists
 def ensure_proxy_config_exists():
@@ -1453,3 +1217,77 @@ try:
 except Exception as e:
     # Don't fail if database isn't ready yet
     pass
+
+
+from django.urls import path
+from django.template.response import TemplateResponse
+from django.contrib import admin
+from django.db.models import Sum, Count, Avg
+from datetime import datetime, timedelta
+from decimal import Decimal
+import json
+
+# Add to your existing admin.py file, after the imports
+
+# Define the proxy dashboard view
+def proxy_dashboard_view(request):
+    """Proxy management dashboard view."""
+    from .models import ProxyConfiguration, ProxyProviderSettings, EnhancedProxyModel
+    
+    context = {
+        'title': 'Proxy Management Dashboard',
+        'site_header': admin.site.site_header,
+        'site_title': admin.site.site_title,
+        'has_permission': True,
+    }
+    
+    # Get active configuration
+    config = ProxyConfiguration.objects.filter(is_active=True).first()
+    context['config'] = config
+    
+    # Get provider statistics
+    providers = ProxyProviderSettings.objects.all()
+    context['providers'] = providers
+    
+    # Get proxy statistics
+    proxy_stats = {
+        'total_proxies': EnhancedProxyModel.objects.count(),
+        'active_proxies': EnhancedProxyModel.objects.filter(status='active').count(),
+        'failed_proxies': EnhancedProxyModel.objects.filter(status='failed').count(),
+    }
+    context['proxy_stats'] = proxy_stats
+    
+    # Calculate costs
+    today_cost = ProxyProviderSettings.objects.aggregate(
+        total=Sum('total_cost')
+    )['total'] or Decimal('0.00')
+    context['today_cost'] = today_cost
+    
+    return TemplateResponse(
+        request,
+        'asda_scraper/admin/proxy_dashboard.html',
+        context
+    )
+
+# Override the admin site to add custom URLs
+class CustomAdminSite(admin.AdminSite):
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path('proxy-dashboard/', self.admin_view(proxy_dashboard_view), name='proxy_dashboard'),
+        ]
+        return custom_urls + urls
+
+# Create custom admin instance if not using default
+# If you're using the default admin.site, add this to the bottom of admin.py:
+original_get_urls = admin.site.get_urls
+
+def get_urls_with_proxy():
+    """Add proxy dashboard URL to admin."""
+    urls = original_get_urls()
+    custom_urls = [
+        path('proxy-dashboard/', admin.site.admin_view(proxy_dashboard_view), name='proxy_dashboard'),
+    ]
+    return custom_urls + urls
+
+admin.site.get_urls = get_urls_with_proxy

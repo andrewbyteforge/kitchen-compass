@@ -22,335 +22,16 @@ from decimal import Decimal
 from cryptography.fernet import Fernet
 from django.utils import timezone
 
-
-# First, let's create models for storing proxy configuration
-class ProxyConfiguration(models.Model):
-    """
-    Global proxy configuration settings.
-    
-    File: asda_scraper/models.py (add to existing file)
-    """
-    name = models.CharField(
-        max_length=100,
-        default="Default Configuration",
-        help_text="Configuration name"
-    )
-    is_active = models.BooleanField(
-        default=True,
-        help_text="Whether this configuration is currently active"
-    )
-    
-    # Proxy Behavior
-    enable_proxy_service = models.BooleanField(
-        default=False,
-        help_text="Enable proxy service for scraping"
-    )
-    prefer_paid_proxies = models.BooleanField(
-        default=True,
-        help_text="Use paid proxies before trying free ones"
-    )
-    fallback_to_free = models.BooleanField(
-        default=True,
-        help_text="Use free proxies when paid proxies fail"
-    )
-    allow_direct_connection = models.BooleanField(
-        default=False,
-        help_text="Allow direct connection when all proxies fail"
-    )
-    
-    # Performance Settings
-    rotation_strategy = models.CharField(
-        max_length=50,
-        choices=[
-            ('round_robin', 'Round Robin'),
-            ('random', 'Random'),
-            ('least_used', 'Least Used'),
-            ('performance_based', 'Performance Based'),
-        ],
-        default='performance_based',
-        help_text="How to select the next proxy"
-    )
-    max_requests_per_proxy = models.PositiveIntegerField(
-        default=100,
-        help_text="Rotate proxy after this many requests"
-    )
-    proxy_timeout_seconds = models.PositiveIntegerField(
-        default=10,
-        help_text="Timeout for proxy connections in seconds"
-    )
-    health_check_interval_minutes = models.PositiveIntegerField(
-        default=5,
-        help_text="Check proxy health every N minutes"
-    )
-    
-    # Cost Management
-    daily_budget_limit = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        default=100.00,
-        help_text="Maximum daily spend on paid proxies (USD)"
-    )
-    cost_alert_threshold = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        default=80.00,
-        help_text="Alert when daily cost exceeds this amount (USD)"
-    )
-    
-    # Free Proxy Settings
-    enable_free_proxy_fetching = models.BooleanField(
-        default=True,
-        help_text="Automatically fetch and validate free proxies"
-    )
-    free_proxy_update_hours = models.PositiveIntegerField(
-        default=1,
-        help_text="Update free proxy list every N hours"
-    )
-    max_free_proxies = models.PositiveIntegerField(
-        default=200,
-        help_text="Maximum number of free proxies to maintain"
-    )
-    
-    # Monitoring
-    enable_monitoring = models.BooleanField(
-        default=True,
-        help_text="Enable proxy performance monitoring"
-    )
-    alert_email = models.EmailField(
-        blank=True,
-        help_text="Email for proxy alerts (leave blank to disable)"
-    )
-    
-    # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        verbose_name = "Proxy Configuration"
-        verbose_name_plural = "Proxy Configurations"
-    
-    def __str__(self):
-        return f"{self.name} ({'Active' if self.is_active else 'Inactive'})"
-    
-    def save(self, *args, **kwargs):
-        """Ensure only one configuration is active at a time."""
-        if self.is_active:
-            ProxyConfiguration.objects.exclude(pk=self.pk).update(is_active=False)
-        super().save(*args, **kwargs)
+# Import the models from models.py instead of defining them here
+from .models import ProxyConfiguration, ProxyProviderSettings, EnhancedProxyModel
 
 
-class ProxyProviderSettings(models.Model):
-    """
-    Settings for individual proxy providers.
-    
-    File: asda_scraper/models.py (add to existing file)
-    """
-    PROVIDER_CHOICES = [
-        ('bright_data', 'Bright Data (Luminati)'),
-        ('smartproxy', 'SmartProxy'),
-        ('oxylabs', 'Oxylabs'),
-        ('blazing_seo', 'Blazing SEO'),
-        ('storm_proxies', 'Storm Proxies'),
-        ('proxy_cheap', 'Proxy-Cheap'),
-        ('hydraproxy', 'HydraProxy'),
-        ('custom', 'Custom Provider'),
-    ]
-    
-    TIER_CHOICES = [
-        ('premium', 'Premium (Residential)'),
-        ('standard', 'Standard (Datacenter)'),
-    ]
-    
-    # Basic Information
-    provider = models.CharField(
-        max_length=50,
-        choices=PROVIDER_CHOICES,
-        unique=True,
-        help_text="Proxy provider service"
-    )
-    display_name = models.CharField(
-        max_length=100,
-        help_text="Display name for this provider"
-    )
-    is_enabled = models.BooleanField(
-        default=False,
-        help_text="Enable this proxy provider"
-    )
-    tier = models.CharField(
-        max_length=20,
-        choices=TIER_CHOICES,
-        default='standard',
-        help_text="Proxy quality tier"
-    )
-    
-    # API Configuration
-    api_endpoint = models.CharField(
-        max_length=255,
-        blank=True,
-        help_text="API endpoint URL (e.g., gate.smartproxy.com:10000)"
-    )
-    api_key = models.CharField(
-        max_length=255,
-        blank=True,
-        help_text="API key for provider"
-    )
-    
-    # Authentication (encrypted)
-    username = models.CharField(
-        max_length=100,
-        blank=True,
-        help_text="Username for proxy authentication"
-    )
-    password_encrypted = models.TextField(
-        blank=True,
-        help_text="Encrypted password"
-    )
-    
-    # Cost Configuration
-    cost_per_gb = models.DecimalField(
-        max_digits=10,
-        decimal_places=4,
-        default=1.00,
-        help_text="Cost per GB of data (USD)"
-    )
-    cost_per_request = models.DecimalField(
-        max_digits=10,
-        decimal_places=6,
-        default=0.0001,
-        help_text="Cost per request (USD)"
-    )
-    minimum_monthly_cost = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        default=0,
-        help_text="Minimum monthly commitment (USD)"
-    )
-    
-    # Limits
-    monthly_bandwidth_gb = models.PositiveIntegerField(
-        null=True,
-        blank=True,
-        help_text="Monthly bandwidth limit in GB"
-    )
-    concurrent_connections = models.PositiveIntegerField(
-        default=100,
-        help_text="Maximum concurrent connections"
-    )
-    
-    # Features
-    supports_countries = models.BooleanField(
-        default=True,
-        help_text="Supports country-level targeting"
-    )
-    supports_cities = models.BooleanField(
-        default=False,
-        help_text="Supports city-level targeting"
-    )
-    supports_sticky_sessions = models.BooleanField(
-        default=True,
-        help_text="Supports sticky/persistent sessions"
-    )
-    supports_residential = models.BooleanField(
-        default=False,
-        help_text="Offers residential IPs"
-    )
-    
-    # Advanced Settings (JSON)
-    extra_settings = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Additional provider-specific settings (JSON)"
-    )
-    
-    # Usage Tracking
-    total_requests = models.BigIntegerField(
-        default=0,
-        help_text="Total requests made through this provider"
-    )
-    total_bandwidth_bytes = models.BigIntegerField(
-        default=0,
-        help_text="Total bandwidth used in bytes"
-    )
-    total_cost = models.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        default=0,
-        help_text="Total cost incurred (USD)"
-    )
-    last_used = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="Last time this provider was used"
-    )
-    
-    # Status
-    is_working = models.BooleanField(
-        default=True,
-        help_text="Whether the provider is currently working"
-    )
-    last_error = models.TextField(
-        blank=True,
-        help_text="Last error message from this provider"
-    )
-    
-    # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        verbose_name = "Proxy Provider"
-        verbose_name_plural = "Proxy Providers"
-        ordering = ['provider']
-    
-    def __str__(self):
-        return f"{self.display_name} ({'Enabled' if self.is_enabled else 'Disabled'})"
-    
-    def set_password(self, password):
-        """Encrypt and store password."""
-        if password:
-            # Generate key if not exists
-            key = getattr(settings, 'PROXY_ENCRYPTION_KEY', None)
-            if not key:
-                key = Fernet.generate_key()
-                # Store this key in your settings or environment variable
-            
-            f = Fernet(key)
-            self.password_encrypted = f.encrypt(password.encode()).decode()
-    
-    def get_password(self):
-        """Decrypt and return password."""
-        if self.password_encrypted:
-            key = getattr(settings, 'PROXY_ENCRYPTION_KEY', None)
-            if key:
-                f = Fernet(key)
-                return f.decrypt(self.password_encrypted.encode()).decode()
-        return ''
-    
-    def get_monthly_cost(self):
-        """Calculate estimated monthly cost."""
-        if self.minimum_monthly_cost > 0:
-            return self.minimum_monthly_cost
-        
-        # Estimate based on usage
-        days_used = (timezone.now() - self.created_at).days or 1
-        daily_cost = float(self.total_cost) / days_used
-        return Decimal(daily_cost * 30)
-    
-    def clean(self):
-        """Validate the provider settings."""
-        if self.is_enabled:
-            if not self.api_endpoint and self.provider != 'custom':
-                raise ValidationError("API endpoint is required for enabled providers")
-            
-            if self.provider in ['bright_data', 'smartproxy', 'oxylabs']:
-                if not self.username or not self.password_encrypted:
-                    raise ValidationError(
-                        f"{self.get_provider_display()} requires username and password"
-                    )
+
+
 
 
 # Admin Configuration
-@admin.register(ProxyConfiguration)
+@admin.register
 class ProxyConfigurationAdmin(admin.ModelAdmin):
     """Admin interface for global proxy configuration."""
     
@@ -455,7 +136,7 @@ class ProxyProviderSettingsAdmin(admin.ModelAdmin):
         'usage_stats', 'status_display', 'actions_column'
     ]
     
-    list_filter = ['is_enabled', 'tier', 'is_working', 'provider']
+    list_filter = ['is_enabled', 'tier', 'provider']
     
     search_fields = ['display_name', 'provider', 'api_endpoint']
     
@@ -484,24 +165,23 @@ class ProxyProviderSettingsAdmin(admin.ModelAdmin):
             ),
             'classes': ('collapse',)
         }),
-        ('Advanced Settings', {
-            'fields': ('extra_settings',),
-            'classes': ('collapse',),
-            'description': 'JSON format for provider-specific settings'
-        }),
         ('Usage & Status', {
             'fields': (
-                'total_requests', 'total_bandwidth_bytes', 'total_cost',
-                'last_used', 'is_working', 'last_error'
+                'total_requests', 'total_bandwidth_mb', 'total_cost',
+                'success_rate', 'average_response_time', 'last_used'
             ),
             'classes': ('collapse',),
             'description': 'Read-only usage statistics'
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
         })
     )
     
     readonly_fields = [
-        'total_requests', 'total_bandwidth_bytes', 'total_cost',
-        'last_used', 'created_at', 'updated_at'
+        'total_requests', 'total_cost',
+        'last_used', 'updated_at'
     ]
     
     def provider_display(self, obj):
@@ -533,11 +213,10 @@ class ProxyProviderSettingsAdmin(admin.ModelAdmin):
     
     def usage_stats(self, obj):
         """Display usage statistics."""
-        gb_used = obj.total_bandwidth_bytes / (1024**3)
         return format_html(
-            '{:,} requests<br>{:.2f} GB<br>${:.2f} total',
+            '{:,} requests<br>{:.2f} MB<br>${:.2f} total',
             obj.total_requests,
-            gb_used,
+            obj.total_bandwidth_mb,  # Changed from calculation
             obj.total_cost
         )
     usage_stats.short_description = 'Usage'
