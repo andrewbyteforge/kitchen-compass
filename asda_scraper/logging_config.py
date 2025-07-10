@@ -461,3 +461,184 @@ def log_performance(metric_name: str, value: float, unit: str = 'seconds', **kwa
     logger = get_scraper_logger()
     context = LogContext(**kwargs) if kwargs else None
     logger.log_performance(metric_name, value, unit, context)
+
+
+class SafeUnicodeFormatter(logging.Formatter):
+    """
+    Custom formatter that safely handles Unicode characters for Windows consoles.
+    
+    This formatter will replace emoji characters with ASCII equivalents
+    when outputting to consoles that don't support Unicode.
+    """
+    
+    # Emoji to ASCII mapping
+    EMOJI_MAP = {
+        '🔍': '[SEARCH]',
+        '📦': '[PRODUCTS]',
+        '⏹️': '[STOP]',
+        '🛒': '[CART]',
+        '🎯': '[TARGET]',
+        '✅': '[OK]',
+        '❌': '[ERROR]',
+        '⚠️': '[WARNING]',
+        '📊': '[STATS]',
+        '🔗': '[LINK]',
+        '📍': '[LOCATION]',
+        '📄': '[PAGE]',
+        '🌿': '[CATEGORY]',
+        '🏁': '[FINISH]',
+        '🧪': '[TEST]',
+        '🚫': '[BLOCKED]',
+        '🔚': '[END]',
+        '🎉': '[SUCCESS]',
+        '⏰': '[TIMEOUT]',
+        '➡️': '[ARROW]',
+        '🏪': '[STORE]',
+        '🍪': '[COOKIE]',
+        '🔄': '[REFRESH]',
+        '⏳': '[WAIT]',
+        '💰': '[PRICE]',
+        '🏷️': '[TAG]',
+        '🔢': '[NUMBER]',
+        '📁': '[FOLDER]',
+        '🆕': '[NEW]',
+        '📝': '[UPDATE]',
+        '🚀': '[START]',
+        '⏭️': '[SKIP]',
+        '📂': '[DIRECTORY]',
+        '🛍️': '[SHOPPING]',
+        '🔴': '[RED]',
+        '🟢': '[GREEN]',
+        '🟡': '[YELLOW]',
+        '🔵': '[BLUE]',
+        '⭐': '[STAR]',
+        '📈': '[CHART]',
+        '📉': '[DECLINE]',
+        '🔧': '[TOOL]',
+        '🔨': '[BUILD]',
+        '🗄️': '[STORAGE]',
+        '📌': '[PIN]',
+        '🎪': '[EVENT]',
+        '🏷': '[LABEL]',
+        'ℹ️': '[INFO]',
+        '📋': '[CLIPBOARD]',
+        '📐': '[MEASURE]',
+        '🗂️': '[INDEX]',
+        '📑': '[BOOKMARK]',
+        '🔎': '[ZOOM]',
+        '🌐': '[WEB]',
+        '💡': '[IDEA]',
+        '🔒': '[LOCK]',
+        '🔓': '[UNLOCK]',
+        '📨': '[MAIL]',
+        '📬': '[MAILBOX]',
+        '📮': '[POSTBOX]',
+        '🚨': '[ALERT]',
+        '🔔': '[BELL]',
+        '📢': '[ANNOUNCE]',
+        '⏯️': '[PLAY/PAUSE]',
+        '⏸️': '[PAUSE]',
+        '⏺️': '[RECORD]',
+        '⏏️': '[EJECT]',
+        '🔀': '[SHUFFLE]',
+        '🔁': '[REPEAT]',
+        '🔂': '[REPEAT_ONE]',
+        '▶️': '[PLAY]',
+        '⏩': '[FAST_FORWARD]',
+        '⏪': '[REWIND]',
+        '🔼': '[UP]',
+        '🔽': '[DOWN]',
+        '⬅️': '[LEFT]',
+        '➡': '[RIGHT]',
+        '↩️': '[RETURN]',
+        '↪️': '[FORWARD]',
+        '🔃': '[RELOAD]',
+        '🔄': '[SYNC]',
+    }
+    
+    def format(self, record):
+        """
+        Format the record, replacing emojis if needed.
+        
+        Args:
+            record: LogRecord to format
+            
+        Returns:
+            str: Formatted log message
+        """
+        # Get the formatted message
+        msg = super().format(record)
+        
+        # Check if we're on Windows and need to replace emojis
+        if sys.platform == 'win32':
+            try:
+                # Try to encode with current encoding
+                msg.encode(sys.stdout.encoding or 'cp1252')
+            except (UnicodeEncodeError, AttributeError):
+                # Replace emojis with ASCII equivalents
+                for emoji, ascii_text in self.EMOJI_MAP.items():
+                    msg = msg.replace(emoji, ascii_text)
+        
+        return msg
+
+
+def setup_asda_logging():
+    """
+    Setup logging for ASDA scraper with console and file handlers.
+    
+    This function configures logging with:
+    - Console output with SafeUnicodeFormatter for Windows compatibility
+    - File output with standard formatter supporting full Unicode
+    - Proper handling of emoji characters in log messages
+    
+    Returns:
+        logging.Logger: Configured logger instance
+    """
+    
+    # Create formatters
+    console_formatter = SafeUnicodeFormatter(
+        '[%(levelname)s] %(asctime)s [%(name)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    file_formatter = logging.Formatter(
+        '[%(levelname)s] %(asctime)s [%(name)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Console handler with SafeUnicodeFormatter
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.DEBUG)
+    console_handler.setFormatter(console_formatter)
+    
+    # File handler with UTF-8 encoding
+    file_handler = logging.handlers.RotatingFileHandler(
+        logs_dir / 'asda_scraper.log',
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5,
+        encoding='utf-8'  # Ensure file handler uses UTF-8
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(file_formatter)
+    
+    # Get the asda_scraper logger and configure it
+    asda_logger = logging.getLogger('asda_scraper')
+    asda_logger.setLevel(logging.DEBUG)
+    asda_logger.handlers.clear()  # Remove any existing handlers
+    asda_logger.addHandler(console_handler)
+    asda_logger.addHandler(file_handler)
+    asda_logger.propagate = False
+    
+    # Also configure submodule loggers
+    for submodule in ['selenium_scraper', 'asda_link_crawler', 'management.commands.run_asda_crawl']:
+        sublogger = logging.getLogger(f'asda_scraper.{submodule}')
+        sublogger.setLevel(logging.DEBUG)
+        sublogger.handlers.clear()
+        sublogger.addHandler(console_handler)
+        sublogger.addHandler(file_handler)
+        sublogger.propagate = False
+    
+    # Log successful configuration
+    asda_logger.info("ASDA scraper logging configured successfully")
+    
+    return asda_logger

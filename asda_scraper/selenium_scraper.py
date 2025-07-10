@@ -56,16 +56,23 @@ def setup_asda_logging():
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
-    # Console handler
+    # Console handler with UTF-8 encoding
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.DEBUG)
     console_handler.setFormatter(formatter)
+    
+    # Force UTF-8 encoding for Windows console
+    if sys.platform == 'win32':
+        import io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
     
     # File handler
     file_handler = logging.handlers.RotatingFileHandler(
         logs_dir / 'asda_scraper.log',
         maxBytes=10*1024*1024,  # 10MB
-        backupCount=5
+        backupCount=5,
+        encoding='utf-8'  # Ensure file handler also uses UTF-8
     )
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
@@ -88,6 +95,9 @@ def setup_asda_logging():
         sublogger.propagate = False
     
     return asda_logger
+
+
+
 
 # Setup logging when module is imported
 logger = setup_asda_logging()
