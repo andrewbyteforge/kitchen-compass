@@ -33,20 +33,168 @@ class ProxyManagementAdminSite(AdminSite):
         ]
         return custom_urls + urls
     
-    def proxy_dashboard_view(self, request):
-        """Comprehensive proxy management dashboard."""
-        context = self._get_proxy_dashboard_context()
-        context.update({
+    def proxy_dashboard_view(request):
+        """
+        Comprehensive proxy management dashboard view.
+        
+        Displays proxy statistics, provider status, and cost information.
+        """
+        from .models import ProxyConfiguration, ProxyProviderSettings, EnhancedProxyModel
+        
+        context = {
             'title': 'Proxy Management Dashboard',
-            'site_header': self.site_header,
+            'site_header': admin.site.site_header,
+            'site_title': admin.site.site_title,
             'has_permission': True,
-        })
+        }
+        
+        try:
+            # Get active configuration
+            config = ProxyConfiguration.objects.filter(is_active=True).first()
+            context['config'] = config
+            
+            # Get provider statistics
+            providers = ProxyProviderSettings.objects.all()
+            context['providers'] = providers
+            
+            # Get proxy statistics - check if EnhancedProxyModel exists
+            try:
+                proxy_stats = {
+                    'total_proxies': EnhancedProxyModel.objects.count(),
+                    'active_proxies': EnhancedProxyModel.objects.filter(status='active').count(),
+                    'failed_proxies': EnhancedProxyModel.objects.filter(status='failed').count(),
+                }
+            except:
+                # If EnhancedProxyModel doesn't exist yet
+                proxy_stats = {
+                    'total_proxies': 0,
+                    'active_proxies': 0,
+                    'failed_proxies': 0,
+                }
+            context['proxy_stats'] = proxy_stats
+            
+            # Calculate costs
+            today = datetime.now().date()
+            today_cost = ProxyProviderSettings.objects.aggregate(
+                total=Sum('total_cost')
+            )['total'] or Decimal('0.00')
+            context['today_cost'] = today_cost
+            
+            # Prepare chart data (empty for now to avoid errors)
+            context['charts_data'] = {
+                'success_by_tier': json.dumps([]),
+                'cost_trend': json.dumps([]),
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in proxy dashboard: {str(e)}")
+            context['error'] = str(e)
         
         return TemplateResponse(
             request,
-            'admin/proxy_dashboard.html',
+            'asda_scraper/admin/proxy_dashboard.html',
             context
         )
+    
+    def proxy_quick_setup_view(request):
+        """
+        Quick setup view for common proxy scenarios.
+        
+        Allows administrators to quickly configure proxy settings
+        with predefined configurations.
+        """
+        from .models import ProxyConfiguration
+        from django.shortcuts import redirect
+        
+        if request.method == 'POST':
+            setup_type = request.POST.get('setup_type')
+            
+            try:
+                # Get or create configuration
+                config, created = ProxyConfiguration.objects.get_or_create(
+                    is_active=True,
+                    defaults={'name': 'Default Configuration'}
+                )
+                
+                if setup_type == 'free_only':
+                    # Configure for free proxies only
+                    config.prefer_paid_proxies = False
+                    config.enable_free_proxy_fetching = True
+                    config.daily_budget_limit = Decimal('0.00')
+                    config.enable_proxy_service = True
+                    config.save()
+                    messages.success(request, "Configured for free proxies only.")
+                    
+                elif setup_type == 'paid_priority':
+                    # Configure to prioritize paid proxies
+                    config.prefer_paid_proxies = True
+                    config.fallback_to_free = True
+                    config.enable_free_proxy_fetching = True
+                    config.daily_budget_limit = Decimal('100.00')
+                    config.enable_proxy_service = True
+                    config.save()
+                    messages.success(request, "Configured to prioritize paid proxies.")
+                    
+                elif setup_type == 'balanced':
+                    # Configure balanced proxy usage
+                    config.prefer_paid_proxies = True
+                    config.fallback_to_free = True
+                    config.enable_free_proxy_fetching = True
+                    config.daily_budget_limit = Decimal('50.00')
+                    config.rotation_strategy = 'performance_based'
+                    config.enable_proxy_service = True
+                    config.save()
+                    messages.success(request, "Configured for balanced proxy usage.")
+                    
+                elif setup_type == 'disable':
+                    # Disable proxy service
+                    config.enable_proxy_service = False
+                    config.save()
+                    messages.info(request, "Proxy service disabled.")
+                    
+            except Exception as e:
+                logger.error(f"Error in proxy quick setup: {str(e)}")
+                messages.error(request, f"Setup failed: {str(e)}")
+            
+            return redirect('admin:proxy_dashboard')
+        
+        context = {
+            'title': 'Quick Proxy Setup',
+            'site_header': admin.site.site_header,
+            'site_title': admin.site.site_title,
+            'has_permission': True,
+        }
+        
+        return TemplateResponse(
+            request,
+            'asda_scraper/admin/proxy_quick_setup.html',
+            context
+        )
+
+
+    # Add custom URLs to the admin site
+    # This should be added after all the view functions but before the model admin classes
+    original_get_urls = admin.site.get_urls
+
+    def get_urls_with_proxy():
+        """
+        Add proxy dashboard URLs to admin.
+        
+        This function extends the default admin URLs with custom
+        proxy management views.
+        """
+        urls = original_get_urls()
+        custom_urls = [
+            path('proxy-dashboard/', admin.site.admin_view(proxy_dashboard_view), name='proxy_dashboard'),
+            path('proxy-quick-setup/', admin.site.admin_view(proxy_quick_setup_view), name='proxy_quick_setup'),
+        ]
+        return custom_urls + urls
+
+    # Apply the custom URLs
+    admin.site.get_urls = get_urls_with_proxy
+    
+
+
     
     def proxy_quick_setup(self, request):
         """Quick setup for common proxy scenarios."""
