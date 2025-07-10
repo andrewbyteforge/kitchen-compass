@@ -1,112 +1,124 @@
 """
-ASDA Scraper Configuration
+Enhanced ASDA Scraper Configuration Module
 
-This module contains configuration settings for the ASDA scraper including
-category mappings, Selenium settings, and general scraper parameters.
+This module contains all configuration settings for the ASDA web scraper,
+including URL patterns, category mappings, selenium settings, and error handling.
 
-File: asda_scraper/config/scraper_config.py
+File: asda_scraper/scraper_config.py
 """
 
-# ASDA Category Mappings with Real Category Codes
-ASDA_CATEGORY_MAPPINGS = {
-    # Core Food Categories (Priority 1)
-    '1215686352935': {
-        'name': 'Fruit, Veg & Flowers',
-        'slug': 'fruit-veg-flowers',
+import os
+from pathlib import Path
+from typing import Dict, List, Any
+import logging
+
+# Get project root directory dynamically
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+LOGS_DIR = PROJECT_ROOT / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
+
+# Base ASDA URL Configuration
+ASDA_BASE_URL = "https://groceries.asda.com"
+ASDA_CATEGORY_BASE = f"{ASDA_BASE_URL}/browse"
+
+# Rate Limiting and Anti-Bot Detection Configuration
+RATE_LIMIT_CONFIG = {
+    'requests_per_minute': 30,
+    'requests_per_hour': 1000,
+    'burst_size': 5,
+    'cooldown_period': 300,  # 5 minutes in seconds
+    'rate_limit_indicators': [
+        'rate limit', 
+        'too many requests', 
+        'please try again later',
+        'access denied',
+        'temporarily blocked'
+    ]
+}
+
+# Enhanced Delay Configuration
+DELAY_CONFIG = {
+    'between_requests': 2.0,
+    'between_categories': 5.0,
+    'after_error': 5.0,
+    'after_rate_limit_detected': 60.0,
+    'page_load_wait': 3.0,
+    'element_wait': 1.0,
+    'scroll_pause': 1.5,
+    'popup_check': 2.0,
+    'random_delay_min': 0.5,
+    'random_delay_max': 2.0,
+    'progressive_delay_factor': 1.5,  # Multiply delay after each error
+    'max_progressive_delay': 30.0
+}
+
+# Enhanced Category Configuration with Metadata
+CATEGORY_CONFIG = {
+    # Essential Categories (Priority 1)
+    '1215135738497': {
+        'name': 'Fresh Food & Bakery',
+        'slug': 'fresh-food-bakery',
         'priority': 1,
-        'keywords': [
-            'banana', 'apple', 'orange', 'grape', 'tomato', 'cucumber',
-            'lettuce', 'carrot', 'onion', 'potato', 'avocado', 'melon',
-            'berry', 'cherry', 'plum', 'spinach', 'broccoli', 'pepper',
-            'fruit', 'vegetable', 'veg', 'salad', 'herbs', 'flowers'
-        ]
+        'keywords': ['fresh', 'bakery', 'bread', 'produce', 'fruit', 'vegetable'],
+        'subcategory_expected': True,
+        'max_pages': 10,
+        'scraping_strategy': 'pagination'
     },
-    '1215135760597': {
-        'name': 'Meat, Poultry & Fish',
-        'slug': 'meat-poultry-fish',
-        'priority': 1,
-        'keywords': [
-            'chicken', 'beef', 'pork', 'lamb', 'turkey', 'bacon', 'ham',
-            'sausage', 'mince', 'steak', 'chop', 'breast', 'thigh', 'wing',
-            'fish', 'salmon', 'cod', 'tuna', 'meat', 'poultry'
-        ]
-    },
-    '1215660378320': {
+    '1215135740114': {
         'name': 'Chilled Food',
         'slug': 'chilled-food',
         'priority': 1,
-        'keywords': [
-            'milk', 'cheese', 'yogurt', 'butter', 'cream', 'egg', 'dairy',
-            'fresh', 'organic', 'free range', 'chilled', 'refrigerated'
-        ]
+        'keywords': ['chilled', 'dairy', 'meat', 'fish', 'poultry', 'ready meals'],
+        'subcategory_expected': True,
+        'max_pages': 10,
+        'scraping_strategy': 'pagination'
     },
-    '1215338621416': {
-        'name': 'Frozen Food',
-        'slug': 'frozen-food',
-        'priority': 1,
-        'keywords': [
-            'frozen', 'ice cream', 'ice', 'freezer', 'sorbet', 'gelato',
-            'frozen meal', 'frozen pizza', 'frozen vegetables'
-        ]
-    },
-    '1215337189632': {
+    '1215135741731': {
         'name': 'Food Cupboard',
         'slug': 'food-cupboard',
         'priority': 1,
-        'keywords': [
-            'pasta', 'rice', 'flour', 'sugar', 'oil', 'vinegar', 'sauce',
-            'tin', 'can', 'jar', 'packet', 'cereal', 'biscuit', 'crisp',
-            'canned', 'dried', 'instant', 'cooking', 'seasoning', 'spice'
-        ]
+        'keywords': ['pantry', 'cupboard', 'tinned', 'pasta', 'rice', 'sauce'],
+        'subcategory_expected': True,
+        'max_pages': 15,
+        'scraping_strategy': 'pagination'
     },
-    '1215686354843': {
-        'name': 'Bakery',
-        'slug': 'bakery',
+    '1215135743349': {
+        'name': 'Frozen Food',
+        'slug': 'frozen-food',
         'priority': 1,
-        'keywords': [
-            'bread', 'roll', 'bun', 'cake', 'pastry', 'croissant', 'bagel',
-            'bakery', 'baked', 'loaf', 'sandwich', 'toast', 'muffin', 'scone'
-        ]
-    },
-    '1215135760614': {
-        'name': 'Drinks',
-        'slug': 'drinks',
-        'priority': 1,
-        'keywords': [
-            'water', 'juice', 'soft drink', 'tea', 'coffee', 'squash',
-            'drink', 'beverage', 'cola', 'lemonade', 'smoothie', 'energy drink'
-        ]
+        'keywords': ['frozen', 'ice cream', 'frozen meat', 'frozen vegetables'],
+        'subcategory_expected': True,
+        'max_pages': 8,
+        'scraping_strategy': 'pagination'
     },
     
-    # Household & Personal Care (Priority 2)
-    '1215135760665': {
-        'name': 'Laundry & Household',
-        'slug': 'laundry-household',
+    # Core Categories (Priority 2)
+    '1215135744966': {
+        'name': 'Drinks',
+        'slug': 'drinks',
         'priority': 2,
-        'keywords': [
-            'cleaning', 'cleaner', 'toilet', 'kitchen', 'bathroom', 'washing up',
-            'detergent', 'bleach', 'disinfectant', 'sponge', 'cloth', 'foil',
-            'cling film', 'bag', 'bin', 'tissue', 'paper', 'household', 'laundry'
-        ]
+        'keywords': ['drink', 'beverage', 'water', 'juice', 'soft drink', 'alcohol'],
+        'subcategory_expected': True,
+        'max_pages': 10,
+        'scraping_strategy': 'pagination'
     },
-    '1215135760648': {
-        'name': 'Toiletries & Beauty',
-        'slug': 'toiletries-beauty',
+    '1215135746106': {
+        'name': 'Household',
+        'slug': 'household',
         'priority': 2,
-        'keywords': [
-            'toothpaste', 'shampoo', 'soap', 'deodorant', 'moisturiser',
-            'makeup', 'skincare', 'hair', 'dental', 'beauty', 'cosmetic',
-            'toiletries', 'personal care', 'hygiene'
-        ]
+        'keywords': ['cleaning', 'household', 'detergent', 'paper', 'kitchen roll'],
+        'subcategory_expected': True,
+        'max_pages': 8,
+        'scraping_strategy': 'pagination'
     },
-    '1215686353929': {
+    '1215135755309': {
         'name': 'Health & Wellness',
         'slug': 'health-wellness',
         'priority': 2,
-        'keywords': [
-            'vitamin', 'supplement', 'medicine', 'health', 'wellness',
-            'pharmacy', 'medical', 'first aid', 'pain relief'
-        ]
+        'keywords': ['vitamin', 'supplement', 'medicine', 'health', 'wellness', 'pharmacy'],
+        'subcategory_expected': True,
+        'max_pages': 5,
+        'scraping_strategy': 'pagination'
     },
     
     # Specialty Categories (Priority 3)
@@ -114,73 +126,81 @@ ASDA_CATEGORY_MAPPINGS = {
         'name': 'Sweets, Treats & Snacks',
         'slug': 'sweets-treats-snacks',
         'priority': 3,
-        'keywords': [
-            'chocolate', 'sweet', 'candy', 'snack', 'crisp', 'nuts',
-            'treat', 'biscuit', 'cookie', 'confectionery'
-        ]
+        'keywords': ['chocolate', 'sweet', 'candy', 'snack', 'crisp', 'nuts'],
+        'subcategory_expected': False,
+        'max_pages': 8,
+        'scraping_strategy': 'pagination'
     },
     '1215135760631': {
         'name': 'Baby, Toddler & Kids',
         'slug': 'baby-toddler-kids',
         'priority': 3,
-        'keywords': [
-            'baby', 'toddler', 'child', 'kids', 'infant', 'nappy',
-            'formula', 'baby food', 'children'
-        ]
+        'keywords': ['baby', 'toddler', 'child', 'kids', 'infant', 'nappy'],
+        'subcategory_expected': True,
+        'max_pages': 5,
+        'scraping_strategy': 'pagination'
     },
     '1215662103573': {
         'name': 'Pet Food & Accessories',
         'slug': 'pet-food-accessories',
         'priority': 3,
-        'keywords': [
-            'pet', 'dog', 'cat', 'animal', 'pet food', 'dog food', 'cat food'
-        ]
-    },
-    '1215686351451': {
-        'name': 'World Food',
-        'slug': 'world-food',
-        'priority': 3,
-        'keywords': [
-            'world', 'international', 'ethnic', 'asian', 'indian',
-            'chinese', 'mexican', 'italian', 'foreign'
-        ]
-    },
-    '1215686355606': {
-        'name': 'Dietary & Lifestyle',
-        'slug': 'dietary-lifestyle',
-        'priority': 3,
-        'keywords': [
-            'organic', 'gluten free', 'vegan', 'vegetarian', 'healthy',
-            'diet', 'low fat', 'sugar free', 'free from'
-        ]
+        'keywords': ['pet', 'dog', 'cat', 'animal', 'pet food'],
+        'subcategory_expected': True,
+        'max_pages': 5,
+        'scraping_strategy': 'pagination'
     }
 }
 
-# Selenium WebDriver Configuration
+# Enhanced Selenium WebDriver Configuration
 SELENIUM_CONFIG = {
-    'user_agent': (
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-        '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    ),
-    'default_timeout': 10,
+    'user_agents': [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    ],
+    'default_timeout': 15,
     'page_load_timeout': 30,
     'implicit_wait': 5,
-    'window_size': '1920,1080',
+    'window_sizes': ['1920,1080', '1366,768', '1536,864'],
+    'viewport_randomization': True,
+    'disable_blink_features': 'AutomationControlled',
+    'experimental_options': {
+        'excludeSwitches': ['enable-automation'],
+        'useAutomationExtension': False,
+        'prefs': {
+            'credentials_enable_service': False,
+            'profile.password_manager_enabled': False
+        }
+    }
 }
 
-# General Scraper Settings
+# Enhanced General Scraper Settings
 SCRAPER_SETTINGS = {
-    'max_pages_per_category': 5,
-    'max_retries': 3,
-    'retry_delay': 2.0,
-    'request_delay': 1.0,
-    'category_delay': 2.0,
+    'max_pages_per_category': 10,
+    'max_retries': 5,
+    'retry_delay': 3.0,
+    'exponential_backoff': True,
+    'request_timeout': 30,
+    'connection_timeout': 10,
     'scroll_pause_time': 2.0,
     'popup_check_delay': 2.0,
     'max_popup_attempts': 3,
+    'rate_limit_indicators': [
+        'rate limit',
+        'too many requests',
+        'please try again later',
+        'temporarily unavailable',
+        'access denied'
+    ],
+    'session_rotation_interval': 100,  # Rotate session after N requests
+    'max_consecutive_errors': 10,
+    'enable_javascript': True,
+    'enable_cookies': True,
+    'cookie_persistence': True
 }
 
-# Product Extraction Settings
+# Enhanced Product Extraction Configuration
 PRODUCT_EXTRACTION_CONFIG = {
     'selectors': {
         'product_containers': [
@@ -189,203 +209,415 @@ PRODUCT_EXTRACTION_CONFIG = {
             'div[class*="product-tile"]',
             'div[class*="product-item"]',
             'article[class*="product"]',
-            '[data-testid*="product"]'
+            '[data-testid*="product"]',
+            'div.product-card',
+            'li.product-list-item'
         ],
         'product_title': [
             'a.co-product__anchor',
             'a[href*="/product/"]',
             '.product-title a',
-            'h3 a'
+            'h3 a',
+            '[data-testid="product-title"]',
+            '.co-product__title',
+            'span.co-product__title'
         ],
         'product_price': [
             'strong.co-product__price',
             '.price strong',
             '.product-price strong',
-            '[data-testid="price"]'
+            '[data-testid="price"]',
+            'span.co-product__price',
+            '.price-now'
         ],
         'was_price': [
             'span.co-product__was-price',
             '.was-price',
-            '.price-was'
+            '.price-was',
+            '[data-testid="was-price"]',
+            '.previous-price'
         ],
-        'unit': [
+        'unit_price': [
+            'span.co-product__price-per-quantity',
+            '.price-per-unit',
+            '.unit-price',
+            '[data-testid="unit-price"]'
+        ],
+        'quantity': [
             'span.co-product__volume',
             '.product-unit',
-            '.unit-price'
+            '.quantity',
+            '[data-testid="quantity"]'
         ],
         'image': [
             'img.asda-img',
             '.product-image img',
-            'img[src*="product"]'
+            'img[src*="product"]',
+            '[data-testid="product-image"] img',
+            '.co-product__image img'
+        ],
+        'availability': [
+            '.availability-status',
+            '[data-testid="availability"]',
+            '.stock-level',
+            '.out-of-stock'
+        ],
+        'promotion': [
+            '.promotion-badge',
+            '.offer-text',
+            '[data-testid="promotion"]',
+            '.rollback-badge'
         ]
     },
-    'price_regex': r'£(\d+\.?\d*)',
-    'id_regex': r'/(\d+)$',
+    'regex_patterns': {
+        'price': r'£(\d+\.?\d*)',
+        'unit_price': r'£(\d+\.?\d*)\s*/\s*(\w+)',
+        'quantity': r'(\d+\.?\d*)\s*(\w+)',
+        'product_id': r'/product/(\d+)',
+        'category_id': r'/cat/(\d+)'
+    },
+    'data_attributes': [
+        'data-product-id',
+        'data-sku',
+        'data-price',
+        'data-category',
+        'data-brand'
+    ]
 }
 
-# Pagination Settings
+# Enhanced Pagination Configuration
 PAGINATION_CONFIG = {
-    'next_button_selectors': [
-        'a[aria-label="Next"]',
-        'a.pagination-next',
-        'a[class*="next"]',
-        'button[aria-label="Next"]',
-        'button.pagination-next',
-        'button[class*="next"]'
-    ],
-    'page_number_selectors': [
-        'a[class*="pagination"]',
-        'a[class*="page"]',
-        '.pagination a'
-    ]
-}
-
-# Popup and Cookie Banner Settings
-POPUP_CONFIG = {
-    'selectors': [
-        # Cookie banners
-        "button[id*='accept']",
-        "button[class*='accept']",
-        "button[data-testid*='accept']",
-        "#accept-cookies",
-        ".cookie-accept",
-        
-        # Generic close buttons
-        "button[aria-label*='close']",
-        "button[aria-label*='Close']",
-        ".modal-close",
-        ".popup-close",
-        "[data-testid*='close']",
-        
-        # ASDA specific
-        ".notification-banner button",
-        ".banner-close",
-        ".consent-banner button"
-    ],
-    'text_selectors': [
-        'Accept',
-        'Accept All',
-        'Allow All',
-        'Continue',
-        'OK'
-    ],
-    'max_attempts': 3,
-    'delay_between_attempts': 1.0
-}
-
-# Error Handling Configuration
-ERROR_CONFIG = {
-    'max_category_errors': 5,
-    'max_product_errors': 20,
-    'retry_status_codes': [429, 502, 503, 504],
-    'timeout_errors': [
-        'TimeoutException',
-        'NoSuchElementException',
-        'WebDriverException'
-    ]
-}
-
-# Logging Configuration
-LOGGING_CONFIG = {
-    'level': 'INFO',
-    'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    'file_handler': {
-        'filename': 'logs/selenium_scraper.log',
-        'max_bytes': 10485760,  # 10MB
-        'backup_count': 5
+    'strategies': {
+        'button_click': {
+            'selectors': [
+                'a[aria-label="Next"]',
+                'button[aria-label="Next"]',
+                'a.pagination-next',
+                'button.pagination-next',
+                'a[class*="next"]',
+                'button[class*="next"]',
+                '.pagination__next'
+            ],
+            'wait_condition': 'element_to_be_clickable'
+        },
+        'url_parameter': {
+            'param_name': 'page',
+            'increment': 1,
+            'max_pages': 50
+        },
+        'infinite_scroll': {
+            'scroll_pause_time': 2.0,
+            'max_scrolls': 20,
+            'check_new_elements': True
+        }
+    },
+    'page_indicators': {
+        'current_page': [
+            '.pagination__current',
+            '[aria-current="page"]',
+            '.active-page'
+        ],
+        'total_pages': [
+            '.pagination__total',
+            '.page-count',
+            '[data-testid="total-pages"]'
+        ]
     }
 }
 
-# Browser Driver Paths (Windows)
-DRIVER_PATHS = {
-    'chromedriver_paths': [
-        r"C:\Program Files\Google\Chrome\Application\chromedriver.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chromedriver.exe",
-        r"C:\chromedriver\chromedriver.exe",
-        "./chromedriver.exe",
-        "chromedriver.exe"
-    ],
-    'chrome_binary_paths': [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
-    ]
+# Enhanced Popup and Cookie Banner Configuration
+POPUP_CONFIG = {
+    'cookie_banners': {
+        'selectors': [
+            "button[id*='accept']",
+            "button[class*='accept']",
+            "button[data-testid*='accept']",
+            "#onetrust-accept-btn-handler",
+            "#accept-cookies",
+            ".cookie-accept",
+            "[aria-label*='Accept cookies']"
+        ],
+        'text_patterns': [
+            'Accept', 'Accept All', 'Accept all', 
+            'Allow All', 'Continue', 'OK', 'I Agree'
+        ]
+    },
+    'modal_popups': {
+        'close_selectors': [
+            "button[aria-label*='close']",
+            "button[aria-label*='Close']",
+            ".modal-close",
+            ".popup-close",
+            "[data-testid*='close']",
+            "svg[class*='close']"
+        ],
+        'overlay_selectors': [
+            '.modal-overlay',
+            '.popup-overlay',
+            '[data-testid="overlay"]'
+        ]
+    },
+    'notification_banners': {
+        'selectors': [
+            '.notification-banner button',
+            '.banner-close',
+            '.consent-banner button',
+            '[data-testid="dismiss-banner"]'
+        ]
+    },
+    'handling_config': {
+        'max_attempts': 5,
+        'delay_between_attempts': 1.5,
+        'check_interval': 2.0,
+        'dismiss_strategy': 'click_first_available'
+    }
 }
 
-# Default Crawl Session Settings
+# Enhanced Error Handling Configuration
+ERROR_CONFIG = {
+    'thresholds': {
+        'max_category_errors': 10,
+        'max_product_errors': 50,
+        'max_consecutive_errors': 5,
+        'error_rate_threshold': 0.3  # 30% error rate triggers cooldown
+    },
+    'retry_config': {
+        'status_codes': [429, 502, 503, 504, 520, 521, 522],
+        'exceptions': [
+            'TimeoutException',
+            'NoSuchElementException',
+            'WebDriverException',
+            'StaleElementReferenceException'
+        ],
+        'max_retries': 5,
+        'backoff_factor': 2.0,
+        'max_backoff': 60.0
+    },
+    'recovery_strategies': {
+        'refresh_page': True,
+        'clear_cookies': True,
+        'rotate_user_agent': True,
+        'change_viewport': True,
+        'restart_driver': True
+    },
+    'error_classifications': {
+        'recoverable': [
+            'TimeoutException',
+            'StaleElementReferenceException',
+            'ElementClickInterceptedException'
+        ],
+        'non_recoverable': [
+            'InvalidSessionIdException',
+            'WebDriverException'
+        ]
+    }
+}
+
+# Enhanced Logging Configuration
+LOGGING_CONFIG = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'detailed': {
+            'format': '[%(asctime)s] [%(name)s] [%(levelname)s] [%(funcName)s:%(lineno)d] %(message)s',
+            'datefmt': '%Y-%m-%d %H:%M:%S'
+        },
+        'simple': {
+            'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        }
+    },
+    'handlers': {
+        'file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOGS_DIR / 'asda_scraper.log'),
+            'maxBytes': 10485760,  # 10MB
+            'backupCount': 10,
+            'formatter': 'detailed',
+            'level': 'DEBUG'
+        },
+        'error_file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOGS_DIR / 'asda_scraper_errors.log'),
+            'maxBytes': 10485760,  # 10MB
+            'backupCount': 5,
+            'formatter': 'detailed',
+            'level': 'ERROR'
+        },
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+            'level': 'INFO'
+        }
+    },
+    'loggers': {
+        'asda_scraper': {
+            'handlers': ['file', 'error_file', 'console'],
+            'level': 'DEBUG',
+            'propagate': False
+        },
+        'selenium': {
+            'handlers': ['file'],
+            'level': 'WARNING',
+            'propagate': False
+        }
+    }
+}
+
+# Browser Driver Paths (Windows) - Enhanced
+DRIVER_PATHS = {
+    'chrome': {
+        'driver_paths': [
+            r"C:\Program Files\Google\Chrome\Application\chromedriver.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chromedriver.exe",
+            r"C:\chromedriver\chromedriver.exe",
+            r"C:\WebDriver\bin\chromedriver.exe",
+            str(PROJECT_ROOT / "drivers" / "chromedriver.exe"),
+            "./chromedriver.exe",
+            "chromedriver.exe"
+        ],
+        'binary_paths': [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            r"C:\Users\%USERNAME%\AppData\Local\Google\Chrome\Application\chrome.exe"
+        ]
+    },
+    'edge': {
+        'driver_paths': [
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedgedriver.exe",
+            r"C:\WebDriver\bin\msedgedriver.exe",
+            str(PROJECT_ROOT / "drivers" / "msedgedriver.exe")
+        ],
+        'binary_paths': [
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+        ]
+    }
+}
+
+# Enhanced Default Crawl Session Settings
 DEFAULT_CRAWL_SETTINGS = {
-    'max_categories': 10,
-    'category_priority': 2,
-    'max_products_per_category': 100,
+    'max_categories': 20,
+    'category_priority_threshold': 2,
+    'max_products_per_category': 200,
+    'batch_size': 50,
     'delay_between_requests': 2.0,
     'use_selenium': True,
     'headless': False,
+    'browser': 'chrome',
     'respect_robots_txt': True,
-    'user_agent': SELENIUM_CONFIG['user_agent']
+    'user_agent_rotation': True,
+    'session_persistence': True,
+    'enable_caching': True,
+    'cache_expiry': 3600,  # 1 hour
+    'screenshot_on_error': True,
+    'save_html_on_error': True,
+    'performance_monitoring': True
 }
 
 # Category Validation Settings
 CATEGORY_VALIDATION = {
-    'required_url_patterns': [
-        'groceries.asda.com',
-        '/cat/'
-    ],
-    'invalid_title_keywords': [
-        '404',
-        'error',
-        'not found',
-        'page not found'
-    ],
-    'promotional_keywords': [
-        'rollback',
-        'summer',
-        'events-inspiration',
-        'deals',
-        'offers',
-        'sale'
-    ]
+    'url_patterns': {
+        'required': ['groceries.asda.com', '/cat/'],
+        'forbidden': ['checkout', 'basket', 'account', 'login']
+    },
+    'title_validation': {
+        'invalid_keywords': [
+            '404', 'error', 'not found', 'page not found',
+            'access denied', 'forbidden'
+        ],
+        'min_length': 3,
+        'max_length': 100
+    },
+    'content_validation': {
+        'min_products': 1,
+        'required_elements': ['product', 'price'],
+        'timeout': 30
+    }
 }
 
-# Updated scraper_config.py with enhanced delay settings
-
-# Delay Configuration
-DELAY_CONFIG = {
-    # Base delays
-    'between_requests': 3.0,           # Between any two requests
-    'between_categories': 60.0,        # 1 minute between main categories
-    'between_subcategories': 15.0,     # 15 seconds between subcategories
-    'between_pages': 5.0,              # Between pagination pages
-    'after_product_extraction': 2.0,   # After extracting products from a page
-    
-    # Random delay ranges (adds randomness to avoid pattern detection)
-    'random_delay_min': 1.0,           # Minimum random delay to add
-    'random_delay_max': 5.0,           # Maximum random delay to add
-    
-    # Longer delays after certain actions
-    'after_popup_handling': 3.0,       # After handling popups
-    'after_navigation_error': 10.0,    # After navigation errors
-    'after_rate_limit_detected': 300.0, # 5 minutes if rate limit detected
-    
-    # Progressive delays (increase delay if errors occur)
-    'progressive_delay_factor': 1.5,   # Multiply delay by this on errors
-    'max_progressive_delay': 120.0,    # Maximum progressive delay (2 minutes)
+# Performance Monitoring Configuration
+PERFORMANCE_CONFIG = {
+    'metrics': {
+        'page_load_time': {'threshold': 10.0, 'unit': 'seconds'},
+        'element_wait_time': {'threshold': 5.0, 'unit': 'seconds'},
+        'memory_usage': {'threshold': 512, 'unit': 'MB'},
+        'cpu_usage': {'threshold': 80, 'unit': 'percent'}
+    },
+    'monitoring_interval': 60,  # seconds
+    'alert_thresholds': {
+        'slow_page_loads': 5,
+        'memory_warnings': 3,
+        'cpu_warnings': 3
+    }
 }
 
-# Add this to your existing SCRAPER_SETTINGS
-SCRAPER_SETTINGS = {
-    'max_pages_per_category': 5,
-    'max_retries': 3,
-    'retry_delay': 2.0,
-    'request_delay': 1.0,
-    'category_delay': 60.0,  # Updated to 1 minute
-    'scroll_pause_time': 2.0,
-    'popup_check_delay': 2.0,
-    'max_popup_attempts': 3,
-    # Add rate limit detection
-    'rate_limit_indicators': [
-        'too many requests',
-        'rate limit',
-        'access denied',
-        '429',
-        'please slow down'
-    ]
+# Data Quality Configuration
+DATA_QUALITY_CONFIG = {
+    'validation_rules': {
+        'price': {
+            'min': 0.01,
+            'max': 1000.00,
+            'required': True
+        },
+        'title': {
+            'min_length': 3,
+            'max_length': 500,
+            'required': True
+        },
+        'url': {
+            'pattern': r'^https?://.*',
+            'required': True
+        }
+    },
+    'cleaning_rules': {
+        'strip_whitespace': True,
+        'remove_special_chars': False,
+        'normalize_prices': True,
+        'extract_quantity': True
+    }
 }
+
+# Export all configuration as a single dict for easy access
+SCRAPER_CONFIG = {
+    'base_url': ASDA_BASE_URL,
+    'category_base': ASDA_CATEGORY_BASE,
+    'rate_limit': RATE_LIMIT_CONFIG,
+    'delays': DELAY_CONFIG,
+    'categories': CATEGORY_CONFIG,
+    'selenium': SELENIUM_CONFIG,
+    'scraper': SCRAPER_SETTINGS,
+    'extraction': PRODUCT_EXTRACTION_CONFIG,
+    'pagination': PAGINATION_CONFIG,
+    'popups': POPUP_CONFIG,
+    'errors': ERROR_CONFIG,
+    'logging': LOGGING_CONFIG,
+    'drivers': DRIVER_PATHS,
+    'crawl_defaults': DEFAULT_CRAWL_SETTINGS,
+    'validation': CATEGORY_VALIDATION,
+    'performance': PERFORMANCE_CONFIG,
+    'data_quality': DATA_QUALITY_CONFIG
+}
+
+# Utility function to get config
+def get_config(key: str, default: Any = None) -> Any:
+    """
+    Get configuration value by key with dot notation support.
+    
+    Args:
+        key: Configuration key (supports dot notation like 'selenium.user_agents')
+        default: Default value if key not found
+        
+    Returns:
+        Configuration value or default
+    """
+    try:
+        value = SCRAPER_CONFIG
+        for part in key.split('.'):
+            value = value[part]
+        return value
+    except (KeyError, TypeError):
+        logging.warning(f"Configuration key '{key}' not found, using default: {default}")
+        return default
+
+
+# Initialize logging when module is imported
+logging.config.dictConfig(LOGGING_CONFIG)

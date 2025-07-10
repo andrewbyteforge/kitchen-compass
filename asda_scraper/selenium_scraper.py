@@ -1,5 +1,5 @@
 """
-Refactored Selenium-based ASDA Scraper
+Enhanced Selenium-based ASDA Scraper
 
 This module provides a production-ready Selenium WebDriver scraper for ASDA
 with improved architecture, error handling, logging, and maintainability.
@@ -8,292 +8,157 @@ File: asda_scraper/selenium_scraper.py
 """
 
 import logging
+import logging.handlers
 import time
 import re
-from typing import Dict, List, Optional, Tuple, Any
-from dataclasses import dataclass
-from urllib.parse import urljoin
+import random
+import json
+import traceback
+from typing import Dict, List, Optional, Tuple, Any, Union
+from dataclasses import dataclass, field, asdict
+from urllib.parse import urljoin, urlparse
+from pathlib import Path
+from datetime import datetime, timedelta
+from functools import wraps
+from enum import Enum
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import (
     TimeoutException, 
     NoSuchElementException, 
-    WebDriverException
+    WebDriverException,
+    StaleElementReferenceException,
+    ElementClickInterceptedException,
+    InvalidSessionIdException
 )
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 from django.utils import timezone
+from django.db import transaction
 
 from .models import AsdaCategory, AsdaProduct, CrawlSession
+from .scraper_config import (
+    SCRAPER_CONFIG, 
+    get_config,
+    SELENIUM_CONFIG,
+    DELAY_CONFIG,
+    PRODUCT_EXTRACTION_CONFIG,
+    POPUP_CONFIG,
+    ERROR_CONFIG,
+    PAGINATION_CONFIG,
+    RATE_LIMIT_CONFIG
+)
 
-logger = logging.getLogger(__name__)
+# Setup enhanced logging
+logger = logging.getLogger('asda_scraper.selenium_scraper')
+
+# Ensure logs directory exists
+LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
+(LOGS_DIR / "performance").mkdir(exist_ok=True)
+(LOGS_DIR / "errors").mkdir(exist_ok=True)
 
 
-"""
-Manual logging setup for ASDA scraper
-Add this at the top of selenium_scraper.py and asda_link_crawler.py
-"""
-
-import logging
-import sys
-from pathlib import Path
-
-# Create logs directory if it doesn't exist
-logs_dir = Path(__file__).resolve().parent.parent / "logs"
-logs_dir.mkdir(exist_ok=True)
-
-# Configure logging manually for the asda_scraper module
-def setup_asda_logging():
-    """Setup logging for ASDA scraper with console and file handlers."""
-    
-    # Create formatter
-    formatter = logging.Formatter(
-        '[%(levelname)s] %(asctime)s [%(name)s] %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.DEBUG)
-    console_handler.setFormatter(formatter)
-    
-    # File handler
-    file_handler = logging.handlers.RotatingFileHandler(
-        logs_dir / 'asda_scraper.log',
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=5
-    )
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(formatter)
-    
-    # Get the asda_scraper logger and configure it
-    asda_logger = logging.getLogger('asda_scraper')
-    asda_logger.setLevel(logging.DEBUG)
-    asda_logger.handlers.clear()  # Remove any existing handlers
-    asda_logger.addHandler(console_handler)
-    asda_logger.addHandler(file_handler)
-    asda_logger.propagate = False
-    
-    # Also configure submodule loggers
-    for submodule in ['selenium_scraper', 'asda_link_crawler', 'management.commands.run_asda_crawl']:
-        sublogger = logging.getLogger(f'asda_scraper.{submodule}')
-        sublogger.setLevel(logging.DEBUG)
-        sublogger.handlers.clear()
-        sublogger.addHandler(console_handler)
-        sublogger.addHandler(file_handler)
-        sublogger.propagate = False
-    
-    return asda_logger
-
-# Setup logging when module is imported
-logger = setup_asda_logging()
-logger.info("ASDA scraper logging configured successfully")
-
-# Configuration constants (moved inline for now)
-ASDA_CATEGORY_MAPPINGS = {
-    # Core Food Categories (Priority 1)
-    '1215686352935': {
-        'name': 'Fruit, Veg & Flowers',
-        'slug': 'fruit-veg-flowers',
-        'priority': 1,
-        'keywords': [
-            'banana', 'apple', 'orange', 'grape', 'tomato', 'cucumber',
-            'lettuce', 'carrot', 'onion', 'potato', 'avocado', 'melon',
-            'berry', 'cherry', 'plum', 'spinach', 'broccoli', 'pepper',
-            'fruit', 'vegetable', 'veg', 'salad', 'herbs', 'flowers'
-        ]
-    },
-    '1215135760597': {
-        'name': 'Meat, Poultry & Fish',
-        'slug': 'meat-poultry-fish',
-        'priority': 1,
-        'keywords': [
-            'chicken', 'beef', 'pork', 'lamb', 'turkey', 'bacon', 'ham',
-            'sausage', 'mince', 'steak', 'chop', 'breast', 'thigh', 'wing',
-            'fish', 'salmon', 'cod', 'tuna', 'meat', 'poultry'
-        ]
-    },
-    '1215660378320': {
-        'name': 'Chilled Food',
-        'slug': 'chilled-food',
-        'priority': 1,
-        'keywords': [
-            'milk', 'cheese', 'yogurt', 'butter', 'cream', 'egg', 'dairy',
-            'fresh', 'organic', 'free range', 'chilled', 'refrigerated'
-        ]
-    },
-    '1215338621416': {
-        'name': 'Frozen Food',
-        'slug': 'frozen-food',
-        'priority': 1,
-        'keywords': [
-            'frozen', 'ice cream', 'ice', 'freezer', 'sorbet', 'gelato',
-            'frozen meal', 'frozen pizza', 'frozen vegetables'
-        ]
-    },
-    '1215337189632': {
-        'name': 'Food Cupboard',
-        'slug': 'food-cupboard',
-        'priority': 1,
-        'keywords': [
-            'pasta', 'rice', 'flour', 'sugar', 'oil', 'vinegar', 'sauce',
-            'tin', 'can', 'jar', 'packet', 'cereal', 'biscuit', 'crisp',
-            'canned', 'dried', 'instant', 'cooking', 'seasoning', 'spice'
-        ]
-    },
-    '1215686354843': {
-        'name': 'Bakery',
-        'slug': 'bakery',
-        'priority': 1,
-        'keywords': [
-            'bread', 'roll', 'bun', 'cake', 'pastry', 'croissant', 'bagel',
-            'bakery', 'baked', 'loaf', 'sandwich', 'toast', 'muffin', 'scone'
-        ]
-    },
-    '1215135760614': {
-        'name': 'Drinks',
-        'slug': 'drinks',
-        'priority': 1,
-        'keywords': [
-            'water', 'juice', 'soft drink', 'tea', 'coffee', 'squash',
-            'drink', 'beverage', 'cola', 'lemonade', 'smoothie', 'energy drink'
-        ]
-    },
-    
-    # Household & Personal Care (Priority 2)
-    '1215135760665': {
-        'name': 'Laundry & Household',
-        'slug': 'laundry-household',
-        'priority': 2,
-        'keywords': [
-            'cleaning', 'cleaner', 'toilet', 'kitchen', 'bathroom', 'washing up',
-            'detergent', 'bleach', 'disinfectant', 'sponge', 'cloth', 'foil',
-            'cling film', 'bag', 'bin', 'tissue', 'paper', 'household', 'laundry'
-        ]
-    },
-    '1215135760648': {
-        'name': 'Toiletries & Beauty',
-        'slug': 'toiletries-beauty',
-        'priority': 2,
-        'keywords': [
-            'toothpaste', 'shampoo', 'soap', 'deodorant', 'moisturiser',
-            'makeup', 'skincare', 'hair', 'dental', 'beauty', 'cosmetic',
-            'toiletries', 'personal care', 'hygiene'
-        ]
-    },
-    '1215686353929': {
-        'name': 'Health & Wellness',
-        'slug': 'health-wellness',
-        'priority': 2,
-        'keywords': [
-            'vitamin', 'supplement', 'medicine', 'health', 'wellness',
-            'pharmacy', 'medical', 'first aid', 'pain relief'
-        ]
-    },
-    
-    # Specialty Categories (Priority 3)
-    '1215686356579': {
-        'name': 'Sweets, Treats & Snacks',
-        'slug': 'sweets-treats-snacks',
-        'priority': 3,
-        'keywords': [
-            'chocolate', 'sweet', 'candy', 'snack', 'crisp', 'nuts',
-            'treat', 'biscuit', 'cookie', 'confectionery'
-        ]
-    },
-    '1215135760631': {
-        'name': 'Baby, Toddler & Kids',
-        'slug': 'baby-toddler-kids',
-        'priority': 3,
-        'keywords': [
-            'baby', 'toddler', 'child', 'kids', 'infant', 'nappy',
-            'formula', 'baby food', 'children'
-        ]
-    },
-    '1215662103573': {
-        'name': 'Pet Food & Accessories',
-        'slug': 'pet-food-accessories',
-        'priority': 3,
-        'keywords': [
-            'pet', 'dog', 'cat', 'animal', 'pet food', 'dog food', 'cat food'
-        ]
-    },
-    '1215686351451': {
-        'name': 'World Food',
-        'slug': 'world-food',
-        'priority': 3,
-        'keywords': [
-            'world', 'international', 'ethnic', 'asian', 'indian',
-            'chinese', 'mexican', 'italian', 'foreign'
-        ]
-    },
-    '1215686355606': {
-        'name': 'Dietary & Lifestyle',
-        'slug': 'dietary-lifestyle',
-        'priority': 3,
-        'keywords': [
-            'organic', 'gluten free', 'vegan', 'vegetarian', 'healthy',
-            'diet', 'low fat', 'sugar free', 'free from'
-        ]
-    }
-}
-
-SELENIUM_CONFIG = {
-    'user_agent': (
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-        '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    ),
-    'default_timeout': 10,
-    'page_load_timeout': 30,
-    'implicit_wait': 5,
-    'window_size': '1920,1080',
-}
-
-SCRAPER_SETTINGS = {
-    'max_pages_per_category': 5,
-    'max_retries': 3,
-    'retry_delay': 2.0,
-    'request_delay': 1.0,
-    'category_delay': 2.0,
-}
-
-DEFAULT_CRAWL_SETTINGS = {
-    'max_categories': 10,
-    'category_priority': 2,
-    'max_products_per_category': 100,
-    'delay_between_requests': 2.0,
-    'use_selenium': True,
-    'headless': False,
-    'respect_robots_txt': True,
-    'user_agent': SELENIUM_CONFIG['user_agent']
-}
+class ErrorCategory(Enum):
+    """Categories for error classification."""
+    DRIVER_SETUP = "driver_setup"
+    NETWORK = "network"
+    PARSING = "parsing"
+    DATABASE = "database"
+    RATE_LIMIT = "rate_limit"
+    TIMEOUT = "timeout"
+    VALIDATION = "validation"
+    UNKNOWN = "unknown"
 
 
 # Custom exception classes
 class ScraperException(Exception):
     """Base exception class for scraper-related errors."""
     
-    def __init__(self, message: str, error_code: Optional[str] = None, context: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, error_code: Optional[str] = None, 
+                 context: Optional[Dict[str, Any]] = None, 
+                 category: ErrorCategory = ErrorCategory.UNKNOWN):
+        """
+        Initialize scraper exception.
+        
+        Args:
+            message: Error message
+            error_code: Optional error code for categorization
+            context: Optional context dictionary with additional info
+            category: Error category for classification
+        """
         super().__init__(message)
         self.message = message
         self.error_code = error_code
         self.context = context or {}
-        logger.error(f"ScraperException: {message}")
+        self.category = category
+        self.timestamp = datetime.now()
+        
+        # Log the error with structured data
+        logger.error(f"ScraperException [{error_code}]: {message}", extra={
+            'error_category': category.value,
+            'context': context,
+            'timestamp': self.timestamp.isoformat()
+        })
 
 
 class DriverSetupException(ScraperException):
     """Exception raised when WebDriver setup fails."""
     
     def __init__(self, message: str, driver_type: str = "Chrome", **kwargs):
+        """Initialize driver setup exception."""
         super().__init__(
             message=f"WebDriver setup failed for {driver_type}: {message}",
             error_code="DRIVER_SETUP_FAILED",
-            context={"driver_type": driver_type, **kwargs.get('context', {})}
+            context={"driver_type": driver_type, **kwargs.get('context', {})},
+            category=ErrorCategory.DRIVER_SETUP
         )
+
+
+class RateLimitException(ScraperException):
+    """Exception raised when rate limiting is detected."""
+    
+    def __init__(self, message: str = "Rate limit detected", **kwargs):
+        """Initialize rate limit exception."""
+        super().__init__(
+            message=message,
+            error_code="RATE_LIMIT_DETECTED",
+            context=kwargs.get('context', {}),
+            category=ErrorCategory.RATE_LIMIT
+        )
+
+
+@dataclass
+class PerformanceMetrics:
+    """Track performance metrics for operations."""
+    operation_name: str
+    start_time: datetime = field(default_factory=datetime.now)
+    end_time: Optional[datetime] = None
+    duration: Optional[float] = None
+    success: bool = False
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    def complete(self, success: bool = True):
+        """Mark operation as complete."""
+        self.end_time = datetime.now()
+        self.duration = (self.end_time - self.start_time).total_seconds()
+        self.success = success
+        
+        # Log performance metric
+        logger.info(f"Performance: {self.operation_name} took {self.duration:.2f}s", extra={
+            'metric_type': 'performance',
+            'operation': self.operation_name,
+            'duration': self.duration,
+            'success': success,
+            'metadata': self.metadata
+        })
 
 
 @dataclass
@@ -301,13 +166,102 @@ class ScrapingResult:
     """Data class to encapsulate scraping results."""
     products_found: int = 0
     products_saved: int = 0
+    products_updated: int = 0
     categories_processed: int = 0
-    errors: List[str] = None
-    duration: Optional[float] = None
+    pages_scraped: int = 0
+    errors: List[Dict[str, Any]] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    performance_metrics: List[PerformanceMetrics] = field(default_factory=list)
+    duration: Optional[timedelta] = None
+    start_time: datetime = field(default_factory=datetime.now)
+    end_time: Optional[datetime] = None
     
-    def __post_init__(self):
-        if self.errors is None:
-            self.errors = []
+    def add_error(self, error_type: str, message: str, 
+                  context: Dict[str, Any] = None, category: ErrorCategory = ErrorCategory.UNKNOWN):
+        """Add an error to the result."""
+        error_info = {
+            'type': error_type,
+            'message': message,
+            'category': category.value,
+            'context': context or {},
+            'timestamp': datetime.now().isoformat(),
+            'traceback': traceback.format_exc() if error_type == 'exception' else None
+        }
+        self.errors.append(error_info)
+        
+        # Also log to error file
+        with open(LOGS_DIR / "errors" / f"session_errors_{datetime.now().strftime('%Y%m%d')}.json", 'a') as f:
+            json.dump(error_info, f)
+            f.write('\n')
+    
+    def add_metric(self, metric: PerformanceMetrics):
+        """Add a performance metric."""
+        self.performance_metrics.append(metric)
+    
+    def finalize(self):
+        """Finalize the result with end time and duration."""
+        self.end_time = datetime.now()
+        self.duration = self.end_time - self.start_time
+        
+        # Calculate aggregated metrics
+        total_duration = self.duration.total_seconds()
+        products_per_minute = (self.products_found / (total_duration / 60)) if total_duration > 0 else 0
+        
+        # Log summary with structured data
+        summary = {
+            'duration_seconds': total_duration,
+            'products_found': self.products_found,
+            'products_saved': self.products_saved,
+            'products_updated': self.products_updated,
+            'categories_processed': self.categories_processed,
+            'pages_scraped': self.pages_scraped,
+            'error_count': len(self.errors),
+            'warning_count': len(self.warnings),
+            'success_rate': self.get_success_rate(),
+            'products_per_minute': products_per_minute,
+            'avg_page_time': self._get_avg_page_time()
+        }
+        
+        logger.info("Scraping session completed", extra={
+            'metric_type': 'session_summary',
+            'summary': summary
+        })
+        
+        # Save performance report
+        self._save_performance_report(summary)
+    
+    def get_success_rate(self) -> float:
+        """Calculate success rate."""
+        if self.products_found == 0:
+            return 0.0
+        return ((self.products_saved + self.products_updated) / self.products_found) * 100
+    
+    def _get_avg_page_time(self) -> float:
+        """Calculate average time per page."""
+        page_metrics = [m for m in self.performance_metrics if m.operation_name == 'extract_products']
+        if not page_metrics:
+            return 0.0
+        return sum(m.duration for m in page_metrics if m.duration) / len(page_metrics)
+    
+    def _save_performance_report(self, summary: Dict[str, Any]):
+        """Save detailed performance report."""
+        report = {
+            'timestamp': datetime.now().isoformat(),
+            'summary': summary,
+            'errors': self.errors,
+            'performance_metrics': [
+                {
+                    'operation': m.operation_name,
+                    'duration': m.duration,
+                    'success': m.success,
+                    'metadata': m.metadata
+                } for m in self.performance_metrics if m.duration
+            ]
+        }
+        
+        report_file = LOGS_DIR / "performance" / f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(report_file, 'w') as f:
+            json.dump(report, f, indent=2, default=str)
 
 
 @dataclass
@@ -316,7 +270,8 @@ class ProductData:
     name: str
     price: float
     was_price: Optional[float] = None
-    unit: str = 'each'
+    unit_price: Optional[str] = None
+    quantity: Optional[str] = None
     description: str = ''
     image_url: str = ''
     product_url: str = ''
@@ -324,1170 +279,65 @@ class ProductData:
     in_stock: bool = True
     special_offer: str = ''
     rating: Optional[float] = None
-    review_count: str = ''
-    price_per_unit: str = ''
+    review_count: int = 0
+    brand: str = ''
+    category_breadcrumb: List[str] = field(default_factory=list)
 
 
-class WebDriverManager:
-    """Manages WebDriver setup and configuration."""
+def retry_on_exception(max_attempts: int = 3, delay: float = 1.0, 
+                      exceptions: tuple = (Exception,), category: ErrorCategory = ErrorCategory.UNKNOWN):
+    """
+    Decorator for retrying functions on exception.
     
-    def __init__(self, headless: bool = False):
-        self.headless = headless
-        self.driver = None
-        
-    def setup_driver(self) -> webdriver.Chrome:
-        """Set up Chrome WebDriver with improved Windows compatibility."""
-        try:
-            logger.info("Setting up Chrome WebDriver...")
+    Args:
+        max_attempts: Maximum number of retry attempts
+        delay: Initial delay between retries
+        exceptions: Tuple of exceptions to catch
+        category: Error category for logging
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
             
-            chrome_options = self._get_chrome_options()
-            
-            # Try multiple approaches to setup the driver
-            setup_methods = [
-                self._setup_with_chrome_driver_manager,
-                self._setup_with_system_chrome,
-                self._setup_with_manual_paths
-            ]
-            
-            for setup_method in setup_methods:
+            for attempt in range(max_attempts):
                 try:
-                    self.driver = setup_method(chrome_options)
-                    if self.driver:
-                        self._configure_driver()
-                        logger.info("✅ WebDriver setup successful")
-                        return self.driver
-                except Exception as e:
-                    logger.warning(f"Setup method failed: {e}")
-                    continue
-            
-            raise DriverSetupException("All WebDriver setup methods failed")
-            
-        except Exception as e:
-            logger.error(f"Failed to setup WebDriver: {e}")
-            raise DriverSetupException(f"WebDriver setup failed: {e}")
-    
-    def _get_chrome_options(self) -> Options:
-        """Get Chrome options configuration."""
-        chrome_options = Options()
-        
-        if self.headless:
-            chrome_options.add_argument("--headless")
-        
-        # Essential options for web scraping
-        options_list = [
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-blink-features=AutomationControlled",
-            "--disable-extensions",
-            "--disable-gpu",
-            "--disable-web-security",
-            "--allow-running-insecure-content",
-            "--window-size=1920,1080",
-            f"--user-agent={SELENIUM_CONFIG['user_agent']}"
-        ]
-        
-        for option in options_list:
-            chrome_options.add_argument(option)
-        
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        
-        return chrome_options
-    
-    def _setup_with_chrome_driver_manager(self, chrome_options: Options) -> webdriver.Chrome:
-        """Setup driver using ChromeDriverManager auto-download."""
-        logger.info("Attempting ChromeDriverManager auto-download...")
-        service = Service(ChromeDriverManager().install())
-        return webdriver.Chrome(service=service, options=chrome_options)
-    
-    def _setup_with_system_chrome(self, chrome_options: Options) -> webdriver.Chrome:
-        """Setup driver using system Chrome installation."""
-        logger.info("Attempting system Chrome setup...")
-        return webdriver.Chrome(options=chrome_options)
-    
-    def _setup_with_manual_paths(self, chrome_options: Options) -> webdriver.Chrome:
-        """Setup driver using manual chromedriver paths."""
-        import os
-        
-        possible_paths = [
-            r"C:\Program Files\Google\Chrome\Application\chromedriver.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chromedriver.exe",
-            r"C:\chromedriver\chromedriver.exe",
-            "./chromedriver.exe",
-            "chromedriver.exe"
-        ]
-        
-        for path in possible_paths:
-            if os.path.exists(path):
-                logger.info(f"Trying manual path: {path}")
-                service = Service(path)
-                return webdriver.Chrome(service=service, options=chrome_options)
-        
-        raise Exception("No valid chromedriver path found")
-    
-    def _configure_driver(self):
-        """Configure driver after setup."""
-        # Set up WebDriverWait
-        self.wait = WebDriverWait(self.driver, 10)
-        
-        # Remove navigator.webdriver flag
-        self.driver.execute_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
-        
-        # Test the driver
-        self.driver.get("about:blank")
-        logger.info("WebDriver test successful")
-    
-    def cleanup(self):
-        """Clean up WebDriver resources."""
-        if self.driver:
-            try:
-                self.driver.quit()
-                logger.info("WebDriver cleanup complete")
-            except Exception as e:
-                logger.error(f"Error during WebDriver cleanup: {e}")
-
-
-class PopupHandler:
-    """Handles cookie banners and other popups on ASDA website."""
-    
-    def __init__(self, driver: webdriver.Chrome):
-        self.driver = driver
-    
-    def handle_popups(self) -> int:
-        """Handle cookie banners and other popups with enhanced detection."""
-        try:
-            logger.info("🍪 Checking for popups and cookie banners")
-            time.sleep(2)  # Wait for popups to appear
-            
-            popup_selectors = self._get_popup_selectors()
-            popups_handled = 0
-            
-            for selector in popup_selectors:
-                try:
-                    elements = self._find_elements_by_selector(selector)
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    last_exception = e
                     
-                    for element in elements:
-                        if self._is_element_interactable(element):
-                            if self._click_element(element):
-                                logger.info(f"✅ Clicked popup with selector: {selector}")
-                                popups_handled += 1
-                                time.sleep(1)
-                                break
-                    
-                    if popups_handled >= 3:  # Don't handle too many popups
-                        break
-                        
-                except Exception as e:
-                    logger.debug(f"Popup selector {selector} failed: {e}")
-                    continue
-            
-            if popups_handled > 0:
-                logger.info(f"🎯 Successfully handled {popups_handled} popups")
-            else:
-                logger.info("ℹ️ No popups found to handle")
-            
-            return popups_handled
-                
-        except Exception as e:
-            logger.warning(f"⚠️ Error handling popups: {e}")
-            return 0
-    
-    def _get_popup_selectors(self) -> List[str]:
-        """Get list of popup selectors."""
-        return [
-            "button[id*='accept']",
-            "button[class*='accept']", 
-            "button[data-testid*='accept']",
-            "#accept-cookies",
-            ".cookie-accept",
-            "button[aria-label*='close']",
-            "button[aria-label*='Close']",
-            ".modal-close",
-            ".popup-close",
-            "[data-testid*='close']",
-            ".notification-banner button",
-            ".banner-close",
-            ".consent-banner button"
-        ]
-    
-    def _find_elements_by_selector(self, selector: str) -> List:
-        """Find elements by CSS selector or XPath."""
-        if ':contains(' in selector:
-            text = selector.split("'")[1]
-            xpath = f"//button[contains(text(), '{text}')]"
-            return self.driver.find_elements(By.XPATH, xpath)
-        else:
-            return self.driver.find_elements(By.CSS_SELECTOR, selector)
-    
-    def _is_element_interactable(self, element) -> bool:
-        """Check if element is displayable and enabled."""
-        try:
-            return element.is_displayed() and element.is_enabled()
-        except:
-            return False
-    
-    def _click_element(self, element) -> bool:
-        """Attempt to click element with fallback methods."""
-        try:
-            element.click()
-            return True
-        except:
-            try:
-                self.driver.execute_script("arguments[0].click();", element)
-                return True
-            except:
-                return False
-
-
-class CategoryManager:
-    """Manages ASDA category discovery and validation."""
-    
-    def __init__(self, driver: webdriver.Chrome, session: CrawlSession):
-        self.driver = driver
-        self.session = session
-        self._category_cache = {}
-    
-    def discover_categories(self) -> bool:
-        """Create categories using ASDA's actual category structure with real codes."""
-        try:
-            logger.info("🏪 Setting up ASDA categories using real category structure")
-            
-            max_categories = self.session.crawl_settings.get('max_categories', 10)
-            include_priority = self.session.crawl_settings.get('category_priority', 2)
-            
-            categories_created = 0
-            
-            for url_code, cat_info in ASDA_CATEGORY_MAPPINGS.items():
-                if cat_info['priority'] > include_priority:
-                    continue
-                    
-                if categories_created >= max_categories:
-                    break
-                
-                if self._create_or_update_category(url_code, cat_info):
-                    categories_created += 1
-            
-            self._deactivate_promotional_categories()
-            
-            active_categories = AsdaCategory.objects.filter(is_active=True).count()
-            logger.info(f"🏁 Category setup complete. Active categories: {active_categories}")
-            
-            return active_categories > 0
-            
-        except Exception as e:
-            logger.error(f"❌ Critical error in category discovery: {e}")
-            return False
-    
-    def _create_or_update_category(self, url_code: str, cat_info: Dict) -> bool:
-        """Create or update a single category."""
-        try:
-            test_url = f"https://groceries.asda.com/cat/{cat_info['slug']}/{url_code}"
-            logger.info(f"🧪 Testing category: {cat_info['name']} → {test_url}")
-            
-            self.driver.get(test_url)
-            time.sleep(2)
-            
-            if self._is_valid_category_page():
-                category, created = AsdaCategory.objects.get_or_create(
-                    url_code=url_code,
-                    defaults={
-                        'name': cat_info['name'],
-                        'is_active': True
-                    }
-                )
-                
-                if category.name != cat_info['name']:
-                    category.name = cat_info['name']
-                    category.save()
-                
-                action = "Created" if created else "Updated"
-                logger.info(f"✅ {action} category: {category.name}")
-                
-                return True
-            else:
-                logger.warning(f"❌ Invalid category URL: {cat_info['name']}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Error processing category {cat_info['name']}: {e}")
-            return False
-    
-    def _is_valid_category_page(self) -> bool:
-        """Check if current page is a valid category page."""
-        page_title = self.driver.title.lower()
-        current_url = self.driver.current_url
-        
-        return ('404' not in page_title and 
-                'error' not in page_title and 
-                'not found' not in page_title and
-                'groceries.asda.com' in current_url)
-    
-    def _deactivate_promotional_categories(self):
-        """Deactivate old/promotional categories."""
-        promotional_codes = ['rollback', 'summer', 'events-inspiration']
-        for promo in promotional_codes:
-            AsdaCategory.objects.filter(
-                url_code__icontains=promo
-            ).update(is_active=False)
-            logger.info(f"🚫 Deactivated promotional category: {promo}")
-
-
-class ProductExtractor:
-    """Extracts product data from ASDA category pages."""
-    
-    def __init__(self, driver: webdriver.Chrome, session: CrawlSession):
-        self.driver = driver
-        self.session = session
-        self.base_url = "https://groceries.asda.com"
-    
-    def extract_products_from_category(self, category: AsdaCategory) -> int:
-        """Extract products from a specific category."""
-        try:
-            category_url = self._build_category_url(category)
-            if not category_url:
-                return 0
-            
-            logger.info(f"🛒 Crawling category: {category.name}")
-            logger.info(f"🔗 URL: {category_url}")
-            
-            self.driver.get(category_url)
-            time.sleep(3)
-            
-            popup_handler = PopupHandler(self.driver)
-            popup_handler.handle_popups()
-            
-            return self._extract_products_from_current_page(category)
-            
-        except Exception as e:
-            logger.error(f"❌ Error crawling category {category.name}: {e}")
-            return 0
-    
-    def _build_category_url(self, category: AsdaCategory) -> Optional[str]:
-        """Build category URL from category object."""
-        for url_code, cat_info in ASDA_CATEGORY_MAPPINGS.items():
-            if url_code == category.url_code:
-                return f"https://groceries.asda.com/cat/{cat_info['slug']}/{category.url_code}"
-        
-        logger.warning(f"⚠️ No URL slug found for category {category.name} ({category.url_code})")
-        return None
-    
-    def _extract_products_from_current_page(self, category: AsdaCategory) -> int:
-        """Extract products from the current page with pagination support."""
-        try:
-            products_found = 0
-            max_products = self.session.crawl_settings.get('max_products_per_category', 100)
-            
-            logger.info(f"🔍 Extracting products from {category.name} page")
-            
-            if not self._wait_for_products_to_load():
-                logger.warning(f"⏰ Timeout waiting for products to load on {category.name}")
-                return 0
-            
-            page_num = 1
-            max_pages = SCRAPER_SETTINGS.get('max_pages_per_category', 5)
-            
-            while page_num <= max_pages and products_found < max_products:
-                logger.info(f"📄 Processing page {page_num} of {category.name}")
-                
-                page_products = self._extract_products_from_page(category)
-                products_found += page_products
-                
-                logger.info(f"📊 Page {page_num}: {page_products} products extracted")
-                
-                if page_products > 0 and products_found < max_products:
-                    if not self._navigate_to_next_page():
-                        logger.info(f"🔚 No more pages available for {category.name}")
-                        break
-                    page_num += 1
-                    time.sleep(2)
-                else:
-                    break
-            
-            logger.info(f"🎯 Total products extracted from {category.name}: {products_found}")
-            return products_found
-            
-        except Exception as e:
-            logger.error(f"❌ Error extracting products from {category.name}: {e}")
-            return 0
-
-    def _extract_products_from_current_page_by_url(self, url=None):
-        """
-        Extract products from the current page without requiring a category object.
-        This method is used by the link crawler when processing discovered links.
-        
-        Args:
-            url: Optional URL (for logging purposes, doesn't navigate)
-            
-        Returns:
-            int: Number of products found and saved
-        """
-        logger.info("="*80)
-        logger.info("🛒 PRODUCT EXTRACTION STARTED (BY URL)")
-        if url:
-            logger.info(f"📍 Called for URL: {url}")
-        logger.info(f"📍 Current page URL: {self.driver.current_url}")
-        logger.info("="*80)
-        
-        products_found = 0
-        products_saved = 0
-        products_skipped = 0
-        products_errors = 0
-        
-        try:
-            # Wait for products to load
-            logger.info("⏳ Waiting for product elements to load...")
-            
-            # Try multiple selectors for products
-            product_selectors = [
-                "div.co-product",
-                "div[class*='co-product']",
-                "article[class*='product-tile']",
-                "div[class*='product-item']",
-                "div[class*='productListing']",
-                "li[class*='product']",
-                "[data-testid*='product']"
-            ]
-            
-            product_elements = []
-            for selector in product_selectors:
-                try:
-                    # Use find_elements to avoid exceptions
-                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    if elements:
-                        logger.info(f"✅ Found {len(elements)} products using selector: {selector}")
-                        product_elements = elements
-                        break
+                    if attempt < max_attempts - 1:
+                        wait_time = delay * (2 ** attempt)  # Exponential backoff
+                        logger.warning(
+                            f"Attempt {attempt + 1}/{max_attempts} failed for {func.__name__}: {str(e)}. "
+                            f"Retrying in {wait_time}s..."
+                        )
+                        time.sleep(wait_time)
                     else:
-                        logger.debug(f"  No products with selector: {selector}")
-                except Exception as e:
-                    logger.debug(f"  Error with selector {selector}: {str(e)}")
-                    continue
+                        logger.error(
+                            f"All {max_attempts} attempts failed for {func.__name__}",
+                            extra={'error_category': category.value}
+                        )
             
-            if not product_elements:
-                logger.warning("⚠️ No product elements found on page")
-                # Log page source snippet to help debug
-                try:
-                    page_source = self.driver.page_source[:1000]
-                    logger.debug(f"Page source snippet: {page_source}")
-                except:
-                    pass
-                return 0
-            
-            logger.info(f"📦 Found {len(product_elements)} product elements to process")
-            
-            # Try to determine category from URL or page content
-            category = self._infer_category_from_page()
-            
-            # Process each product
-            for idx, product_element in enumerate(product_elements):
-                try:
-                    logger.info(f"\n{'─'*60}")
-                    logger.info(f"🔍 Processing product {idx + 1}/{len(product_elements)}")
-                    
-                    # Extract product details using BeautifulSoup for better parsing
-                    product_html = product_element.get_attribute('outerHTML')
-                    soup = BeautifulSoup(product_html, 'html.parser')
-                    
-                    product_data = {}
-                    
-                    # Product Name - try multiple selectors
-                    name = None
-                    name_selectors = [
-                        "h3 a", "h3", "a.co-product__anchor", 
-                        "[class*='title']", "[class*='name']",
-                        "a[href*='/product/']"
-                    ]
-                    for selector in name_selectors:
-                        name_elem = soup.select_one(selector)
-                        if name_elem and name_elem.get_text(strip=True):
-                            name = name_elem.get_text(strip=True)
-                            break
-                    
-                    if not name:
-                        logger.warning(f"⚠️ Could not find name for product {idx + 1}")
-                        products_skipped += 1
-                        continue
-                    
-                    product_data['name'] = name
-                    logger.info(f"📝 Name: {name}")
-                    
-                    # Price - try multiple selectors
-                    price = None
-                    price_selectors = [
-                        "strong.co-product__price",
-                        ".price strong",
-                        "[class*='price'] strong",
-                        "[class*='price']",
-                        "[data-auto-id*='price']"
-                    ]
-                    
-                    for selector in price_selectors:
-                        price_elem = soup.select_one(selector)
-                        if price_elem:
-                            price_text = price_elem.get_text(strip=True)
-                            price_match = re.search(r'£?(\d+\.?\d*)', price_text)
-                            if price_match:
-                                price = float(price_match.group(1))
-                                logger.info(f"💰 Price: £{price}")
-                                break
-                    
-                    if price is None:
-                        logger.warning(f"⚠️ No price found for: {name}")
-                        products_skipped += 1
-                        continue
-                    
-                    product_data['price'] = price
-                    
-                    # Product URL
-                    url_elem = soup.select_one("a[href*='/product/']")
-                    if url_elem:
-                        product_url = url_elem.get('href', '')
-                        if product_url:
-                            product_data['url'] = urljoin(self.base_url, product_url)
-                            logger.info(f"🔗 URL: {product_data['url'][:80]}...")
-                    
-                    # ASDA ID from URL
-                    if 'url' in product_data:
-                        asda_id_match = re.search(r'/(\d+)$', product_data['url'])
-                        if asda_id_match:
-                            product_data['asda_id'] = asda_id_match.group(1)
-                        else:
-                            # Generate a unique ID
-                            product_data['asda_id'] = f"gen_{hash(name) % 1000000}"
-                    
-                    # Image URL
-                    img_elem = soup.select_one("img")
-                    if img_elem:
-                        img_url = img_elem.get('src', '')
-                        if img_url:
-                            product_data['image_url'] = img_url
-                            logger.debug(f"[IMAGE] Image: {img_url[:80]}...")
-                    
-                    # Unit/Size
-                    unit_selectors = [
-                        "span.co-product__volume",
-                        "[class*='weight']",
-                        "[class*='size']",
-                        "[class*='unit']"
-                    ]
-                    
-                    for selector in unit_selectors:
-                        unit_elem = soup.select_one(selector)
-                        if unit_elem:
-                            unit_text = unit_elem.get_text(strip=True)
-                            if unit_text:
-                                product_data['unit'] = unit_text
-                                logger.info(f"[SIZE] Unit/Size: {unit_text}")
-                                break
-                    
-                    # Was price (for offers)
-                    was_price_elem = soup.select_one("span.co-product__was-price, [class*='was-price']")
-                    if was_price_elem:
-                        was_price_match = re.search(r'£?(\d+\.?\d*)', was_price_elem.get_text())
-                        if was_price_match:
-                            product_data['was_price'] = float(was_price_match.group(1))
-                            logger.info(f"🏷️ Was price: £{product_data['was_price']}")
-                    
-                    # Save the product
-                    if self._save_product_from_data(product_data, category):
-                        products_saved += 1
-                        logger.info(f"[OK] PRODUCT {idx + 1} SAVED SUCCESSFULLY")
-                    else:
-                        products_skipped += 1
-                        logger.warning(f"⚠️ Failed to save product {idx + 1}")
-                    
-                    products_found += 1
-                    
-                except Exception as e:
-                    products_errors += 1
-                    logger.error(f"❌ Error processing product {idx + 1}: {str(e)}")
-                    import traceback
-                    logger.debug(f"Traceback: {traceback.format_exc()}")
-            
-            # Summary
-            logger.info(f"\n{'='*80}")
-            logger.info(f"📊 PRODUCT EXTRACTION SUMMARY:")
-            logger.info(f"  Total product elements: {len(product_elements)}")
-            logger.info(f"  Products found: {products_found}")
-            logger.info(f"  Products saved: {products_saved}")
-            logger.info(f"  Products skipped: {products_skipped}")
-            logger.info(f"  Extraction errors: {products_errors}")
-            if len(product_elements) > 0:
-                logger.info(f"  Success rate: {(products_saved/len(product_elements)*100):.1f}%")
-            logger.info(f"{'='*80}\n")
-            
-            return products_saved
-            
-        except Exception as e:
-            logger.error(f"❌ CRITICAL ERROR in product extraction: {str(e)}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return 0
-
-    def _infer_category_from_page(self):
-        """
-        Try to infer the category from the current page URL or content.
+            raise last_exception
         
-        Returns:
-            AsdaCategory or None
-        """
-        try:
-            current_url = self.driver.current_url
-            
-            # Try to extract category code from URL
-            category_code_match = re.search(r'(\d{13})', current_url)
-            if category_code_match:
-                category_code = category_code_match.group(1)
-                
-                # Try to find existing category
-                try:
-                    category = AsdaCategory.objects.get(url_code=category_code)
-                    logger.info(f"📁 Found category from URL: {category.name}")
-                    return category
-                except AsdaCategory.DoesNotExist:
-                    # Create a basic category
-                    category_name = "Unknown Category"
-                    
-                    # Try to get category name from page
-                    try:
-                        breadcrumb = self.driver.find_element(By.CSS_SELECTOR, "[class*='breadcrumb'] span:last-child")
-                        category_name = breadcrumb.text.strip()
-                    except:
-                        try:
-                            title = self.driver.title
-                            if " | " in title:
-                                category_name = title.split(" | ")[0].strip()
-                        except:
-                            pass
-                    
-                    category = AsdaCategory.objects.create(
-                        url_code=category_code,
-                        name=category_name,
-                        is_active=True
-                    )
-                    logger.info(f"📁 Created new category: {category_name}")
-                    return category
-            
-            # If no category code in URL, use a default category
-            default_category, created = AsdaCategory.objects.get_or_create(
-                url_code='0000000000000',
-                defaults={'name': 'Uncategorized', 'is_active': True}
-            )
-            return default_category
-            
-        except Exception as e:
-            logger.error(f"Error inferring category: {str(e)}")
-            return None
+        return wrapper
+    return decorator
 
-    def _save_product_from_data(self, product_data, category):
-        """
-        Save product from extracted data dictionary.
-        
-        Args:
-            product_data: Dictionary with product information
-            category: AsdaCategory object (can be None)
-            
-        Returns:
-            bool: True if saved successfully
-        """
-        try:
-            if not product_data.get('name') or product_data.get('price') is None:
-                logger.warning("Missing required product data (name or price)")
-                return False
-            
-            # Create or update the product
-            asda_id = product_data.get('asda_id', f"gen_{hash(product_data['name']) % 1000000}")
-            
-            product, created = AsdaProduct.objects.get_or_create(
-                asda_id=asda_id,
-                defaults={
-                    'name': product_data['name'],
-                    'price': product_data['price'],
-                    'was_price': product_data.get('was_price'),
-                    'unit': product_data.get('unit', 'each'),
-                    'description': product_data.get('description', product_data['name']),
-                    'image_url': product_data.get('image_url', ''),
-                    'product_url': product_data.get('url', ''),
-                    'category': category,
-                    'in_stock': True,
-                    'special_offer': '',
-                }
-            )
-            
-            if not created:
-                # Update existing product
-                product.name = product_data['name']
-                product.price = product_data['price']
-                if 'was_price' in product_data:
-                    product.was_price = product_data.get('was_price')
-                if 'unit' in product_data:
-                    product.unit = product_data['unit']
-                if 'image_url' in product_data:
-                    product.image_url = product_data['image_url']
-                if 'url' in product_data:
-                    product.product_url = product_data['url']
-                if category:
-                    product.category = category
-                product.save()
-                
-                logger.info(f"[UPDATE] Updated existing product: {product.name}")
-            else:
-                logger.info(f"[NEW] Created new product: {product.name}")
-            
-            # Update session statistics
-            if created:
-                self.session.products_found += 1
-            else:
-                self.session.products_updated += 1
-            self.session.save()
-            
-            # Update category product count if applicable
-            if category:
-                category.product_count = category.products.count()
-                category.save()
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error saving product: {str(e)}")
-            return False
-    
-    def _wait_for_products_to_load(self, timeout: int = 10) -> bool:
-        """Wait for products to load on the page."""
-        try:
-            WebDriverWait(self.driver, timeout).until(
-                EC.presence_of_element_located((
-                    By.CSS_SELECTOR, 
-                    'div.co-product, div[class*="co-product"], div[class*="product-tile"]'
-                ))
-            )
-            return True
-        except TimeoutException:
-            return False
-    
-    def _extract_products_from_page(self, category: AsdaCategory) -> int:
-        """Extract products from the current page."""
-        try:
-            page_source = self.driver.page_source
-            soup = BeautifulSoup(page_source, 'html.parser')
-            
-            product_containers = self._find_product_containers(soup)
-            
-            if not product_containers:
-                logger.warning(f"❌ No product containers found on {category.name}")
-                return 0
-            
-            logger.info(f"🛍️ Found {len(product_containers)} product containers")
-            
-            products_saved = 0
-            for container in product_containers:
-                try:
-                    product_data = self._extract_product_data(container, category)
-                    
-                    if product_data:
-                        if self._save_product_data(product_data, category):
-                            products_saved += 1
-                            logger.debug(f"✅ Saved product: {product_data.name[:50]}...")
-                
-                except Exception as e:
-                    logger.error(f"❌ Error extracting product data: {e}")
-                    continue
-            
-            return products_saved
-            
-        except Exception as e:
-            logger.error(f"❌ Error extracting products from page: {e}")
-            return 0
-    
-    def _find_product_containers(self, soup: BeautifulSoup) -> List:
-        """Find product containers using multiple selectors."""
-        selectors = [
-            'div.co-product',
-            'div[class*="co-product"]',
-            'div[class*="product-tile"]',
-            'div[class*="product-item"]',
-            'article[class*="product"]',
-            '[data-testid*="product"]'
-        ]
-        
-        for selector in selectors:
-            containers = soup.select(selector)
-            if containers:
-                logger.info(f"Found {len(containers)} products using selector: {selector}")
-                return containers
-        
-        logger.warning("No product containers found with any selector")
-        return []
-    
-    def _extract_product_data(self, container, category: AsdaCategory) -> Optional[ProductData]:
-        """Extract product data from container."""
-        try:
-            title_link = container.select_one('a.co-product__anchor, a[href*="/product/"]')
-            if not title_link:
-                return None
-            
-            name = title_link.get_text(strip=True)
-            product_url = urljoin(self.base_url, title_link.get('href', ''))
-            
-            price_element = container.select_one('strong.co-product__price, .price strong')
-            if not price_element:
-                return None
-            
-            price_text = price_element.get_text(strip=True)
-            price_match = re.search(r'£(\d+\.?\d*)', price_text)
-            if not price_match:
-                return None
-            
-            price = float(price_match.group(1))
-            
-            asda_id_match = re.search(r'/(\d+)$', product_url)
-            asda_id = (asda_id_match.group(1) if asda_id_match 
-                      else f"{category.url_code}_{hash(name) % 100000}")
-            
-            was_price = self._extract_was_price(container)
-            unit = self._extract_unit(container)
-            image_url = self._extract_image_url(container)
-            
-            return ProductData(
-                name=name,
-                price=price,
-                was_price=was_price,
-                unit=unit,
-                description=name,
-                image_url=image_url,
-                product_url=product_url,
-                asda_id=asda_id,
-                in_stock=True,
-                special_offer='',
-                rating=None,
-                review_count='',
-                price_per_unit='',
-            )
-            
-        except Exception as e:
-            logger.error(f"Error extracting product data: {e}")
-            return None
-    
-    def _extract_was_price(self, container) -> Optional[float]:
-        """Extract was price if product is on sale."""
-        was_price_element = container.select_one('span.co-product__was-price')
-        if was_price_element:
-            was_price_match = re.search(r'£(\d+\.?\d*)', was_price_element.get_text())
-            if was_price_match:
-                return float(was_price_match.group(1))
-        return None
-    
-    def _extract_unit(self, container) -> str:
-        """Extract unit information."""
-        unit_element = container.select_one('span.co-product__volume')
-        return unit_element.get_text(strip=True) if unit_element else 'each'
-    
-    def _extract_image_url(self, container) -> str:
-        """Extract product image URL."""
-        img_element = container.select_one('img.asda-img')
-        return img_element.get('src', '') if img_element else ''
-    
-    def _save_product_data(self, product_data: ProductData, category: AsdaCategory) -> bool:
-        """Save product data to database."""
-        try:
-            product, created = AsdaProduct.objects.get_or_create(
-                asda_id=product_data.asda_id,
-                defaults={
-                    'name': product_data.name,
-                    'price': product_data.price,
-                    'was_price': product_data.was_price,
-                    'unit': product_data.unit,
-                    'description': product_data.description,
-                    'image_url': product_data.image_url,
-                    'product_url': product_data.product_url,
-                    'asda_id': product_data.asda_id,
-                    'category': category,
-                    'in_stock': product_data.in_stock,
-                    'special_offer': product_data.special_offer,
-                    'rating': product_data.rating,
-                    'review_count': product_data.review_count,
-                    'price_per_unit': product_data.price_per_unit,
-                }
-            )
-            
-            if created:
-                self.session.products_found += 1
-                logger.info(f"✅ Created: {product.name} in {category.name}")
-            else:
-                for field in ['name', 'price', 'was_price', 'unit', 'description', 
-                             'image_url', 'product_url', 'in_stock', 'special_offer',
-                             'rating', 'review_count', 'price_per_unit']:
-                    value = getattr(product_data, field)
-                    if value is not None:
-                        setattr(product, field, value)
-                product.category = category
-                product.save()
-                self.session.products_updated += 1
-                logger.info(f"📝 Updated: {product.name} in {category.name}")
-            
-            self.session.save()
-            
-            category.product_count = category.products.count()
-            category.save()
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Error saving product {product_data.name}: {e}")
-            return False
-    
-    def _navigate_to_next_page(self) -> bool:
-        """Navigate to the next page of products if pagination exists."""
-        try:
-            next_selectors = [
-                'a[aria-label="Next"]',
-                'a.pagination-next',
-                'a[class*="next"]',
-                'button[aria-label="Next"]',
-                'button.pagination-next',
-                'button[class*="next"]'
-            ]
-            
-            for selector in next_selectors:
-                try:
-                    next_button = self.driver.find_element(By.CSS_SELECTOR, selector)
-                    
-                    if next_button.is_enabled() and next_button.is_displayed():
-                        self.driver.execute_script("arguments[0].scrollIntoView(true);", next_button)
-                        time.sleep(1)
-                        next_button.click()
-                        time.sleep(3)
-                        logger.debug(f"✅ Navigated to next page using selector: {selector}")
-                        return True
-                        
-                except (NoSuchElementException, Exception):
-                    continue
-            
-            logger.debug("🔚 No next page button found or enabled")
-            return False
-            
-        except Exception as e:
-            logger.error(f"❌ Error navigating to next page: {e}")
-            return False
-
-    
-
-
-class SeleniumAsdaScraper:
-    """Production-ready Selenium-based ASDA scraper."""
-    
-    def __init__(self, crawl_session: CrawlSession, headless: bool = False):
-        self.session = crawl_session
-        self.headless = headless
-        self.driver_manager = None
-        self.driver = None
-        self.base_url = "https://groceries.asda.com"
-        
-        logger.info(f"Selenium ASDA Scraper initialized for session {self.session.pk}")
-        
-        try:
-            self.driver_manager = WebDriverManager(headless=headless)
-            self.driver = self.driver_manager.setup_driver()
-        except DriverSetupException as e:
-            logger.error(f"Failed to initialize scraper: {e}")
-            raise
-    
-    def start_crawl(self) -> ScrapingResult:
-        """Start the crawling process using Selenium."""
-        start_time = time.time()
-        result = ScrapingResult()
-        
-        try:
-            logger.info(f"Starting Selenium crawl session {self.session.pk}")
-            
-            self.session.status = 'RUNNING'
-            self.session.save()
-            
-            if self._should_discover_categories():
-                category_manager = CategoryManager(self.driver, self.session)
-                if not category_manager.discover_categories():
-                    raise ScraperException("Category discovery failed")
-            
-            result = self._crawl_all_products()
-            
-            self.session.mark_completed()
-            result.duration = time.time() - start_time
-            
-            logger.info(f"🎉 Crawl completed successfully in {result.duration:.2f} seconds")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error in Selenium crawl session {self.session.pk}: {e}")
-            self.session.mark_failed(str(e))
-            result.errors.append(str(e))
-            result.duration = time.time() - start_time
-            return result
-        finally:
-            self._cleanup()
-    
-    def _should_discover_categories(self) -> bool:
-        """Determine if category discovery is needed."""
-        active_categories = AsdaCategory.objects.filter(is_active=True).count()
-        return active_categories == 0
-    
-    def _crawl_all_products(self) -> ScrapingResult:
-        """Crawl products for all active categories with intelligent delays."""
-        result = ScrapingResult()
-        
-        try:
-            active_categories = AsdaCategory.objects.filter(is_active=True)
-            total_categories = active_categories.count()
-            
-            logger.info(f"Crawling products for {total_categories} categories")
-            
-            # Initialize components
-            product_extractor = ProductExtractor(self.driver, self.session)
-            from .asda_link_crawler import AsdaLinkCrawler
-            link_crawler = AsdaLinkCrawler(self)
-            link_crawler.scraper = product_extractor
-            
-            # Initialize delay manager
-            delay_manager = DelayManager()
-            
-            logger.info("="*80)
-            logger.info("LINK CRAWLER INITIALIZED - Will discover and follow subcategory links")
-            logger.info("DELAY STRATEGY: 60 seconds between main categories")
-            logger.info("="*80)
-            
-            for i, category in enumerate(active_categories, 1):
-                try:
-                    logger.info(f"\n{'='*80}")
-                    logger.info(f"PROCESSING MAIN CATEGORY {i}/{total_categories}: {category.name}")
-                    logger.info(f"{'='*80}")
-                    
-                    self.session.categories_crawled = i
-                    self.session.save()
-                    
-                    # Build and navigate to category URL
-                    category_url = product_extractor._build_category_url(category)
-                    if not category_url:
-                        logger.warning(f"Skipping {category.name} - no URL mapping")
-                        continue
-                    
-                    logger.info(f"Navigating to category: {category_url}")
-                    self.driver.get(category_url)
-                    
-                    # Check for rate limiting
-                    if delay_manager.check_rate_limit(self.driver.page_source):
-                        logger.warning("Rate limit detected - applying extended delay")
-                    
-                    # Wait after navigation
-                    delay_manager.wait('between_requests')
-                    
-                    # Handle popups
-                    popup_handler = PopupHandler(self.driver)
-                    popup_handler.handle_popups()
-                    delay_manager.wait('after_popup_handling')
-                    
-                    # Extract products from main category page
-                    logger.info(f"Extracting products from main category page...")
-                    main_page_products = product_extractor._extract_products_from_page(category)
-                    result.products_found += main_page_products
-                    logger.info(f"Found {main_page_products} products on main category page")
-                    
-                    # Delay after extraction
-                    delay_manager.wait('after_product_extraction')
-                    
-                    # Discover links on this category page
-                    logger.info(f"Discovering subcategory links...")
-                    discovered_links = link_crawler.discover_page_links(category_url)
-                    
-                    # Process subcategory links with delays
-                    subcategory_links = discovered_links.get('subcategories', [])
-                    if subcategory_links:
-                        logger.info(f"Found {len(subcategory_links)} subcategory links to explore")
-                        
-                        # Add delay manager to link crawler
-                        link_crawler.delay_manager = delay_manager
-                        
-                        # Crawl subcategories
-                        link_crawler.crawl_discovered_links(discovered_links, max_depth=2, current_depth=0)
-                    else:
-                        logger.warning(f"No subcategory links found on {category.name} page")
-                    
-                    # Update category timestamp
-                    category.last_crawled = timezone.now()
-                    category.save()
-                    
-                    # Reset delay multiplier after successful category
-                    delay_manager.reset_delay()
-                    
-                    # Apply delay between main categories (except for last one)
-                    if i < total_categories:
-                        logger.info(f"[DELAY] Applying 60-second delay before next main category...")
-                        delay_manager.wait('between_categories')
-                    
-                except Exception as e:
-                    error_msg = f"Error crawling category {category.name}: {e}"
-                    logger.error(error_msg)
-                    result.errors.append(error_msg)
-                    
-                    # Increase delay after error
-                    delay_manager.increase_delay()
-                    delay_manager.wait('after_navigation_error')
-                    continue
-            
-            # Update final counts
-            result.categories_processed = total_categories
-            result.products_saved = self.session.products_found
-            
-            # Keep browser open for inspection
-            logger.info("\n" + "="*80)
-            logger.info("CRAWLING COMPLETE - Browser window will remain open")
-            logger.info("Close the browser window manually when done inspecting")
-            logger.info("="*80)
-            
-            # Wait for user to close browser
-            input("\nPress Enter to close the browser and complete cleanup...")
-            
-        except Exception as e:
-            logger.error(f"Error crawling products: {e}")
-            result.errors.append(str(e))
-        
-        return result
-
-
-
-
-
-
-
-    def _cleanup(self):
-        """Clean up resources."""
-        try:
-            if self.driver_manager:
-                self.driver_manager.cleanup()
-            logger.info("Scraper cleanup complete")
-        except Exception as e:
-            logger.error(f"Error during scraper cleanup: {e}")
-
-
-def create_selenium_scraper(crawl_session: CrawlSession, headless: bool = False) -> SeleniumAsdaScraper:
-    """Factory function to create a Selenium scraper instance."""
-    return SeleniumAsdaScraper(crawl_session, headless)
-
-
-# Add this class to selenium_scraper.py
-
-import random
-from datetime import datetime, timedelta
 
 class DelayManager:
-    """Manages intelligent delays to avoid rate limiting."""
+    """Enhanced delay manager with adaptive behavior."""
     
     def __init__(self):
+        """Initialize delay manager."""
         self.last_request_time = None
         self.error_count = 0
+        self.success_count = 0
         self.current_delay_multiplier = 1.0
+        self.rate_limit_detected = False
+        self.request_history = []
         
-    def wait(self, delay_type='between_requests', force_delay=None):
+    def wait(self, delay_type: str = 'between_requests', force_delay: Optional[float] = None):
         """
         Apply intelligent delay based on context.
         
@@ -1499,48 +349,1460 @@ class DelayManager:
             delay = force_delay
         else:
             # Get base delay from config
-            from .scraper_config import DELAY_CONFIG
-            base_delay = DELAY_CONFIG.get(delay_type, 2.0)
+            base_delay = get_config(f'delays.{delay_type}', 2.0)
+            
+            # Apply adaptive delay based on success rate
+            if self._get_recent_success_rate() < 0.5:  # Less than 50% success
+                self.current_delay_multiplier = min(self.current_delay_multiplier * 1.5, 5.0)
             
             # Apply progressive delay if errors occurred
             delay = base_delay * self.current_delay_multiplier
             
             # Add random component
-            random_addition = random.uniform(
-                DELAY_CONFIG['random_delay_min'],
-                DELAY_CONFIG['random_delay_max']
-            )
+            random_min = get_config('delays.random_delay_min', 0.5)
+            random_max = get_config('delays.random_delay_max', 2.0)
+            random_addition = random.uniform(random_min, random_max)
             delay += random_addition
             
             # Cap at maximum
-            delay = min(delay, DELAY_CONFIG['max_progressive_delay'])
+            max_delay = get_config('delays.max_progressive_delay', 30.0)
+            delay = min(delay, max_delay)
         
-        logger.info(f"[DELAY] Waiting {delay:.1f} seconds ({delay_type})")
+        logger.debug(f"Waiting {delay:.1f} seconds ({delay_type})", extra={
+            'delay_type': delay_type,
+            'delay_seconds': delay,
+            'multiplier': self.current_delay_multiplier
+        })
+        
         time.sleep(delay)
         self.last_request_time = datetime.now()
         
+    def record_request(self, success: bool):
+        """Record request outcome for adaptive delays."""
+        self.request_history.append({
+            'timestamp': datetime.now(),
+            'success': success
+        })
+        
+        # Keep only recent history (last 5 minutes)
+        cutoff_time = datetime.now() - timedelta(minutes=5)
+        self.request_history = [
+            r for r in self.request_history 
+            if r['timestamp'] > cutoff_time
+        ]
+        
+        if success:
+            self.success_count += 1
+        else:
+            self.error_count += 1
+    
+    def _get_recent_success_rate(self) -> float:
+        """Calculate recent success rate."""
+        if not self.request_history:
+            return 1.0
+        
+        recent = self.request_history[-20:]  # Last 20 requests
+        successes = sum(1 for r in recent if r['success'])
+        return successes / len(recent)
+        
     def increase_delay(self):
         """Increase delay multiplier after errors."""
-        from .scraper_config import DELAY_CONFIG
         self.error_count += 1
-        self.current_delay_multiplier *= DELAY_CONFIG['progressive_delay_factor']
-        logger.warning(f"[DELAY] Increased delay multiplier to {self.current_delay_multiplier:.2f} after {self.error_count} errors")
+        factor = get_config('delays.progressive_delay_factor', 1.5)
+        old_multiplier = self.current_delay_multiplier
+        self.current_delay_multiplier = min(self.current_delay_multiplier * factor, 10.0)
+        
+        logger.warning(
+            f"Increased delay multiplier: {old_multiplier:.2f} -> {self.current_delay_multiplier:.2f}",
+            extra={
+                'error_count': self.error_count,
+                'success_rate': self._get_recent_success_rate()
+            }
+        )
         
     def reset_delay(self):
         """Reset delay multiplier after successful operations."""
-        if self.error_count > 0:
-            logger.info("[DELAY] Resetting delay multiplier after successful operation")
+        if self.error_count > 0 or self.current_delay_multiplier > 1.0:
+            logger.info("Resetting delay multiplier after successful operation")
         self.error_count = 0
         self.current_delay_multiplier = 1.0
+        self.rate_limit_detected = False
         
-    def check_rate_limit(self, page_source):
+    def check_rate_limit(self, page_source: str) -> bool:
         """Check if page indicates rate limiting."""
-        from .scraper_config import SCRAPER_SETTINGS
-        
         page_text = page_source.lower()
-        for indicator in SCRAPER_SETTINGS['rate_limit_indicators']:
-            if indicator in page_text:
-                logger.error(f"[RATE LIMIT] Detected rate limit indicator: '{indicator}'")
+        indicators = get_config('rate_limit.rate_limit_indicators', [])
+        
+        for indicator in indicators:
+            if indicator.lower() in page_text:
+                logger.error(f"Rate limit detected: '{indicator}'", extra={
+                    'indicator': indicator,
+                    'timestamp': datetime.now().isoformat()
+                })
+                self.rate_limit_detected = True
                 self.wait('after_rate_limit_detected')
                 return True
         return False
+
+
+class WebDriverManager:
+    """Enhanced WebDriver setup and management with recovery."""
+    
+    def __init__(self, headless: bool = False):
+        """Initialize WebDriver manager."""
+        self.headless = headless
+        self.driver = None
+        self.wait = None
+        self.user_agent = None
+        self.setup_attempts = 0
+        self.max_setup_attempts = 3
+        
+    @retry_on_exception(max_attempts=3, delay=2.0, 
+                       exceptions=(WebDriverException,), category=ErrorCategory.DRIVER_SETUP)
+    def setup_driver(self) -> webdriver.Chrome:
+        """Set up Chrome WebDriver with enhanced configuration and retry logic."""
+        self.setup_attempts += 1
+        metric = PerformanceMetrics('driver_setup', metadata={'attempt': self.setup_attempts})
+        
+        try:
+            logger.info(f"Setting up Chrome WebDriver (attempt {self.setup_attempts})...")
+            
+            chrome_options = self._get_chrome_options()
+            
+            # Try multiple approaches to setup the driver
+            setup_methods = [
+                ('ChromeDriverManager', self._setup_with_chrome_driver_manager),
+                ('System Chrome', self._setup_with_system_chrome),
+                ('Manual Paths', self._setup_with_manual_paths)
+            ]
+            
+            for method_name, setup_method in setup_methods:
+                try:
+                    logger.info(f"Attempting setup with {method_name}...")
+                    self.driver = setup_method(chrome_options)
+                    if self.driver:
+                        self._configure_driver()
+                        metric.complete(success=True)
+                        logger.info(f"✅ WebDriver setup successful using {method_name}")
+                        return self.driver
+                except Exception as e:
+                    logger.warning(f"{method_name} setup failed: {e}")
+                    continue
+            
+            raise DriverSetupException("All WebDriver setup methods failed")
+            
+        except Exception as e:
+            metric.complete(success=False)
+            logger.error(f"Failed to setup WebDriver: {e}")
+            raise DriverSetupException(str(e))
+    
+    def _get_chrome_options(self) -> Options:
+        """Get enhanced Chrome options configuration."""
+        chrome_options = Options()
+        
+        # Select random user agent
+        user_agents = get_config('selenium.user_agents', [SELENIUM_CONFIG['user_agents'][0]])
+        self.user_agent = random.choice(user_agents)
+        
+        if self.headless:
+            chrome_options.add_argument("--headless=new")  # New headless mode
+        
+        # Essential options for web scraping
+        options_list = [
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-extensions",
+            "--disable-gpu",
+            "--disable-web-security",
+            "--disable-features=VizDisplayCompositor",
+            "--allow-running-insecure-content",
+            f"--user-agent={self.user_agent}"
+        ]
+        
+        # Randomize window size
+        window_sizes = get_config('selenium.window_sizes', ['1920,1080'])
+        window_size = random.choice(window_sizes)
+        options_list.append(f"--window-size={window_size}")
+        
+        # Add performance options
+        options_list.extend([
+            "--disable-logging",
+            "--disable-dev-tools",
+            "--no-default-browser-check",
+            "--disable-translate",
+            "--disable-hang-monitor",
+            "--disable-popup-blocking",
+            "--disable-prompt-on-repost",
+            "--dns-prefetch-disable",
+            "--disable-background-timer-throttling",
+            "--disable-renderer-backgrounding",
+            "--disable-features=TranslateUI",
+            "--disable-ipc-flooding-protection"
+        ])
+        
+        for option in options_list:
+            chrome_options.add_argument(option)
+        
+        # Experimental options
+        experimental_options = get_config('selenium.experimental_options', {})
+        for key, value in experimental_options.items():
+            chrome_options.add_experimental_option(key, value)
+        
+        # Additional preferences
+        prefs = {
+            'credentials_enable_service': False,
+            'profile.password_manager_enabled': False,
+            'profile.default_content_setting_values.notifications': 2,
+            'profile.default_content_settings.popups': 0,
+            'download.prompt_for_download': False,
+            'download.directory_upgrade': True,
+            'safebrowsing.enabled': False
+        }
+        chrome_options.add_experimental_option('prefs', prefs)
+        
+        return chrome_options
+    
+    def _setup_with_chrome_driver_manager(self, chrome_options: Options) -> webdriver.Chrome:
+        """Setup driver using ChromeDriverManager."""
+        service = Service(ChromeDriverManager().install())
+        return webdriver.Chrome(service=service, options=chrome_options)
+    
+    def _setup_with_system_chrome(self, chrome_options: Options) -> webdriver.Chrome:
+        """Setup driver using system Chrome."""
+        return webdriver.Chrome(options=chrome_options)
+    
+    def _setup_with_manual_paths(self, chrome_options: Options) -> webdriver.Chrome:
+        """Setup driver using manual chromedriver paths."""
+        driver_paths = get_config('drivers.chrome.driver_paths', [])
+        
+        for path in driver_paths:
+            expanded_path = Path(path).expanduser()
+            if expanded_path.exists():
+                logger.info(f"Found chromedriver at: {expanded_path}")
+                service = Service(str(expanded_path))
+                return webdriver.Chrome(service=service, options=chrome_options)
+        
+        raise Exception("No valid chromedriver path found")
+    
+    def _configure_driver(self):
+        """Configure driver with enhanced settings."""
+        # Set timeouts
+        self.driver.set_page_load_timeout(get_config('selenium.page_load_timeout', 30))
+        self.driver.implicitly_wait(get_config('selenium.implicit_wait', 5))
+        
+        # Set up WebDriverWait
+        self.wait = WebDriverWait(
+            self.driver, 
+            get_config('selenium.default_timeout', 15)
+        )
+        
+        # Execute stealth scripts
+        stealth_scripts = [
+            # Remove webdriver property
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})",
+            # Remove Chrome automation extension
+            "window.chrome = { runtime: {} }",
+            # Add plugins
+            "Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})",
+            # Add languages
+            "Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})",
+            # Override permissions
+            "const originalQuery = window.navigator.permissions.query; "
+            "window.navigator.permissions.query = (parameters) => "
+            "(parameters.name === 'notifications' ? "
+            "Promise.resolve({ state: Notification.permission }) : "
+            "originalQuery(parameters));"
+        ]
+        
+        for script in stealth_scripts:
+            try:
+                self.driver.execute_script(script)
+            except Exception as e:
+                logger.warning(f"Failed to execute stealth script: {e}")
+        
+        # Test the driver
+        self.driver.get("about:blank")
+        logger.info("WebDriver configuration complete")
+    
+    def cleanup(self):
+        """Clean up WebDriver resources."""
+        if self.driver:
+            try:
+                self.driver.quit()
+                logger.info("WebDriver closed successfully")
+            except Exception as e:
+                logger.error(f"Error closing WebDriver: {e}")
+    
+    def recover_driver(self):
+        """Attempt to recover a failed driver."""
+        logger.warning("Attempting driver recovery...")
+        
+        try:
+            # First try to close existing driver
+            if self.driver:
+                try:
+                    self.driver.quit()
+                except:
+                    pass
+                self.driver = None
+            
+            # Wait before retry
+            time.sleep(5)
+            
+            # Setup new driver
+            return self.setup_driver()
+            
+        except Exception as e:
+            logger.error(f"Driver recovery failed: {e}")
+            raise
+
+
+class PopupHandler:
+    """Enhanced popup handler with better detection and dismissal."""
+    
+    def __init__(self, driver: webdriver.Chrome):
+        """Initialize popup handler."""
+        self.driver = driver
+        self.handled_popups = set()
+        self.popup_attempts = 0
+        self.max_popup_attempts = 5
+        
+    def handle_all_popups(self):
+        """Handle all types of popups with retry logic."""
+        self.popup_attempts += 1
+        
+        if self.popup_attempts > self.max_popup_attempts:
+            logger.warning("Max popup handling attempts reached")
+            return
+        
+        handled_any = False
+        
+        # Try multiple times as popups can appear with delay
+        for attempt in range(3):
+            if self._handle_cookie_banners():
+                handled_any = True
+            if self._handle_modal_popups():
+                handled_any = True
+            if self._handle_notification_banners():
+                handled_any = True
+            
+            if handled_any:
+                time.sleep(1)  # Wait for any cascade effects
+            else:
+                break
+                
+    @retry_on_exception(max_attempts=2, delay=0.5, exceptions=(Exception,))
+    def _handle_cookie_banners(self) -> bool:
+        """Handle cookie consent banners."""
+        try:
+            cookie_config = get_config('popups.cookie_banners', {})
+            selectors = cookie_config.get('selectors', [])
+            text_patterns = cookie_config.get('text_patterns', [])
+            
+            for selector in selectors:
+                try:
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    for element in elements:
+                        if element.is_displayed() and element.is_enabled():
+                            element_text = element.text.strip()
+                            
+                            # Check if button text matches patterns
+                            for pattern in text_patterns:
+                                if pattern.lower() in element_text.lower():
+                                    self._safe_click(element, f"cookie banner: {element_text}")
+                                    return True
+                                    
+                except Exception as e:
+                    logger.debug(f"Cookie banner selector {selector} failed: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error handling cookie banners: {e}")
+            
+        return False
+    
+    def _safe_click(self, element, description: str):
+        """Safely click an element with fallback methods."""
+        try:
+            element.click()
+            logger.info(f"Clicked {description}")
+        except ElementClickInterceptedException:
+            try:
+                self.driver.execute_script("arguments[0].click();", element)
+                logger.info(f"JavaScript clicked {description}")
+            except Exception as e:
+                logger.warning(f"Failed to click {description}: {e}")
+    
+    def _handle_modal_popups(self) -> bool:
+        """Handle modal popups and overlays."""
+        # Similar implementation with enhanced error handling
+        return False
+    
+    def _handle_notification_banners(self) -> bool:
+        """Handle notification banners."""
+        # Similar implementation with enhanced error handling
+        return False
+
+
+class ProductExtractor:
+    """Enhanced product data extraction with fallback strategies."""
+    
+    def __init__(self, driver: webdriver.Chrome):
+        """Initialize product extractor."""
+        self.driver = driver
+        self.extraction_config = get_config('extraction', PRODUCT_EXTRACTION_CONFIG)
+        self.extraction_attempts = 0
+        
+    def extract_products(self, page_source: str) -> List[ProductData]:
+        """Extract product data from page source with performance tracking."""
+        metric = PerformanceMetrics('extract_products')
+        products = []
+        
+        try:
+            soup = BeautifulSoup(page_source, 'html.parser')
+            
+            # Try different product container selectors
+            product_containers = self._find_product_containers(soup)
+            
+            if not product_containers:
+                logger.warning("No product containers found on page")
+                self._save_debug_html(page_source, "no_products")
+                return products
+            
+            logger.debug(f"Found {len(product_containers)} potential products")
+            
+            for i, container in enumerate(product_containers):
+                try:
+                    product_data = self._extract_single_product(container)
+                    if product_data and self._validate_product(product_data):
+                        products.append(product_data)
+                except Exception as e:
+                    logger.debug(f"Error extracting product {i}: {e}")
+                    continue
+            
+            metric.metadata = {'products_found': len(products)}
+            metric.complete(success=True)
+            
+            logger.info(f"Extracted {len(products)} valid products from page")
+            return products
+            
+        except Exception as e:
+            metric.complete(success=False)
+            logger.error(f"Product extraction failed: {e}")
+            self._save_debug_html(page_source, f"extraction_error_{self.extraction_attempts}")
+            return products
+    
+    def _find_product_containers(self, soup) -> List:
+        """Find product containers with multiple strategies."""
+        containers = []
+        
+        # Try each selector strategy
+        for selector in self.extraction_config['selectors']['product_containers']:
+            found = soup.select(selector)
+            if found:
+                logger.debug(f"Found {len(found)} products using selector: {selector}")
+                containers = found
+                break
+        
+        # Fallback: try more generic selectors
+        if not containers:
+            generic_selectors = [
+                'div[class*="product"]',
+                'article[class*="product"]',
+                'li[class*="product"]',
+                '[data-testid*="product"]'
+            ]
+            for selector in generic_selectors:
+                found = soup.select(selector)
+                if found:
+                    logger.info(f"Found {len(found)} products using fallback selector: {selector}")
+                    containers = found
+                    break
+        
+        return containers
+    
+    def _extract_single_product(self, container) -> Optional[ProductData]:
+        """Extract data from a single product container."""
+        try:
+            # Extract title and URL
+            title_element = None
+            for selector in self.extraction_config['selectors']['product_title']:
+                title_element = container.select_one(selector)
+                if title_element:
+                    break
+            
+            if not title_element:
+                return None
+            
+            product_name = title_element.get_text(strip=True)
+            product_url = title_element.get('href', '')
+            if product_url and not product_url.startswith('http'):
+                product_url = urljoin(self.driver.current_url, product_url)
+            
+            # Extract ASDA ID from URL
+            asda_id = self._extract_asda_id(product_url)
+            
+            # Extract price with validation
+            price = self._extract_price(container, 'product_price')
+            if price is None or price <= 0:
+                return None
+            
+            # Extract optional fields
+            was_price = self._extract_price(container, 'was_price')
+            unit_price = self._extract_text(container, 'unit_price')
+            quantity = self._extract_text(container, 'quantity')
+            
+            # Extract image with fallback
+            image_url = self._extract_image(container)
+            
+            # Check availability
+            in_stock = self._check_availability(container)
+            
+            # Extract promotion
+            special_offer = self._extract_text(container, 'promotion')
+            
+            return ProductData(
+                name=product_name,
+                price=price,
+                was_price=was_price,
+                unit_price=unit_price,
+                quantity=quantity,
+                image_url=image_url,
+                product_url=product_url,
+                asda_id=asda_id,
+                in_stock=in_stock,
+                special_offer=special_offer
+            )
+            
+        except Exception as e:
+            logger.debug(f"Error extracting single product: {e}")
+            return None
+    
+    def _extract_price(self, container, price_type: str) -> Optional[float]:
+        """Extract price from container with multiple strategies."""
+        selectors = self.extraction_config['selectors'].get(price_type, [])
+        price_regex = self.extraction_config['regex_patterns']['price']
+        
+        for selector in selectors:
+            price_element = container.select_one(selector)
+            if price_element:
+                price_text = price_element.get_text(strip=True)
+                
+                # Try regex extraction
+                match = re.search(price_regex, price_text)
+                if match:
+                    try:
+                        return float(match.group(1))
+                    except ValueError:
+                        continue
+                
+                # Try alternative extraction
+                price_text = price_text.replace('£', '').replace(',', '').strip()
+                try:
+                    return float(price_text)
+                except ValueError:
+                    continue
+                    
+        return None
+    
+    def _extract_image(self, container) -> str:
+        """Extract image URL with fallback strategies."""
+        for selector in self.extraction_config['selectors']['image']:
+            img_element = container.select_one(selector)
+            if img_element:
+                # Try different image attributes
+                for attr in ['src', 'data-src', 'data-lazy-src']:
+                    image_url = img_element.get(attr, '')
+                    if image_url:
+                        if not image_url.startswith('http'):
+                            image_url = urljoin(self.driver.current_url, image_url)
+                        return image_url
+        
+        return ''
+    
+    def _validate_product(self, product: ProductData) -> bool:
+        """Validate extracted product data."""
+        # Basic validation
+        if not product.name or not product.asda_id:
+            return False
+        
+        # Price validation
+        if product.price <= 0 or product.price > 10000:  # Reasonable price range
+            return False
+        
+        # Name length validation
+        if len(product.name) < 3 or len(product.name) > 500:
+            return False
+        
+        return True
+    
+    def _save_debug_html(self, html: str, prefix: str):
+        """Save HTML for debugging when extraction fails."""
+        try:
+            debug_file = LOGS_DIR / f"debug_{prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(html)
+            logger.debug(f"Saved debug HTML to {debug_file}")
+        except Exception as e:
+            logger.error(f"Failed to save debug HTML: {e}")
+    
+    def _extract_text(self, container, field_name: str) -> str:
+        """Extract text from container."""
+        selectors = self.extraction_config['selectors'].get(field_name, [])
+        
+        for selector in selectors:
+            element = container.select_one(selector)
+            if element:
+                return element.get_text(strip=True)
+        return ''
+    
+    def _extract_asda_id(self, url: str) -> str:
+        """Extract ASDA product ID from URL."""
+        if not url:
+            return ''
+        
+        id_regex = self.extraction_config['regex_patterns'].get('product_id', r'/(\d+)$')
+        match = re.search(id_regex, url)
+        if match:
+            return match.group(1)
+        
+        # Fallback: try to extract from URL path
+        path_parts = urlparse(url).path.split('/')
+        for part in reversed(path_parts):
+            if part.isdigit():
+                return part
+        
+        return ''
+    
+    def _check_availability(self, container) -> bool:
+        """Check if product is in stock."""
+        availability_selectors = self.extraction_config['selectors'].get('availability', [])
+        
+        for selector in availability_selectors:
+            element = container.select_one(selector)
+            if element:
+                text = element.get_text(strip=True).lower()
+                if 'out of stock' in text or 'unavailable' in text:
+                    return False
+        
+        return True
+
+
+class PaginationHandler:
+    """Enhanced pagination handler with multiple strategies."""
+    
+    def __init__(self, driver: webdriver.Chrome, delay_manager: DelayManager):
+        """Initialize pagination handler."""
+        self.driver = driver
+        self.delay_manager = delay_manager
+        self.current_page = 1
+        self.max_pages = get_config('scraper.max_pages_per_category', 10)
+        self.pagination_failures = 0
+        
+    def has_next_page(self) -> bool:
+        """Check if there's a next page with multiple detection methods."""
+        if self.current_page >= self.max_pages:
+            logger.info(f"Reached max pages limit ({self.max_pages})")
+            return False
+        
+        # Check for pagination failures
+        if self.pagination_failures >= 3:
+            logger.warning("Too many pagination failures, stopping")
+            return False
+        
+        # Method 1: Check for next button
+        if self._has_next_button():
+            return True
+        
+        # Method 2: Check URL pattern
+        if self._has_url_pagination():
+            return True
+        
+        # Method 3: Check for infinite scroll indicators
+        if self._has_infinite_scroll():
+            return True
+        
+        return False
+    
+    def _has_next_button(self) -> bool:
+        """Check if next button exists and is clickable."""
+        next_button_selectors = get_config(
+            'pagination.strategies.button_click.selectors',
+            PAGINATION_CONFIG['strategies']['button_click']['selectors']
+        )
+        
+        for selector in next_button_selectors:
+            try:
+                next_button = self.driver.find_element(By.CSS_SELECTOR, selector)
+                if next_button.is_enabled() and next_button.is_displayed():
+                    # Check if button is not disabled
+                    if 'disabled' not in next_button.get_attribute('class'):
+                        return True
+            except NoSuchElementException:
+                continue
+        
+        return False
+    
+    def _has_url_pagination(self) -> bool:
+        """Check if URL supports pagination parameters."""
+        current_url = self.driver.current_url
+        return 'page=' in current_url or '?p=' in current_url
+    
+    def _has_infinite_scroll(self) -> bool:
+        """Check for infinite scroll indicators."""
+        try:
+            # Check if there are loading indicators
+            loading_selectors = ['.loading', '.spinner', '[class*="load-more"]']
+            for selector in loading_selectors:
+                elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                if elements:
+                    return True
+        except:
+            pass
+        
+        return False
+    
+    @retry_on_exception(max_attempts=3, delay=2.0, exceptions=(Exception,))
+    def go_to_next_page(self) -> bool:
+        """Navigate to the next page with multiple strategies."""
+        metric = PerformanceMetrics('pagination', metadata={'page': self.current_page + 1})
+        
+        try:
+            # Strategy 1: Click next button
+            if self._click_next_button():
+                self.current_page += 1
+                metric.complete(success=True)
+                self.pagination_failures = 0
+                return True
+            
+            # Strategy 2: URL manipulation
+            if self._navigate_by_url():
+                self.current_page += 1
+                metric.complete(success=True)
+                self.pagination_failures = 0
+                return True
+            
+            # Strategy 3: Infinite scroll
+            if self._scroll_for_more():
+                self.current_page += 1
+                metric.complete(success=True)
+                self.pagination_failures = 0
+                return True
+            
+            metric.complete(success=False)
+            self.pagination_failures += 1
+            return False
+            
+        except Exception as e:
+            metric.complete(success=False)
+            logger.error(f"Pagination failed: {e}")
+            self.pagination_failures += 1
+            return False
+    
+    def _click_next_button(self) -> bool:
+        """Try to click the next page button."""
+        next_button_selectors = get_config(
+            'pagination.strategies.button_click.selectors',
+            PAGINATION_CONFIG['strategies']['button_click']['selectors']
+        )
+        
+        for selector in next_button_selectors:
+            try:
+                next_button = self.driver.find_element(By.CSS_SELECTOR, selector)
+                
+                if next_button.is_enabled() and next_button.is_displayed():
+                    # Scroll to button
+                    self.driver.execute_script(
+                        "arguments[0].scrollIntoView({block: 'center'});", 
+                        next_button
+                    )
+                    self.delay_manager.wait('element_wait')
+                    
+                    # Try different click methods
+                    try:
+                        next_button.click()
+                    except ElementClickInterceptedException:
+                        self.driver.execute_script("arguments[0].click();", next_button)
+                    
+                    self.delay_manager.wait('page_load_wait')
+                    
+                    logger.info(f"✅ Navigated to page {self.current_page + 1}")
+                    return True
+                    
+            except (NoSuchElementException, Exception) as e:
+                logger.debug(f"Pagination selector {selector} failed: {e}")
+                continue
+        
+        return False
+    
+    def _navigate_by_url(self) -> bool:
+        """Navigate by modifying the URL."""
+        current_url = self.driver.current_url
+        
+        # Pattern 1: page=X
+        if 'page=' in current_url:
+            match = re.search(r'page=(\d+)', current_url)
+            if match:
+                current_page_num = int(match.group(1))
+                new_url = current_url.replace(
+                    f'page={current_page_num}', 
+                    f'page={current_page_num + 1}'
+                )
+                self.driver.get(new_url)
+                self.delay_manager.wait('page_load_wait')
+                return True
+        
+        # Pattern 2: Add page parameter
+        elif '?' in current_url:
+            new_url = f"{current_url}&page={self.current_page + 1}"
+            self.driver.get(new_url)
+            self.delay_manager.wait('page_load_wait')
+            return True
+        
+        return False
+    
+    def _scroll_for_more(self) -> bool:
+        """Handle infinite scroll pagination."""
+        try:
+            # Get initial height
+            initial_height = self.driver.execute_script("return document.body.scrollHeight")
+            
+            # Scroll to bottom
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            
+            # Wait for new content
+            self.delay_manager.wait('scroll_pause')
+            
+            # Check if new content loaded
+            new_height = self.driver.execute_script("return document.body.scrollHeight")
+            
+            if new_height > initial_height:
+                logger.info("New content loaded via infinite scroll")
+                return True
+                
+        except Exception as e:
+            logger.debug(f"Scroll pagination failed: {e}")
+        
+        return False
+    
+    def reset(self):
+        """Reset pagination state."""
+        self.current_page = 1
+        self.pagination_failures = 0
+
+
+class SeleniumAsdaScraper:
+    """Enhanced production-ready Selenium-based ASDA scraper."""
+    
+    def __init__(self, crawl_session: CrawlSession, headless: bool = False):
+        """
+        Initialize the scraper.
+        
+        Args:
+            crawl_session: CrawlSession model instance
+            headless: Whether to run browser in headless mode
+        """
+        self.session = crawl_session
+        self.headless = headless
+        self.driver_manager = None
+        self.driver = None
+        self.base_url = get_config('base_url', 'https://groceries.asda.com')
+        self.delay_manager = DelayManager()
+        self.popup_handler = None
+        self.product_extractor = None
+        self.pagination_handler = None
+        self.result = ScrapingResult()
+        self.health_metrics = {
+            'driver_restarts': 0,
+            'recovery_attempts': 0,
+            'rate_limit_encounters': 0
+        }
+        
+        logger.info(f"Initializing Selenium ASDA Scraper for session {self.session.pk}", extra={
+            'session_id': self.session.pk,
+            'headless': headless,
+            'base_url': self.base_url
+        })
+        
+        try:
+            self._setup_driver()
+        except Exception as e:
+            logger.error(f"Failed to initialize scraper: {e}", extra={
+                'session_id': self.session.pk,
+                'error_type': type(e).__name__
+            })
+            self.cleanup()
+            raise
+    
+    def _setup_driver(self):
+        """Set up the WebDriver and related components."""
+        setup_metric = PerformanceMetrics('scraper_initialization')
+        
+        try:
+            self.driver_manager = WebDriverManager(self.headless)
+            self.driver = self.driver_manager.setup_driver()
+            
+            # Initialize components
+            self.popup_handler = PopupHandler(self.driver)
+            self.product_extractor = ProductExtractor(self.driver)
+            self.pagination_handler = PaginationHandler(self.driver, self.delay_manager)
+            
+            setup_metric.complete(success=True)
+            self.result.add_metric(setup_metric)
+            
+        except Exception as e:
+            setup_metric.complete(success=False)
+            self.result.add_metric(setup_metric)
+            raise
+    
+    def start_crawl(self) -> ScrapingResult:
+        """
+        Start the crawling process.
+        
+        Returns:
+            ScrapingResult with crawl statistics
+        """
+        logger.info("=" * 50)
+        logger.info(f"Starting ASDA crawl session {self.session.pk}")
+        logger.info("=" * 50)
+        
+        self.session.started_at = timezone.now()
+        self.session.status = 'running'
+        self.session.save()
+        
+        try:
+            # Get categories to crawl
+            categories = self._get_categories_to_crawl()
+            
+            if not categories:
+                logger.warning("No categories to crawl")
+                self.result.warnings.append("No categories found to crawl")
+                return self._finalize_crawl()
+            
+            # Process each category
+            for i, category in enumerate(categories):
+                # Check if session should continue
+                self.session.refresh_from_db()
+                if self.session.status != 'running':
+                    logger.info("Crawl session stopped by user")
+                    break
+                
+                try:
+                    self._process_category_with_recovery(category)
+                    self.result.categories_processed += 1
+                    self.delay_manager.reset_delay()  # Reset on success
+                    self.delay_manager.record_request(True)
+                    
+                except RateLimitException as e:
+                    self.health_metrics['rate_limit_encounters'] += 1
+                    logger.error(f"Rate limit detected for category {category.name}")
+                    self.result.add_error('rate_limit', f"Rate limited on category {category.name}", 
+                                        category=ErrorCategory.RATE_LIMIT)
+                    self.delay_manager.wait('after_rate_limit_detected')
+                    self.delay_manager.record_request(False)
+                    
+                    # Skip to next category after rate limit
+                    continue
+                    
+                except Exception as e:
+                    logger.error(f"Error processing category {category.name}: {e}")
+                    self.result.add_error('category_error', str(e), 
+                                        {'category': category.name}, 
+                                        category=ErrorCategory.UNKNOWN)
+                    self.delay_manager.increase_delay()
+                    self.delay_manager.record_request(False)
+                    
+                    # Check error threshold
+                    if len(self.result.errors) > get_config('errors.thresholds.max_category_errors', 10):
+                        logger.error("Too many category errors, stopping crawl")
+                        break
+                
+                # Progress update
+                progress = ((i + 1) / len(categories)) * 100
+                logger.info(f"Progress: {progress:.1f}% ({i + 1}/{len(categories)} categories)")
+                
+                # Delay between categories
+                if i < len(categories) - 1:  # Don't delay after last category
+                    self.delay_manager.wait('between_categories')
+            
+            return self._finalize_crawl()
+            
+        except Exception as e:
+            logger.error(f"Fatal error during crawl: {e}", exc_info=True)
+            self.session.status = 'failed'
+            self.session.error_log = str(e)
+            self.session.save()
+            self.result.add_error('fatal_error', str(e), category=ErrorCategory.UNKNOWN)
+            return self._finalize_crawl()
+        
+        finally:
+            self.cleanup()
+    
+    def _process_category_with_recovery(self, category: AsdaCategory):
+        """Process category with automatic recovery on failure."""
+        max_retries = 3
+        
+        for attempt in range(max_retries):
+            try:
+                self._process_category(category)
+                return  # Success
+                
+            except (WebDriverException, InvalidSessionIdException) as e:
+                self.health_metrics['recovery_attempts'] += 1
+                logger.warning(f"WebDriver error on attempt {attempt + 1}: {e}")
+                
+                if attempt < max_retries - 1:
+                    try:
+                        # Attempt driver recovery
+                        self.driver = self.driver_manager.recover_driver()
+                        self.health_metrics['driver_restarts'] += 1
+                        
+                        # Reinitialize components
+                        self.popup_handler = PopupHandler(self.driver)
+                        self.product_extractor = ProductExtractor(self.driver)
+                        self.pagination_handler = PaginationHandler(self.driver, self.delay_manager)
+                        
+                        logger.info("Driver recovery successful, retrying category")
+                        time.sleep(5)  # Brief pause before retry
+                        
+                    except Exception as recovery_error:
+                        logger.error(f"Driver recovery failed: {recovery_error}")
+                        raise
+                else:
+                    raise
+    
+    def _process_category(self, category: AsdaCategory):
+        """Process a single category."""
+        category_metric = PerformanceMetrics('process_category', 
+                                        metadata={'category': category.name})
+        
+        logger.info(f"\nProcessing category: {category.name} ({category.url_code})")
+        
+        # Fix: Construct URL using url_code
+        category_url = f"{self.base_url}/browse/{category.slug}/{category.url_code}"
+        
+        try:
+            # Navigate to category
+            nav_metric = PerformanceMetrics('navigate_to_category')
+            self.driver.get(category_url)
+            self.delay_manager.wait('page_load_wait')
+            nav_metric.complete(success=True)
+            self.result.add_metric(nav_metric)
+            
+            # Handle popups
+            self.popup_handler.handle_all_popups()
+            
+            # Check for rate limiting
+            if self.delay_manager.check_rate_limit(self.driver.page_source):
+                raise RateLimitException()
+            
+            # Reset pagination
+            self.pagination_handler.reset()
+            
+            # Track products for this category
+            category_products_found = 0
+            category_products_saved = 0
+            
+            # Process all pages
+            while True:
+                page_metric = PerformanceMetrics('process_page', 
+                                            metadata={'page': self.pagination_handler.current_page})
+                
+                # Extract products from current page
+                products = self.product_extractor.extract_products(self.driver.page_source)
+                page_metric.metadata['products_found'] = len(products)
+                
+                self.result.products_found += len(products)
+                category_products_found += len(products)
+                self.result.pages_scraped += 1
+                
+                # Save products
+                saved_count, updated_count = self._save_products_batch(products, category)
+                self.result.products_saved += saved_count
+                self.result.products_updated += updated_count
+                category_products_saved += saved_count + updated_count
+                
+                page_metric.complete(success=True)
+                self.result.add_metric(page_metric)
+                
+                logger.info(f"Page {self.pagination_handler.current_page}: "
+                        f"Found {len(products)} products, "
+                        f"saved {saved_count}, updated {updated_count}")
+                
+                # Check if should continue to next page
+                if not self.pagination_handler.has_next_page():
+                    break
+                
+                # Check if we have enough products
+                if category_products_found >= get_config('crawl_defaults.max_products_per_category', 200):
+                    logger.info(f"Reached product limit for category ({category_products_found})")
+                    break
+                
+                # Navigate to next page
+                if not self.pagination_handler.go_to_next_page():
+                    break
+                
+                # Wait between pages
+                self.delay_manager.wait('between_requests')
+            
+            # Update category statistics
+            category.last_crawled = timezone.now()
+            category.product_count = category.products.count()
+            category.save()
+            
+            category_metric.metadata.update({
+                'total_products_found': category_products_found,
+                'total_products_saved': category_products_saved,
+                'pages_processed': self.pagination_handler.current_page
+            })
+            category_metric.complete(success=True)
+            self.result.add_metric(category_metric)
+            
+            logger.info(f"✅ Completed category {category.name}: "
+                    f"{category.product_count} total products in database")
+            
+        except Exception as e:
+            category_metric.complete(success=False)
+            self.result.add_metric(category_metric)
+            logger.error(f"Error processing category {category.name}: {e}")
+            raise
+
+
+
+
+
+    def _save_products_batch(self, products: List[ProductData], category: AsdaCategory) -> Tuple[int, int]:
+        """
+        Save products in optimized batches.
+        
+        Returns:
+            Tuple of (saved_count, updated_count)
+        """
+        if not products:
+            return 0, 0
+        
+        save_metric = PerformanceMetrics('save_products_batch', 
+                                       metadata={'batch_size': len(products)})
+        saved_count = 0
+        updated_count = 0
+        
+        try:
+            with transaction.atomic():
+                # Get existing products in batch
+                asda_ids = [p.asda_id for p in products if p.asda_id]
+                existing_products = {
+                    p.asda_id: p for p in AsdaProduct.objects.filter(asda_id__in=asda_ids)
+                }
+                
+                products_to_create = []
+                products_to_update = []
+                
+                for product_data in products:
+                    try:
+                        if product_data.asda_id in existing_products:
+                            # Update existing product
+                            existing = existing_products[product_data.asda_id]
+                            updated = False
+                            
+                            # Check what needs updating
+                            if abs(existing.price - product_data.price) > 0.01:  # Price changed
+                                existing.price = product_data.price
+                                updated = True
+                            
+                            if existing.was_price != product_data.was_price:
+                                existing.was_price = product_data.was_price
+                                updated = True
+                            
+                            if existing.in_stock != product_data.in_stock:
+                                existing.in_stock = product_data.in_stock
+                                updated = True
+                            
+                            if product_data.special_offer and existing.special_offer != product_data.special_offer:
+                                existing.special_offer = product_data.special_offer
+                                updated = True
+                            
+                            if updated:
+                                existing.updated_at = timezone.now()
+                                products_to_update.append(existing)
+                                updated_count += 1
+                                
+                        else:
+                            # Create new product
+                            new_product = AsdaProduct(
+                                asda_id=product_data.asda_id,
+                                name=product_data.name,
+                                price=product_data.price,
+                                was_price=product_data.was_price,
+                                unit_price=product_data.unit_price,
+                                quantity=product_data.quantity or 'each',
+                                description=product_data.description,
+                                image_url=product_data.image_url,
+                                product_url=product_data.product_url,
+                                category=category,
+                                in_stock=product_data.in_stock,
+                                special_offer=product_data.special_offer
+                            )
+                            products_to_create.append(new_product)
+                            saved_count += 1
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing product {product_data.name}: {e}")
+                        self.result.add_error('save_error', str(e), 
+                                            {'product': product_data.name},
+                                            category=ErrorCategory.DATABASE)
+                
+                # Bulk operations
+                if products_to_create:
+                    AsdaProduct.objects.bulk_create(products_to_create, batch_size=100)
+                
+                if products_to_update:
+                    AsdaProduct.objects.bulk_update(
+                        products_to_update,
+                        ['price', 'was_price', 'in_stock', 'special_offer', 'updated_at'],
+                        batch_size=100
+                    )
+                
+                save_metric.metadata.update({
+                    'saved': saved_count,
+                    'updated': updated_count
+                })
+                save_metric.complete(success=True)
+                self.result.add_metric(save_metric)
+                
+        except Exception as e:
+            save_metric.complete(success=False)
+            self.result.add_metric(save_metric)
+            logger.error(f"Batch save failed: {e}")
+            self.result.add_error('batch_save_error', str(e), 
+                                category=ErrorCategory.DATABASE)
+            
+            # Fallback to individual saves
+            for product in products:
+                try:
+                    s, u = self._save_single_product(product, category)
+                    saved_count += s
+                    updated_count += u
+                except Exception as e2:
+                    logger.error(f"Failed to save product {product.name}: {e2}")
+        
+        return saved_count, updated_count
+    
+    def _save_single_product(self, product_data: ProductData, category: AsdaCategory) -> Tuple[int, int]:
+        """Save a single product (fallback method)."""
+        try:
+            existing = AsdaProduct.objects.filter(asda_id=product_data.asda_id).first()
+            
+            if existing:
+                # Update logic
+                existing.price = product_data.price
+                existing.was_price = product_data.was_price
+                existing.in_stock = product_data.in_stock
+                existing.special_offer = product_data.special_offer
+                existing.updated_at = timezone.now()
+                existing.save()
+                return 0, 1
+            else:
+                # Create new
+                AsdaProduct.objects.create(
+                    asda_id=product_data.asda_id,
+                    name=product_data.name,
+                    price=product_data.price,
+                    was_price=product_data.was_price,
+                    unit_price=product_data.unit_price,
+                    quantity=product_data.quantity or 'each',
+                    description=product_data.description,
+                    image_url=product_data.image_url,
+                    product_url=product_data.product_url,
+                    category=category,
+                    in_stock=product_data.in_stock,
+                    special_offer=product_data.special_offer
+                )
+                return 1, 0
+                
+        except Exception as e:
+            logger.error(f"Single product save failed: {e}")
+            return 0, 0
+    
+    def _get_categories_to_crawl(self) -> List[AsdaCategory]:
+        """Get list of categories to crawl based on configuration."""
+        categories = AsdaCategory.objects.filter(is_active=True)
+        
+        # Apply priority filter if configured
+        priority_threshold = get_config('crawl_defaults.category_priority_threshold', 2)
+        category_config = get_config('categories', {})
+        
+        filtered_categories = []
+        for category in categories:
+            # Fix: Use url_code instead of asda_id
+            cat_config = category_config.get(category.url_code, {})
+            if cat_config.get('priority', 3) <= priority_threshold:
+                filtered_categories.append(category)
+        
+        # Sort by priority
+        filtered_categories.sort(key=lambda c: category_config.get(c.url_code, {}).get('priority', 3))
+        
+        # Limit number of categories
+        max_categories = get_config('crawl_defaults.max_categories', 20)
+        filtered_categories = filtered_categories[:max_categories]
+        
+        logger.info(f"Found {len(filtered_categories)} categories to crawl")
+        return filtered_categories
+
+
+    def _finalize_crawl(self) -> ScrapingResult:
+        """Finalize the crawl session."""
+        self.result.finalize()
+        
+        # Update session
+        self.session.ended_at = timezone.now()
+        
+        # Fix: Use shorter status strings that fit in varchar(20)
+        if len(self.result.errors) == 0:
+            self.session.status = 'completed'
+        else:
+            self.session.status = 'completed_errors'  # Shortened from 'completed_with_errors'
+        
+        self.session.products_found = self.result.products_found
+        self.session.products_saved = self.result.products_saved + self.result.products_updated
+        self.session.categories_crawled = self.result.categories_processed
+        
+        if self.result.errors:
+            # Store error summary
+            error_summary = {
+                'total_errors': len(self.result.errors),
+                'error_categories': {},
+                'first_errors': self.result.errors[:5]
+            }
+            
+            # Count errors by category
+            for error in self.result.errors:
+                cat = error.get('category', 'unknown')
+                error_summary['error_categories'][cat] = error_summary['error_categories'].get(cat, 0) + 1
+            
+            self.session.error_log = json.dumps(error_summary, default=str)
+        
+        self.session.save()
+        
+        # Log comprehensive summary
+        self._log_final_summary()
+        
+        return self.result
+    
+
+    def _get_category_slug(self, category: AsdaCategory) -> str:
+        """Get or generate slug for category."""
+        category_config = get_config('categories', {})
+        cat_config = category_config.get(category.url_code, {})
+        
+        # Use slug from config if available
+        if 'slug' in cat_config:
+            return cat_config['slug']
+        
+        # Generate slug from name
+        slug = category.name.lower()
+        slug = slug.replace(' & ', '-and-')
+        slug = slug.replace(',', '')
+        slug = slug.replace(' ', '-')
+        slug = re.sub(r'[^a-z0-9-]', '', slug)
+        slug = re.sub(r'-+', '-', slug)
+        slug = slug.strip('-')
+        
+        return slug
+
+
+    def _log_final_summary(self):
+        """Log comprehensive crawl summary."""
+        duration = self.result.duration.total_seconds() if self.result.duration else 0
+        
+        summary_lines = [
+            "=" * 80,
+            "CRAWL SUMMARY",
+            "=" * 80,
+            f"Session ID: {self.session.pk}",
+            f"Duration: {self.result.duration}",
+            f"Status: {self.session.status}",
+            "-" * 40,
+            "STATISTICS:",
+            f"- Categories processed: {self.result.categories_processed}",
+            f"- Pages scraped: {self.result.pages_scraped}",
+            f"- Products found: {self.result.products_found}",
+            f"- Products saved: {self.result.products_saved}",
+            f"- Products updated: {self.result.products_updated}",
+            f"- Total errors: {len(self.result.errors)}",
+            f"- Success rate: {self.result.get_success_rate():.1f}%",
+            "-" * 40,
+            "PERFORMANCE:",
+            f"- Avg products/minute: {(self.result.products_found / (duration / 60)) if duration > 0 else 0:.1f}",
+            f"- Avg page time: {self.result._get_avg_page_time():.1f}s",
+            "-" * 40,
+            "HEALTH METRICS:",
+            f"- Driver restarts: {self.health_metrics['driver_restarts']}",
+            f"- Recovery attempts: {self.health_metrics['recovery_attempts']}",
+            f"- Rate limit encounters: {self.health_metrics['rate_limit_encounters']}",
+            "=" * 80
+        ]
+        
+        # Log as single message
+        logger.info("\n".join(summary_lines), extra={
+            'metric_type': 'final_summary',
+            'session_id': self.session.pk,
+            'summary_data': self.result.to_dict()
+        })
+        
+        # Log error breakdown if any
+        if self.result.errors:
+            error_categories = {}
+            for error in self.result.errors:
+                cat = error.get('category', 'unknown')
+                error_categories[cat] = error_categories.get(cat, 0) + 1
+            
+            logger.warning(f"Error breakdown by category: {error_categories}")
+    
+    def stop_crawl(self):
+        """Stop the crawl session gracefully."""
+        logger.info("Stopping crawl session...")
+        self.session.status = 'stopped'
+        self.session.save()
+    
+    def cleanup(self):
+        """Clean up resources."""
+        if self.driver_manager:
+            self.driver_manager.cleanup()
+        
+        # Save any pending metrics
+        if self.result.performance_metrics:
+            logger.info(f"Total performance metrics collected: {len(self.result.performance_metrics)}")
+    
+    def get_health_status(self) -> Dict[str, Any]:
+        """Get current health status of the scraper."""
+        total_requests = self.delay_manager.success_count + self.delay_manager.error_count
+        
+        return {
+            'status': 'healthy' if self.delay_manager._get_recent_success_rate() > 0.8 else 'degraded',
+            'success_rate': self.delay_manager._get_recent_success_rate(),
+            'total_requests': total_requests,
+            'current_delay_multiplier': self.delay_manager.current_delay_multiplier,
+            'health_metrics': self.health_metrics,
+            'errors_last_5min': len([e for e in self.result.errors 
+                                    if datetime.fromisoformat(e['timestamp']) > 
+                                    datetime.now() - timedelta(minutes=5)])
+        }
+
+
+def create_selenium_scraper(crawl_session: CrawlSession, headless: bool = False) -> SeleniumAsdaScraper:
+    """
+    Factory function to create a Selenium scraper instance.
+    
+    Args:
+        crawl_session: CrawlSession model instance
+        headless: Whether to run browser in headless mode
+        
+    Returns:
+        SeleniumAsdaScraper instance
+    """
+    logger.info(f"Creating new scraper instance for session {crawl_session.pk}")
+    return SeleniumAsdaScraper(crawl_session, headless)
+
+
+
+

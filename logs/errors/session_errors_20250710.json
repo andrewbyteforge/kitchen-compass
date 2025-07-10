@@ -1,0 +1,2 @@
+{"type": "fatal_error", "message": "'AsdaCategory' object has no attribute 'asda_id'", "category": "unknown", "context": {}, "timestamp": "2025-07-10T16:23:33.110105", "traceback": null}
+{"type": "fatal_error", "message": "'ScrapingResult' object has no attribute 'to_dict'", "category": "unknown", "context": {}, "timestamp": "2025-07-10T16:33:43.306210", "traceback": null}

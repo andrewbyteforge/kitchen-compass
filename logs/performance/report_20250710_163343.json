@@ -1,0 +1,34 @@
+{
+  "timestamp": "2025-07-10T16:33:43.307168",
+  "summary": {
+    "duration_seconds": 1.860363,
+    "products_found": 0,
+    "products_saved": 0,
+    "products_updated": 0,
+    "categories_processed": 0,
+    "pages_scraped": 0,
+    "error_count": 1,
+    "warning_count": 1,
+    "success_rate": 0.0,
+    "products_per_minute": 0.0,
+    "avg_page_time": 0.0
+  },
+  "errors": [
+    {
+      "type": "fatal_error",
+      "message": "'ScrapingResult' object has no attribute 'to_dict'",
+      "category": "unknown",
+      "context": {},
+      "timestamp": "2025-07-10T16:33:43.306210",
+      "traceback": null
+    }
+  ],
+  "performance_metrics": [
+    {
+      "operation": "scraper_initialization",
+      "duration": 1.820399,
+      "success": true,
+      "metadata": {}
+    }
+  ]
+}

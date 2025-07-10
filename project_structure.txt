@@ -1,0 +1,538 @@
+Folder PATH listing
+Volume serial number is E0AF-ED3B
+D:.
+³   .env
+³   .gitignore
+³   asda_homepage.png
+³   create_auth_files.py
+³   db.sqlite3
+³   manage.py
+³   project_structure.txt
+³   requirements.txt
+³   run_daily_tasks.bat
+³   setup_templates.py
+³   
+ÃÄÄÄasda_scraper
+³   ³   admin.py
+³   ³   apps.py
+³   ³   asda_link_crawler.py
+³   ³   exceptions.py
+³   ³   models.py
+³   ³   scraper_config.py
+³   ³   selenium_scraper.py
+³   ³   urls.py
+³   ³   views.py
+³   ³   __init__.py
+³   ³   
+³   ÃÄÄÄmanagement
+³   ³   ³   __init__.py
+³   ³   ³   
+³   ³   ÃÄÄÄcommands
+³   ³   ³   ³   delete_asda_products.py
+³   ³   ³   ³   run_asda_crawl.py
+³   ³   ³   ³   __init__.py
+³   ³   ³   ³   
+³   ³   ³   ÀÄÄÄ__pycache__
+³   ³   ³           run_asda_crawl.cpython-311.pyc
+³   ³   ³           __init__.cpython-311.pyc
+³   ³   ³           
+³   ³   ÀÄÄÄ__pycache__
+³   ³           __init__.cpython-311.pyc
+³   ³           
+³   ÃÄÄÄmigrations
+³   ³   ³   0001_initial.py
+³   ³   ³   __init__.py
+³   ³   ³   
+³   ³   ÀÄÄÄ__pycache__
+³   ³           0001_initial.cpython-311.pyc
+³   ³           0002_crawlqueue_linkrelationship_urlmap_and_more.cpython-311.pyc
+³   ³           __init__.cpython-311.pyc
+³   ³           
+³   ÃÄÄÄtemplates
+³   ³   ÀÄÄÄasda_scraper
+³   ³           base.html
+³   ³           categories.html
+³   ³           dashboard.html
+³   ³           delete_products.html
+³   ³           products.html
+³   ³           
+³   ÀÄÄÄ__pycache__
+³           admin.cpython-311.pyc
+³           apps.cpython-311.pyc
+³           asda_link_crawler.cpython-311.pyc
+³           models.cpython-311.pyc
+³           scraper.cpython-311.pyc
+³           selenium_scraper.cpython-311.pyc
+³           urls.cpython-311.pyc
+³           views.cpython-311.pyc
+³           __init__.cpython-311.pyc
+³           
+ÃÄÄÄauth_hub
+³   ³   admin.py
+³   ³   apps.py
+³   ³   cron.py
+³   ³   forms.py
+³   ³   models.py
+³   ³   tests.py
+³   ³   urls.py
+³   ³   views.py
+³   ³   __init__.py
+³   ³   
+³   ÃÄÄÄmanagement
+³   ³   ³   __init__.py
+³   ³   ³   
+³   ³   ÃÄÄÄcommands
+³   ³   ³   ³   create_missing_profiles.py
+³   ³   ³   ³   create_subscription_tiers.py
+³   ³   ³   ³   create_user_profiles.py
+³   ³   ³   ³   ensure_user_profiles.py
+³   ³   ³   ³   run_scheduled_tasks.py
+³   ³   ³   ³   test_cron.py
+³   ³   ³   ³   test_microsoft_settings.py
+³   ³   ³   ³   __init__.py
+³   ³   ³   ³   
+³   ³   ³   ÀÄÄÄ__pycache__
+³   ³   ³           create_missing_profiles.cpython-311.pyc
+³   ³   ³           create_subscription_tiers.cpython-311.pyc
+³   ³   ³           create_user_profiles.cpython-311.pyc
+³   ³   ³           ensure_user_profiles.cpython-311.pyc
+³   ³   ³           test_cron.cpython-311.pyc
+³   ³   ³           test_microsoft_settings.cpython-311.pyc
+³   ³   ³           __init__.cpython-311.pyc
+³   ³   ³           
+³   ³   ÀÄÄÄ__pycache__
+³   ³           __init__.cpython-311.pyc
+³   ³           
+³   ÃÄÄÄmigrations
+³   ³   ³   0001_initial.py
+³   ³   ³   0002_subscriptiontier_max_menus_and_more.py
+³   ³   ³   0003_microsoftoauthtoken.py
+³   ³   ³   __init__.py
+³   ³   ³   
+³   ³   ÀÄÄÄ__pycache__
+³   ³           0001_initial.cpython-311.pyc
+³   ³           0002_subscriptiontier_max_menus_and_more.cpython-311.pyc
+³   ³           0003_microsoftoauthtoken.cpython-311.pyc
+³   ³           __init__.cpython-311.pyc
+³   ³           
+³   ÃÄÄÄservices
+³   ³   ³   microsoft_auth.py
+³   ³   ³   
+³   ³   ÀÄÄÄ__pycache__
+³   ³           microsoft_auth.cpython-311.pyc
+³   ³           
+³   ÃÄÄÄtemplates
+³   ³   ³   base.html
+³   ³   ³   dashboard.html
+³   ³   ³   login.html
+³   ³   ³   menu_share_create.html
+³   ³   ³   profile_update.html
+³   ³   ³   register.html
+³   ³   ³   subscription_detail.html
+³   ³   ³   subscription_upgrade.html
+³   ³   ³   
+³   ³   ÀÄÄÄauth_hub
+³   ³       ÀÄÄÄemails
+³   ³               downgrade_completed.html
+³   ³               downgrade_completed.txt
+³   ³               downgrade_reminder.html
+³   ³               downgrade_reminder.txt
+³   ³               
+³   ÀÄÄÄ__pycache__
+³           admin.cpython-311.pyc
+³           apps.cpython-311.pyc
+³           cron.cpython-311.pyc
+³           forms.cpython-311.pyc
+³           models.cpython-311.pyc
+³           urls.cpython-311.pyc
+³           views.cpython-311.pyc
+³           __init__.cpython-311.pyc
+³           
+ÃÄÄÄkitchen_compass
+³   ³   asgi.py
+³   ³   celery.py
+³   ³   settings.py
+³   ³   urls.py
+³   ³   wsgi.py
+³   ³   __init__.py
+³   ³   
+³   ÀÄÄÄ__pycache__
+³           celery.cpython-311.pyc
+³           settings.cpython-311.pyc
+³           urls.cpython-311.pyc
+³           wsgi.cpython-311.pyc
+³           __init__.cpython-311.pyc
+³           
+ÃÄÄÄlogs
+³       asda_scraper.log
+³       errors.log
+³       kitchen_compass.log
+³       security.log
+³       
+ÃÄÄÄmeal_planner
+³   ³   admin.py
+³   ³   apps.py
+³   ³   csv_upload.py
+³   ³   models.py
+³   ³   signals.py
+³   ³   tasks.py
+³   ³   tests.py
+³   ³   urls.py
+³   ³   views.py
+³   ³   __init__.py
+³   ³   
+³   ÃÄÄÄforms
+³   ³   ³   csv_upload.py
+³   ³   ³   forms.py
+³   ³   ³   __init__.py
+³   ³   ³   
+³   ³   ÀÄÄÄ__pycache__
+³   ³           csv_upload.cpython-311.pyc
+³   ³           forms.cpython-311.pyc
+³   ³           __init__.cpython-311.pyc
+³   ³           
+³   ÃÄÄÄmanagement
+³   ³   ³   __init__.py
+³   ³   ³   
+³   ³   ÃÄÄÄcommands
+³   ³   ³   ³   create_ingredient_categories.py
+³   ³   ³   ³   create_meal_types.py
+³   ³   ³   ³   __init__.py
+³   ³   ³   ³   
+³   ³   ³   ÀÄÄÄ__pycache__
+³   ³   ³           create_ingredient_categories.cpython-311.pyc
+³   ³   ³           create_meal_types.cpython-311.pyc
+³   ³   ³           __init__.cpython-311.pyc
+³   ³   ³           
+³   ³   ÀÄÄÄ__pycache__
+³   ³           __init__.cpython-311.pyc
+³   ³           
+³   ÃÄÄÄmigrations
+³   ³   ³   0001_initial.py
+³   ³   ³   0002_calendarevent.py
+³   ³   ³   0003_recipecsvupload.py
+³   ³   ³   0004_alter_mealslot_recipe.py
+³   ³   ³   __init__.py
+³   ³   ³   
+³   ³   ÀÄÄÄ__pycache__
+³   ³           0001_initial.cpython-311.pyc
+³   ³           0002_calendarevent.cpython-311.pyc
+³   ³           0003_recipecsvupload.cpython-311.pyc
+³   ³           0004_alter_mealslot_recipe.cpython-311.pyc
+³   ³           __init__.cpython-311.pyc
+³   ³           
+³   ÃÄÄÄstatic
+³   ³   ÀÄÄÄmeal_planner
+³   ³       ÃÄÄÄcss
+³   ³       ÀÄÄÄjs
+³   ÃÄÄÄtemplates
+³   ³   ÀÄÄÄmeal_planner
+³   ³       ³   apply_template.html
+³   ³       ³   calendar.html
+³   ³       ³   calendar_sync_settings.html
+³   ³       ³   meal_plan_confirm_delete.html
+³   ³       ³   meal_plan_detail.html
+³   ³       ³   meal_plan_form.html
+³   ³       ³   meal_plan_list.html
+³   ³       ³   shopping_list.html
+³   ³       ³   template_form.html
+³   ³       ³   template_list.html
+³   ³       ³   
+³   ³       ÃÄÄÄadmin
+³   ³       ³       csv_history.html
+³   ³       ³       csv_preview.html
+³   ³       ³       csv_result.html
+³   ³       ³       csv_upload.html
+³   ³       ³       
+³   ³       ÀÄÄÄincludes
+³   ÃÄÄÄtemplatetags
+³   ³   ³   meal_planner_tags.py
+³   ³   ³   __init__.py
+³   ³   ³   
+³   ³   ÀÄÄÄ__pycache__
+³   ³           meal_planner_tags.cpython-311.pyc
+³   ³           __init__.cpython-311.pyc
+³   ³           
+³   ÃÄÄÄutils
+³   ³   ³   csv_processor.py
+³   ³   ³   __init__.py
+³   ³   ³   
+³   ³   ÀÄÄÄ__pycache__
+³   ³           csv_processor.cpython-311.pyc
+³   ³           __init__.cpython-311.pyc
+³   ³           
+³   ÃÄÄÄviews
+³   ³   ³   calendar_views.py
+³   ³   ³   csv_upload_views.py
+³   ³   ³   meal_plan_views.py
+³   ³   ³   template_views.py
+³   ³   ³   __init__.py
+³   ³   ³   
+³   ³   ÀÄÄÄ__pycache__
+³   ³           calendar_views.cpython-311.pyc
+³   ³           csv_upload_views.cpython-311.pyc
+³   ³           meal_plan_views.cpython-311.pyc
+³   ³           template_views.cpython-311.pyc
+³   ³           __init__.cpython-311.pyc
+³   ³           
+³   ÀÄÄÄ__pycache__
+³           admin.cpython-311.pyc
+³           apps.cpython-311.pyc
+³           forms.cpython-311.pyc
+³           models.cpython-311.pyc
+³           signals.cpython-311.pyc
+³           tasks.cpython-311.pyc
+³           urls.cpython-311.pyc
+³           views.cpython-311.pyc
+³           __init__.cpython-311.pyc
+³           
+ÃÄÄÄmedia
+³   ÀÄÄÄcsv_uploads
+³       ÀÄÄÄrecipes
+³               20250626_200443_breakfast_recipes.csv
+³               20250626_200811_breakfast_recipes.csv
+³               
+ÃÄÄÄrecipe_hub
+³   ³   admin.py
+³   ³   apps.py
+³   ³   csv_handler.py
+³   ³   forms.py
+³   ³   models.py
+³   ³   tests.py
+³   ³   urls.py
+³   ³   views.py
+³   ³   __init__.py
+³   ³   
+³   ÃÄÄÄapi
+³   ³       views.py
+³   ³       
+³   ÃÄÄÄmanagement
+³   ³   ³   __init__.py
+³   ³   ³   
+³   ³   ÃÄÄÄcommands
+³   ³   ³   ³   create_recipe_categories.py
+³   ³   ³   ³   setup_ingredient_categories.py
+³   ³   ³   ³   __init__.py
+³   ³   ³   ³   
+³   ³   ³   ÀÄÄÄ__pycache__
+³   ³   ³           create_recipe_categories.cpython-311.pyc
+³   ³   ³           setup_ingredient_categories.cpython-311.pyc
+³   ³   ³           __init__.cpython-311.pyc
+³   ³   ³           
+³   ³   ÀÄÄÄ__pycache__
+³   ³           __init__.cpython-311.pyc
+³   ³           
+³   ÃÄÄÄmigrations
+³   ³   ³   0001_initial.py
+³   ³   ³   0002_recipe_meal_types.py
+³   ³   ³   0003_ingredientcategory_alter_ingredient_options_and_more.py
+³   ³   ³   0004_alter_ingredient_order_alter_ingredient_unit.py
+³   ³   ³   __init__.py
+³   ³   ³   
+³   ³   ÀÄÄÄ__pycache__
+³   ³           0001_initial.cpython-311.pyc
+³   ³           0002_recipe_meal_types.cpython-311.pyc
+³   ³           0003_ingredientcategory_alter_ingredient_options_and_more.cpython-311.pyc
+³   ³           0004_alter_ingredient_order_alter_ingredient_unit.cpython-311.pyc
+³   ³           __init__.cpython-311.pyc
+³   ³           
+³   ÃÄÄÄtemplates
+³   ³   ÀÄÄÄrecipe_hub
+³   ³       ³   category_recipes.html
+³   ³       ³   csv_import_history.html
+³   ³       ³   csv_upload.html
+³   ³       ³   csv_upload_results.html
+³   ³       ³   favorite_recipes.html
+³   ³       ³   recipe_confirm_delete.html
+³   ³       ³   recipe_detail.html
+³   ³       ³   recipe_form.html
+³   ³       ³   recipe_list.html
+³   ³       ³   user_recipes.html
+³   ³       ³   
+³   ³       ÀÄÄÄincludes
+³   ³               category_badge.html
+³   ³               recipe_card.html
+³   ³               
+³   ÃÄÄÄtemplatetags
+³   ³   ³   recipe_tags.py
+³   ³   ³   __init__.py
+³   ³   ³   
+³   ³   ÀÄÄÄ__pycache__
+³   ³           recipe_tags.cpython-311.pyc
+³   ³           __init__.cpython-311.pyc
+³   ³           
+³   ÀÄÄÄ__pycache__
+³           admin.cpython-311.pyc
+³           apps.cpython-311.pyc
+³           csv_handler.cpython-311.pyc
+³           forms.cpython-311.pyc
+³           models.cpython-311.pyc
+³           urls.cpython-311.pyc
+³           views.cpython-311.pyc
+³           __init__.cpython-311.pyc
+³           
+ÃÄÄÄstatic
+³   ÃÄÄÄcss
+³   ³       auth.css
+³   ³       
+³   ÃÄÄÄimages
+³   ÀÄÄÄjs
+ÀÄÄÄstaticfiles
+    ÃÄÄÄaccount
+    ³   ÀÄÄÄjs
+    ³           account.js
+    ³           onload.js
+    ³           
+    ÃÄÄÄadmin
+    ³   ÃÄÄÄcss
+    ³   ³   ³   autocomplete.css
+    ³   ³   ³   base.css
+    ³   ³   ³   changelists.css
+    ³   ³   ³   dark_mode.css
+    ³   ³   ³   dashboard.css
+    ³   ³   ³   forms.css
+    ³   ³   ³   login.css
+    ³   ³   ³   nav_sidebar.css
+    ³   ³   ³   responsive.css
+    ³   ³   ³   responsive_rtl.css
+    ³   ³   ³   rtl.css
+    ³   ³   ³   unusable_password_field.css
+    ³   ³   ³   widgets.css
+    ³   ³   ³   
+    ³   ³   ÀÄÄÄvendor
+    ³   ³       ÀÄÄÄselect2
+    ³   ³               LICENSE-SELECT2.md
+    ³   ³               select2.css
+    ³   ³               select2.min.css
+    ³   ³               
+    ³   ÃÄÄÄimg
+    ³   ³   ³   calendar-icons.svg
+    ³   ³   ³   icon-addlink.svg
+    ³   ³   ³   icon-alert.svg
+    ³   ³   ³   icon-calendar.svg
+    ³   ³   ³   icon-changelink.svg
+    ³   ³   ³   icon-clock.svg
+    ³   ³   ³   icon-deletelink.svg
+    ³   ³   ³   icon-hidelink.svg
+    ³   ³   ³   icon-no.svg
+    ³   ³   ³   icon-unknown-alt.svg
+    ³   ³   ³   icon-unknown.svg
+    ³   ³   ³   icon-viewlink.svg
+    ³   ³   ³   icon-yes.svg
+    ³   ³   ³   inline-delete.svg
+    ³   ³   ³   LICENSE
+    ³   ³   ³   README.txt
+    ³   ³   ³   search.svg
+    ³   ³   ³   selector-icons.svg
+    ³   ³   ³   sorting-icons.svg
+    ³   ³   ³   tooltag-add.svg
+    ³   ³   ³   tooltag-arrowright.svg
+    ³   ³   ³   
+    ³   ³   ÀÄÄÄgis
+    ³   ³           move_vertex_off.svg
+    ³   ³           move_vertex_on.svg
+    ³   ³           
+    ³   ÀÄÄÄjs
+    ³       ³   actions.js
+    ³       ³   autocomplete.js
+    ³       ³   calendar.js
+    ³       ³   cancel.js
+    ³       ³   change_form.js
+    ³       ³   core.js
+    ³       ³   filters.js
+    ³       ³   inlines.js
+    ³       ³   jquery.init.js
+    ³       ³   nav_sidebar.js
+    ³       ³   popup_response.js
+    ³       ³   prepopulate.js
+    ³       ³   prepopulate_init.js
+    ³       ³   SelectBox.js
+    ³       ³   SelectFilter2.js
+    ³       ³   theme.js
+    ³       ³   unusable_password_field.js
+    ³       ³   urlify.js
+    ³       ³   
+    ³       ÃÄÄÄadmin
+    ³       ³       DateTimeShortcuts.js
+    ³       ³       RelatedObjectLookups.js
+    ³       ³       
+    ³       ÀÄÄÄvendor
+    ³           ÃÄÄÄjquery
+    ³           ³       jquery.js
+    ³           ³       jquery.min.js
+    ³           ³       LICENSE.txt
+    ³           ³       
+    ³           ÃÄÄÄselect2
+    ³           ³   ³   LICENSE.md
+    ³           ³   ³   select2.full.js
+    ³           ³   ³   select2.full.min.js
+    ³           ³   ³   
+    ³           ³   ÀÄÄÄi18n
+    ³           ³           af.js
+    ³           ³           ar.js
+    ³           ³           az.js
+    ³           ³           bg.js
+    ³           ³           bn.js
+    ³           ³           bs.js
+    ³           ³           ca.js
+    ³           ³           cs.js
+    ³           ³           da.js
+    ³           ³           de.js
+    ³           ³           dsb.js
+    ³           ³           el.js
+    ³           ³           en.js
+    ³           ³           es.js
+    ³           ³           et.js
+    ³           ³           eu.js
+    ³           ³           fa.js
+    ³           ³           fi.js
+    ³           ³           fr.js
+    ³           ³           gl.js
+    ³           ³           he.js
+    ³           ³           hi.js
+    ³           ³           hr.js
+    ³           ³           hsb.js
+    ³           ³           hu.js
+    ³           ³           hy.js
+    ³           ³           id.js
+    ³           ³           is.js
+    ³           ³           it.js
+    ³           ³           ja.js
+    ³           ³           ka.js
+    ³           ³           km.js
+    ³           ³           ko.js
+    ³           ³           lt.js
+    ³           ³           lv.js
+    ³           ³           mk.js
+    ³           ³           ms.js
+    ³           ³           nb.js
+    ³           ³           ne.js
+    ³           ³           nl.js
+    ³           ³           pl.js
+    ³           ³           ps.js
+    ³           ³           pt-BR.js
+    ³           ³           pt.js
+    ³           ³           ro.js
+    ³           ³           ru.js
+    ³           ³           sk.js
+    ³           ³           sl.js
+    ³           ³           sq.js
+    ³           ³           sr-Cyrl.js
+    ³           ³           sr.js
+    ³           ³           sv.js
+    ³           ³           th.js
+    ³           ³           tk.js
+    ³           ³           tr.js
+    ³           ³           uk.js
+    ³           ³           vi.js
+    ³           ³           zh-CN.js
+    ³           ³           zh-TW.js
+    ³           ³           
+    ³           ÀÄÄÄxregexp
+    ³                   LICENSE.txt
+    ³                   xregexp.js
+    ³                   xregexp.min.js
+    ³                   
+    ÀÄÄÄcss
+            auth.css
+            
