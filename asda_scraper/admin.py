@@ -1169,72 +1169,74 @@ class ProxyProviderSettingsAdmin(admin.ModelAdmin):
     status_display.short_description = 'Status'
 
 
+# Update the proxy-related admin classes in your admin.py file
+# Replace the existing proxy admin configurations with these:
+
 @admin.register(EnhancedProxyModel)
 class EnhancedProxyModelAdmin(admin.ModelAdmin):
     """Admin interface for individual proxies."""
     
     list_display = [
-        'proxy_display', 'tier', 'provider', 'status', 
-        'success_rate', 'response_time', 'last_used'
+        'proxy_display', 'source', 'provider_display', 'status', 
+        'success_rate_display', 'response_time', 'last_used'
     ]
     
     list_filter = [
-        'tier', 'status', 'provider', 'is_residential',
-        'supports_https', 'country'
+        'source', 'status', 'provider', 'proxy_type',
+        'country_code'  # Changed from 'country' to 'country_code'
     ]
     
-    search_fields = ['ip_address', 'provider', 'country', 'city']
+    search_fields = ['ip_address', 'city', 'country_code']
     
     list_editable = ['status']
     
     fieldsets = (
         ('Basic Information', {
             'fields': (
-                'ip_address', 'port', 'proxy_type', 'tier', 'provider'
+                'ip_address', 'port', 'proxy_type', 'source', 'provider'
             )
         }),
         ('Authentication', {
             'fields': ('username', 'password'),
             'classes': ('collapse',)
         }),
+        ('Location', {
+            'fields': ('country_code', 'city'),
+            'classes': ('collapse',)
+        }),
         ('Status & Performance', {
             'fields': (
-                'status', 'last_checked', 'response_time', 'success_rate'
+                'status', 'last_check', 'response_time', 
+                'success_count', 'failure_count', 'consecutive_failures'
             )
         }),
         ('Usage Statistics', {
             'fields': (
-                'total_requests', 'failed_requests', 'bytes_used', 'last_used'
+                'daily_request_count', 'total_request_count', 'last_used'
             )
         }),
-        ('Cost & Limits', {
-            'fields': (
-                'cost_per_request', 'total_cost', 'daily_request_limit',
-                'daily_requests_used', 'bandwidth_limit_gb'
-            ),
+        ('Additional Information', {
+            'fields': ('notes',),
             'classes': ('collapse',)
         }),
-        ('Additional Information', {
-            'fields': (
-                'country', 'city', 'asn', 'is_residential', 'supports_https',
-                'expires_at'
-            ),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',)
         })
     )
     
     readonly_fields = ['created_at', 'updated_at']
     
-    actions = ['mark_as_active', 'mark_as_inactive', 'test_proxies']
+    actions = ['mark_as_active', 'mark_as_inactive', 'test_proxies', 'reset_statistics']
     
     def proxy_display(self, obj):
-        """Display proxy with tier indicator."""
-        tier_colors = {
-            'premium': '#4CAF50',
-            'standard': '#2196F3',
-            'free': '#FF9800'
+        """Display proxy with source indicator."""
+        source_colors = {
+            'paid': '#4CAF50',
+            'free': '#FF9800',
+            'manual': '#2196F3'
         }
-        color = tier_colors.get(obj.tier, '#666')
+        color = source_colors.get(obj.source, '#666')
         return format_html(
             '<span style="color: {};">●</span> {}://{}:{}',
             color,
@@ -1243,6 +1245,29 @@ class EnhancedProxyModelAdmin(admin.ModelAdmin):
             obj.port
         )
     proxy_display.short_description = 'Proxy'
+    
+    def provider_display(self, obj):
+        """Display provider name or source."""
+        if obj.provider:
+            return obj.provider.display_name
+        return obj.get_source_display()
+    provider_display.short_description = 'Provider/Source'
+    
+    def success_rate_display(self, obj):
+        """Display calculated success rate."""
+        rate = obj.calculate_success_rate()
+        if rate >= 80:
+            color = 'green'
+        elif rate >= 50:
+            color = 'orange'
+        else:
+            color = 'red'
+        return format_html(
+            '<span style="color: {};">{:.1f}%</span>',
+            color,
+            rate
+        )
+    success_rate_display.short_description = 'Success Rate'
     
     def mark_as_active(self, request, queryset):
         """Mark selected proxies as active."""
@@ -1258,10 +1283,157 @@ class EnhancedProxyModelAdmin(admin.ModelAdmin):
     
     def test_proxies(self, request, queryset):
         """Test selected proxies."""
-        # This would trigger proxy testing
-        messages.info(request, f'Testing {queryset.count()} proxies...')
+        count = queryset.count()
+        messages.info(request, f'Testing {count} proxies... (This may take a while)')
+        # Actual testing would be done asynchronously
     test_proxies.short_description = 'Test selected proxies'
+    
+    def reset_statistics(self, request, queryset):
+        """Reset statistics for selected proxies."""
+        queryset.update(
+            success_count=0,
+            failure_count=0,
+            consecutive_failures=0,
+            daily_request_count=0,
+            response_time=0
+        )
+        messages.success(request, f'Reset statistics for {queryset.count()} proxies.')
+    reset_statistics.short_description = 'Reset statistics'
+    
+    def get_queryset(self, request):
+        """Optimize queryset with select_related."""
+        return super().get_queryset(request).select_related('provider')
 
+
+@admin.register(ProxyProviderSettings)
+class ProxyProviderSettingsAdmin(admin.ModelAdmin):
+    """Admin interface for individual proxy providers."""
+    
+    form = ProxyProviderAdminForm
+    
+    list_display = [
+        'provider_display', 'is_enabled', 'tier', 'cost_info',
+        'usage_stats', 'status_display'
+    ]
+    
+    list_filter = ['is_enabled', 'tier', 'provider']  # Removed 'is_working'
+    list_editable = ['is_enabled']
+    
+    search_fields = ['display_name', 'provider', 'api_endpoint']
+    
+    fieldsets = (
+        ('Provider Information', {
+            'fields': (
+                'provider', 'display_name', 'is_enabled', 'tier'
+            )
+        }),
+        ('API Configuration', {
+            'fields': (
+                'api_endpoint', 'api_key', 'username', 'password'
+            ),
+            'description': 'Enter API credentials for this provider'
+        }),
+        ('Cost Configuration', {
+            'fields': (
+                'cost_per_gb', 'cost_per_request', 'minimum_monthly_cost'
+            )
+        }),
+        ('Limits & Features', {
+            'fields': (
+                'monthly_bandwidth_gb', 'concurrent_connections',
+                'supports_countries', 'supports_cities',
+                'supports_sticky_sessions', 'supports_residential'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Statistics', {
+            'fields': (
+                'total_requests', 'total_bandwidth_mb', 'total_cost',
+                'success_rate', 'average_response_time', 'last_used'
+            ),
+            'classes': ('collapse',),
+            'description': 'Automatically updated usage statistics'
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        })
+    )
+    
+    readonly_fields = [
+        'total_requests', 'total_bandwidth_mb', 'total_cost',
+        'success_rate', 'average_response_time', 'last_used',
+        'created_at', 'updated_at'
+    ]
+    
+    def provider_display(self, obj):
+        """Display provider with icon."""
+        icon_map = {
+            'bright_data': '🌟',
+            'smartproxy': '🔧',
+            'oxylabs': '🐙',
+            'blazing_seo': '🔥',
+            'storm_proxies': '⛈️',
+            'custom': '⚙️'
+        }
+        icon = icon_map.get(obj.provider, '📡')
+        return format_html(
+            '{} <strong>{}</strong>',
+            icon,
+            obj.display_name
+        )
+    provider_display.short_description = 'Provider'
+    
+    def cost_info(self, obj):
+        """Display cost information."""
+        monthly_cost = obj.get_estimated_monthly_cost()
+        return format_html(
+            '${:.2f}/GB<br><small>${:.2f}/mo est.</small>',
+            obj.cost_per_gb,
+            monthly_cost
+        )
+    cost_info.short_description = 'Cost'
+    
+    def usage_stats(self, obj):
+        """Display usage statistics."""
+        gb_used = float(obj.total_bandwidth_mb) / 1024
+        return format_html(
+            '{:,} requests<br>{:.2f} GB<br>${:.2f} total',
+            obj.total_requests,
+            gb_used,
+            obj.total_cost
+        )
+    usage_stats.short_description = 'Usage'
+    
+    def status_display(self, obj):
+        """Display provider status based on recent usage."""
+        if not obj.is_enabled:
+            return format_html(
+                '<span style="color: gray;">- Disabled</span>'
+            )
+        
+        # Check if recently used
+        if obj.last_used and (timezone.now() - obj.last_used).days < 1:
+            return format_html(
+                '<span style="color: green;">✓ Active</span>'
+            )
+        elif obj.last_used and (timezone.now() - obj.last_used).days < 7:
+            return format_html(
+                '<span style="color: orange;">⚡ Idle</span>'
+            )
+        else:
+            return format_html(
+                '<span style="color: red;">✗ Inactive</span>'
+            )
+    status_display.short_description = 'Status'
+    
+    def save_model(self, request, obj, form, change):
+        """Save the model and show success message."""
+        super().save_model(request, obj, form, change)
+        messages.success(
+            request,
+            f"Proxy provider '{obj.display_name}' has been saved successfully."
+        )
 
 # Quick setup to create initial configuration if none exists
 def ensure_proxy_config_exists():

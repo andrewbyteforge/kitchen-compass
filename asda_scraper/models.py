@@ -1116,3 +1116,556 @@ def get_duration(self):
 def error_message(self):
     """Provide backwards compatibility for views expecting error_message."""
     return self.error_log
+
+
+# Add these models to your existing asda_scraper/models.py file
+
+class ProxyConfiguration(models.Model):
+    """
+    Global proxy configuration settings.
+    
+    Controls how the scraper uses proxies, including paid/free proxy preferences,
+    rotation strategies, and cost management.
+    """
+    name = models.CharField(
+        max_length=100,
+        default="Default Configuration",
+        help_text="Configuration name"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this configuration is currently active"
+    )
+    
+    # Proxy Behavior
+    enable_proxy_service = models.BooleanField(
+        default=False,
+        help_text="Enable proxy service for scraping"
+    )
+    prefer_paid_proxies = models.BooleanField(
+        default=True,
+        help_text="Use paid proxies before trying free ones"
+    )
+    fallback_to_free = models.BooleanField(
+        default=True,
+        help_text="Use free proxies when paid proxies fail"
+    )
+    allow_direct_connection = models.BooleanField(
+        default=False,
+        help_text="Allow direct connection when all proxies fail"
+    )
+    
+    # Performance Settings
+    rotation_strategy = models.CharField(
+        max_length=50,
+        choices=[
+            ('round_robin', 'Round Robin'),
+            ('random', 'Random'),
+            ('least_used', 'Least Used'),
+            ('performance_based', 'Performance Based'),
+        ],
+        default='performance_based',
+        help_text="How to select the next proxy"
+    )
+    max_requests_per_proxy = models.PositiveIntegerField(
+        default=100,
+        help_text="Rotate proxy after this many requests"
+    )
+    proxy_timeout_seconds = models.PositiveIntegerField(
+        default=10,
+        help_text="Timeout for proxy connections in seconds"
+    )
+    health_check_interval_minutes = models.PositiveIntegerField(
+        default=5,
+        help_text="Check proxy health every N minutes"
+    )
+    
+    # Cost Management
+    daily_budget_limit = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=100.00,
+        help_text="Maximum daily spend on paid proxies (USD)"
+    )
+    cost_alert_threshold = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=80.00,
+        help_text="Alert when daily cost exceeds this amount (USD)"
+    )
+    
+    # Free Proxy Settings
+    enable_free_proxy_fetching = models.BooleanField(
+        default=True,
+        help_text="Automatically fetch and validate free proxies"
+    )
+    free_proxy_update_hours = models.PositiveIntegerField(
+        default=1,
+        help_text="Update free proxy list every N hours"
+    )
+    max_free_proxies = models.PositiveIntegerField(
+        default=200,
+        help_text="Maximum number of free proxies to maintain"
+    )
+    
+    # Monitoring
+    enable_monitoring = models.BooleanField(
+        default=True,
+        help_text="Enable proxy performance monitoring"
+    )
+    alert_email = models.EmailField(
+        blank=True,
+        help_text="Email for proxy alerts (leave blank to disable)"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Proxy Configuration"
+        verbose_name_plural = "Proxy Configurations"
+    
+    def __str__(self):
+        """String representation of the proxy configuration."""
+        return f"{self.name} ({'Active' if self.is_active else 'Inactive'})"
+    
+    def save(self, *args, **kwargs):
+        """Ensure only one configuration is active at a time."""
+        if self.is_active:
+            ProxyConfiguration.objects.exclude(pk=self.pk).update(is_active=False)
+        super().save(*args, **kwargs)
+        logger.info(f"Proxy configuration '{self.name}' saved as active configuration")
+
+
+class ProxyProviderSettings(models.Model):
+    """
+    Settings for individual proxy providers.
+    
+    Stores configuration for different proxy services like Bright Data,
+    SmartProxy, etc., including authentication and cost information.
+    """
+    PROVIDER_CHOICES = [
+        ('bright_data', 'Bright Data (Luminati)'),
+        ('smartproxy', 'SmartProxy'),
+        ('oxylabs', 'Oxylabs'),
+        ('blazing_seo', 'Blazing SEO'),
+        ('storm_proxies', 'Storm Proxies'),
+        ('proxy_cheap', 'Proxy-Cheap'),
+        ('hydraproxy', 'HydraProxy'),
+        ('custom', 'Custom Provider'),
+    ]
+    
+    TIER_CHOICES = [
+        ('premium', 'Premium (Residential)'),
+        ('standard', 'Standard (Datacenter)'),
+    ]
+    
+    # Basic Information
+    provider = models.CharField(
+        max_length=50,
+        choices=PROVIDER_CHOICES,
+        unique=True,
+        help_text="Proxy provider service"
+    )
+    display_name = models.CharField(
+        max_length=100,
+        help_text="Display name for this provider"
+    )
+    is_enabled = models.BooleanField(
+        default=False,
+        help_text="Enable this proxy provider"
+    )
+    tier = models.CharField(
+        max_length=20,
+        choices=TIER_CHOICES,
+        default='standard',
+        help_text="Proxy quality tier"
+    )
+    
+    # API Configuration
+    api_endpoint = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="API endpoint URL (e.g., gate.smartproxy.com:10000)"
+    )
+    api_key = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="API key for provider"
+    )
+    
+    # Authentication (encrypted)
+    username = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Username for proxy authentication"
+    )
+    password_encrypted = models.TextField(
+        blank=True,
+        help_text="Encrypted password"
+    )
+    
+    # Cost Configuration
+    cost_per_gb = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=1.00,
+        help_text="Cost per GB of data (USD)"
+    )
+    cost_per_request = models.DecimalField(
+        max_digits=10,
+        decimal_places=6,
+        default=0.0001,
+        help_text="Cost per request (USD)"
+    )
+    minimum_monthly_cost = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        help_text="Minimum monthly commitment (USD)"
+    )
+    
+    # Limits
+    monthly_bandwidth_gb = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Monthly bandwidth limit in GB"
+    )
+    concurrent_connections = models.PositiveIntegerField(
+        default=100,
+        help_text="Maximum concurrent connections"
+    )
+    
+    # Features
+    supports_countries = models.BooleanField(
+        default=True,
+        help_text="Supports country-level targeting"
+    )
+    supports_cities = models.BooleanField(
+        default=False,
+        help_text="Supports city-level targeting"
+    )
+    supports_sticky_sessions = models.BooleanField(
+        default=True,
+        help_text="Supports sticky/persistent sessions"
+    )
+    supports_residential = models.BooleanField(
+        default=False,
+        help_text="Offers residential IPs"
+    )
+    
+    # Statistics
+    total_requests = models.PositiveBigIntegerField(
+        default=0,
+        help_text="Total requests made through this provider"
+    )
+    total_bandwidth_mb = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=0,
+        help_text="Total bandwidth used in MB"
+    )
+    total_cost = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        help_text="Total cost incurred (USD)"
+    )
+    success_rate = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Success rate percentage"
+    )
+    average_response_time = models.FloatField(
+        default=0,
+        help_text="Average response time in seconds"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_used = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this provider was last used"
+    )
+    
+    class Meta:
+        verbose_name = "Proxy Provider Settings"
+        verbose_name_plural = "Proxy Provider Settings"
+        ordering = ['provider']
+    
+    def __str__(self):
+        """String representation of the provider."""
+        return f"{self.display_name} ({'Enabled' if self.is_enabled else 'Disabled'})"
+    
+    def get_password(self):
+        """Decrypt and return the password."""
+        if not self.password_encrypted:
+            return ""
+        try:
+            from cryptography.fernet import Fernet
+            from django.conf import settings
+            # You should store this key securely in settings
+            key = getattr(settings, 'PROXY_ENCRYPTION_KEY', Fernet.generate_key())
+            f = Fernet(key)
+            return f.decrypt(self.password_encrypted.encode()).decode()
+        except Exception as e:
+            logger.error(f"Error decrypting password for {self.provider}: {str(e)}")
+            return ""
+    
+    def set_password(self, password):
+        """Encrypt and store the password."""
+        if not password:
+            self.password_encrypted = ""
+            return
+        try:
+            from cryptography.fernet import Fernet
+            from django.conf import settings
+            # You should store this key securely in settings
+            key = getattr(settings, 'PROXY_ENCRYPTION_KEY', Fernet.generate_key())
+            f = Fernet(key)
+            self.password_encrypted = f.encrypt(password.encode()).decode()
+        except Exception as e:
+            logger.error(f"Error encrypting password for {self.provider}: {str(e)}")
+    
+    def get_estimated_monthly_cost(self):
+        """Calculate estimated monthly cost based on usage."""
+        if self.minimum_monthly_cost > 0:
+            return self.minimum_monthly_cost
+        
+        # Estimate based on usage
+        days_used = (timezone.now() - self.created_at).days or 1
+        daily_cost = float(self.total_cost) / days_used
+        return Decimal(daily_cost * 30)
+    
+    def clean(self):
+        """Validate the provider settings."""
+        if self.is_enabled:
+            if not self.api_endpoint and self.provider != 'custom':
+                raise ValidationError("API endpoint is required for enabled providers")
+            
+            if self.provider in ['bright_data', 'smartproxy', 'oxylabs']:
+                if not self.username or not self.password_encrypted:
+                    raise ValidationError(
+                        f"{self.get_provider_display()} requires username and password"
+                    )
+
+
+class EnhancedProxyModel(models.Model):
+    """
+    Individual proxy entry with enhanced tracking.
+    
+    Stores individual proxy information including performance metrics,
+    health status, and usage statistics.
+    """
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('inactive', 'Inactive'),
+        ('testing', 'Testing'),
+        ('failed', 'Failed'),
+        ('blacklisted', 'Blacklisted'),
+    ]
+    
+    PROXY_TYPE_CHOICES = [
+        ('http', 'HTTP'),
+        ('https', 'HTTPS'),
+        ('socks4', 'SOCKS4'),
+        ('socks5', 'SOCKS5'),
+    ]
+    
+    SOURCE_CHOICES = [
+        ('paid', 'Paid Provider'),
+        ('free', 'Free Source'),
+        ('manual', 'Manually Added'),
+    ]
+    
+    # Basic Information
+    ip_address = models.GenericIPAddressField(
+        help_text="Proxy IP address"
+    )
+    port = models.PositiveIntegerField(
+        validators=[MaxValueValidator(65535)],
+        help_text="Proxy port"
+    )
+    proxy_type = models.CharField(
+        max_length=10,
+        choices=PROXY_TYPE_CHOICES,
+        default='http',
+        help_text="Type of proxy"
+    )
+    
+    # Authentication
+    username = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Username for proxy authentication"
+    )
+    password = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Password for proxy authentication"
+    )
+    
+    # Source Information
+    source = models.CharField(
+        max_length=20,
+        choices=SOURCE_CHOICES,
+        help_text="Where this proxy came from"
+    )
+    provider = models.ForeignKey(
+        ProxyProviderSettings,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='proxies',
+        help_text="Provider if this is a paid proxy"
+    )
+    
+    # Location
+    country_code = models.CharField(
+        max_length=2,
+        blank=True,
+        help_text="ISO 3166-1 alpha-2 country code"
+    )
+    city = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="City location if known"
+    )
+    
+    # Status and Health
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='testing',
+        db_index=True,
+        help_text="Current proxy status"
+    )
+    last_check = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last health check time"
+    )
+    last_used = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last time proxy was used"
+    )
+    
+    # Performance Metrics
+    response_time = models.FloatField(
+        default=0,
+        help_text="Average response time in seconds"
+    )
+    success_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Successful requests"
+    )
+    failure_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Failed requests"
+    )
+    consecutive_failures = models.PositiveIntegerField(
+        default=0,
+        help_text="Consecutive failure count"
+    )
+    
+    # Usage Limits
+    daily_request_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Requests made today"
+    )
+    total_request_count = models.PositiveBigIntegerField(
+        default=0,
+        help_text="Total requests made"
+    )
+    
+    # Additional Info
+    notes = models.TextField(
+        blank=True,
+        help_text="Additional notes about this proxy"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Enhanced Proxy"
+        verbose_name_plural = "Enhanced Proxies"
+        unique_together = [('ip_address', 'port')]
+        ordering = ['-status', 'response_time']
+        indexes = [
+            models.Index(fields=['status', 'source']),
+            models.Index(fields=['last_used', 'status']),
+        ]
+    
+    def __str__(self):
+        """String representation of the proxy."""
+        auth = f"{self.username}@" if self.username else ""
+        return f"{self.proxy_type}://{auth}{self.ip_address}:{self.port}"
+    
+    def get_proxy_url(self):
+        """Get the full proxy URL for use in requests."""
+        auth = ""
+        if self.username and self.password:
+            auth = f"{self.username}:{self.password}@"
+        return f"{self.proxy_type}://{auth}{self.ip_address}:{self.port}"
+    
+    def calculate_success_rate(self):
+        """Calculate the success rate percentage."""
+        total = self.success_count + self.failure_count
+        if total == 0:
+            return 0
+        return round((self.success_count / total) * 100, 2)
+    
+    def mark_success(self):
+        """Mark a successful request."""
+        self.success_count += 1
+        self.consecutive_failures = 0
+        self.daily_request_count += 1
+        self.total_request_count += 1
+        self.last_used = timezone.now()
+        self.save(update_fields=[
+            'success_count', 'consecutive_failures', 
+            'daily_request_count', 'total_request_count', 'last_used'
+        ])
+    
+    def mark_failure(self):
+        """Mark a failed request."""
+        self.failure_count += 1
+        self.consecutive_failures += 1
+        self.daily_request_count += 1
+        self.total_request_count += 1
+        self.last_used = timezone.now()
+        
+        # Auto-blacklist after too many consecutive failures
+        if self.consecutive_failures >= 5:
+            self.status = 'failed'
+            logger.warning(f"Proxy {self} marked as failed after {self.consecutive_failures} consecutive failures")
+        
+        self.save(update_fields=[
+            'failure_count', 'consecutive_failures', 
+            'daily_request_count', 'total_request_count', 
+            'last_used', 'status'
+        ])
+    
+    def reset_daily_count(self):
+        """Reset daily request count."""
+        self.daily_request_count = 0
+        self.save(update_fields=['daily_request_count'])
+    
+    def clean(self):
+        """Validate proxy data."""
+        if self.source == 'paid' and not self.provider:
+            raise ValidationError("Paid proxies must have a provider specified")
+        
+        if self.provider and self.source != 'paid':
+            raise ValidationError("Only paid proxies can have a provider")
+        
+        if self.username and not self.password:
+            raise ValidationError("Password is required when username is provided")
