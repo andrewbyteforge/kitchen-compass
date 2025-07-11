@@ -1059,6 +1059,50 @@ class ProductExtractor:
                 self.session.products_found += 1
             else:
                 self.session.products_updated += 1
+            
+            # Check if we should crawl nutrition
+            crawl_type = self.session.crawl_type
+            should_crawl_nutrition = crawl_type in ['NUTRITION', 'BOTH']
+            
+            # Extract nutritional information if requested and product has URL
+            if should_crawl_nutrition and product_data.get('url'):
+                logger.info(f"🍎 Attempting to extract nutrition for: {product.name}")
+                
+                # Get the scraper instance (it's the parent of this ProductExtractor)
+                # The nutrition method is on the scraper, not this extractor
+                if hasattr(self, 'driver'):
+                    # We need to access the parent scraper's method
+                    # Since this is tricky, let's add a reference when creating ProductExtractor
+                    scraper = getattr(self, '_parent_scraper', None)
+                    
+                    if scraper and hasattr(scraper, '_extract_nutritional_info_from_product_page'):
+                        nutrition_data = scraper._extract_nutritional_info_from_product_page(product_data['url'])
+                        
+                        if nutrition_data:
+                            # Clean up the nutrition data (remove duplicates)
+                            cleaned_nutrition = {}
+                            for key, value in nutrition_data.items():
+                                # Skip duplicate/malformed keys
+                                if key in ['low', 'medium', 'high'] or value in ['low', 'medium', 'high']:
+                                    continue
+                                if 'kJ' in key and 'kcal' in key:
+                                    continue
+                                # Standardize keys
+                                clean_key = key.replace(':', '').strip()
+                                if clean_key and value and not value.isdigit():
+                                    cleaned_nutrition[clean_key] = value
+                            
+                            if cleaned_nutrition:
+                                product.nutritional_info = cleaned_nutrition
+                                product.save(update_fields=['nutritional_info'])
+                                self.session.products_with_nutrition = F('products_with_nutrition') + 1
+                                logger.info(f"✅ Saved nutrition data for: {product.name}")
+                                logger.debug(f"Nutrition data: {cleaned_nutrition}")
+                        else:
+                            logger.warning(f"❌ No nutrition data found for: {product.name}")
+                    else:
+                        logger.error("Nutrition extraction method not accessible from ProductExtractor")
+            
             self.session.save()
             
             # Update category product count if applicable
@@ -1071,7 +1115,13 @@ class ProductExtractor:
         except Exception as e:
             logger.error(f"Error saving product: {str(e)}")
             return False
-    
+
+
+
+
+
+
+
     def _wait_for_products_to_load(self, timeout: int = 10) -> bool:
         """Wait for products to load on the page."""
         try:
@@ -1245,6 +1295,24 @@ class ProductExtractor:
                 self.session.products_updated += 1
                 logger.info(f"📝 Updated: {product.name} in {category.name}")
             
+            # Check if we should crawl nutrition
+            crawl_type = self.session.crawl_type
+            should_crawl_nutrition = crawl_type in ['NUTRITION', 'BOTH']
+            
+            # Extract nutritional information if requested and product has URL
+            if should_crawl_nutrition and product_data.product_url:
+                logger.info(f"🍎 Attempting to extract nutrition for: {product.name}")
+                
+                nutrition_data = self._extract_nutritional_info_from_product_page(product_data.product_url)
+                
+                if nutrition_data:
+                    product.nutritional_info = nutrition_data
+                    product.save(update_fields=['nutritional_info'])
+                    self.session.increment_nutrition_count()
+                    logger.info(f"✅ Saved nutrition data for: {product.name}")
+                else:
+                    logger.warning(f"❌ No nutrition data found for: {product.name}")
+            
             self.session.save()
             
             category.product_count = category.products.count()
@@ -1289,19 +1357,195 @@ class ProductExtractor:
         except Exception as e:
             logger.error(f"❌ Error navigating to next page: {e}")
             return False
-
     
+    def _extract_nutritional_info_from_product_page(self, product_url: str) -> Optional[Dict[str, str]]:
+        """
+        Extract nutritional information from a product detail page.
+        
+        Args:
+            product_url: URL of the product page
+            
+        Returns:
+            Dict[str, str]: Nutritional information or None if not found
+        """
+        try:
+            # Store current URL to return to later
+            current_url = self.driver.current_url
+            
+            # Navigate to product page
+            logger.info(f"🍎 Navigating to product page for nutrition: {product_url}")
+            self.driver.get(product_url)
+            
+            # Wait for page to load
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            
+            # Small delay to ensure content loads
+            time.sleep(2)
+            
+            # Look for nutrition section
+            nutrition_data = {}
+            
+            # Try different selectors for ASDA's nutrition table
+            nutrition_selectors = [
+                "table[class*='nutrition']",
+                "div[class*='nutrition-table']",
+                "div[class*='nutritional']",
+                "[data-testid*='nutrition']",
+                "section[aria-label*='Nutrition']",
+                "div.pdp__nutritional-information",
+                "div[class*='nutritional-information']"
+            ]
+            
+            nutrition_element = None
+            for selector in nutrition_selectors:
+                try:
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    if elements:
+                        # Look for the one with actual nutrition content
+                        for elem in elements:
+                            text = elem.text.lower()
+                            if any(keyword in text for keyword in ['energy', 'fat', 'protein', 'carbohydrate', 'kcal']):
+                                nutrition_element = elem
+                                logger.info(f"✅ Found nutrition element with selector: {selector}")
+                                break
+                        if nutrition_element:
+                            break
+                except Exception as e:
+                    logger.debug(f"Error with selector {selector}: {e}")
+                    continue
+            
+            if nutrition_element:
+                # Extract nutrition data from table
+                try:
+                    # Get the HTML and parse with BeautifulSoup
+                    nutrition_html = nutrition_element.get_attribute('innerHTML')
+                    soup = BeautifulSoup(nutrition_html, 'html.parser')
+                    
+                    # Look for table rows
+                    rows = soup.find_all('tr')
+                    if rows:
+                        for row in rows:
+                            cells = row.find_all(['td', 'th'])
+                            if len(cells) >= 2:
+                                nutrient_name = cells[0].get_text(strip=True)
+                                nutrient_value = cells[1].get_text(strip=True)
+                                
+                                if nutrient_name and nutrient_value and nutrient_name.lower() != 'typical values':
+                                    # Standardize nutrient names
+                                    standardized_name = self._standardize_nutrient_name(nutrient_name)
+                                    if standardized_name:
+                                        nutrition_data[standardized_name] = nutrient_value
+                                        logger.debug(f"Extracted: {standardized_name} = {nutrient_value}")
+                    else:
+                        # Try to extract from text if no table structure
+                        text = nutrition_element.text
+                        nutrition_data = self._parse_nutrition_text(text)
+                        
+                except Exception as e:
+                    logger.error(f"Error parsing nutrition data: {e}")
+            else:
+                logger.warning("No nutrition element found on product page")
+            
+            # Navigate back to category page
+            self.driver.get(current_url)
+            time.sleep(2)
+            
+            if nutrition_data:
+                logger.info(f"✅ Extracted {len(nutrition_data)} nutritional values")
+            
+            return nutrition_data if nutrition_data else None
+            
+        except Exception as e:
+            logger.error(f"Error extracting nutritional info: {e}")
+            self.session.increment_nutrition_errors()
+            # Try to navigate back on error
+            try:
+                self.driver.get(current_url)
+            except:
+                pass
+            return None
+    
+    def _standardize_nutrient_name(self, name: str) -> str:
+        """Standardize nutrient names for consistent storage."""
+        name = name.lower().strip()
+        
+        # Remove common suffixes and prefixes
+        name = name.replace('per 100g', '').replace('per serving', '').replace('of which', '').strip()
+        name = name.strip('-').strip(':').strip()
+        
+        # Map to standard names
+        nutrient_mapping = {
+            'energy (kj)': 'energy_kj',
+            'energy kj': 'energy_kj',
+            'energy (kcal)': 'calories',
+            'energy kcal': 'calories',
+            'energy': 'calories',
+            'kcal': 'calories',
+            'fat': 'fat',
+            'total fat': 'fat',
+            'saturates': 'saturated_fat',
+            'saturated fat': 'saturated_fat',
+            'carbohydrate': 'carbohydrates',
+            'carbohydrates': 'carbohydrates',
+            'carbs': 'carbohydrates',
+            'sugars': 'sugars',
+            'total sugars': 'sugars',
+            'fibre': 'fiber',
+            'fiber': 'fiber',
+            'dietary fibre': 'fiber',
+            'protein': 'protein',
+            'salt': 'salt',
+            'sodium': 'sodium',
+        }
+        
+        for key, value in nutrient_mapping.items():
+            if key in name:
+                return value
+        
+        # Default: replace spaces with underscores
+        return name.replace(' ', '_').replace('-', '_')
+    
+    def _parse_nutrition_text(self, text: str) -> Dict[str, str]:
+        """Parse nutritional information from unstructured text."""
+        nutrition_data = {}
+        
+        # Common patterns for nutrition values
+        patterns = {
+            'energy_kj': r'energy[:\s]*(\d+(?:\.\d+)?)\s*kj',
+            'calories': r'(?:energy[:\s]*)?(\d+(?:\.\d+)?)\s*kcal',
+            'fat': r'fat[:\s]*(\d+(?:\.\d+)?)\s*g',
+            'saturated_fat': r'saturates?[:\s]*(\d+(?:\.\d+)?)\s*g',
+            'carbohydrates': r'carbohydrates?[:\s]*(\d+(?:\.\d+)?)\s*g',
+            'sugars': r'sugars?[:\s]*(\d+(?:\.\d+)?)\s*g',
+            'fiber': r'fib(?:re|er)[:\s]*(\d+(?:\.\d+)?)\s*g',
+            'protein': r'protein[:\s]*(\d+(?:\.\d+)?)\s*g',
+            'salt': r'salt[:\s]*(\d+(?:\.\d+)?)\s*g',
+        }
+        
+        text_lower = text.lower()
+        for nutrient, pattern in patterns.items():
+            match = re.search(pattern, text_lower)
+            if match:
+                value = match.group(1)
+                unit = 'g' if nutrient not in ['energy_kj', 'calories'] else ('kJ' if nutrient == 'energy_kj' else 'kcal')
+                nutrition_data[nutrient] = f"{value}{unit}"
+                
+        return nutrition_data  
 
 
 class SeleniumAsdaScraper:
     """Production-ready Selenium-based ASDA scraper."""
     
-    def __init__(self, crawl_session: CrawlSession, headless: bool = False):
+    def __init__(self, crawl_session: CrawlSession, headless: bool = True):
         self.session = crawl_session
         self.headless = headless
         self.driver_manager = None
         self.driver = None
         self.base_url = "https://groceries.asda.com"
+        self.product_extractor = ProductExtractor(self.driver, crawl_session)
+        self.product_extractor._parent_scraper = self
         
         logger.info(f"Selenium ASDA Scraper initialized for session {self.session.pk}")
         
@@ -1732,224 +1976,92 @@ class SeleniumAsdaScraper:
         """
         Extract nutritional information from a product detail page.
         
-        This method navigates to the product page and extracts all available
-        nutritional information using the configured selectors and patterns.
-        
-        Args:
-            product_url: Full URL of the product page
-            
-        Returns:
-            Dict[str, str]: Dictionary of nutritional values or None if extraction fails
-            Example: {
-                'Energy (kJ)': '559',
-                'Energy (kcal)': '132',
-                'Fat': '1.9g',
-                'Saturates': '0.3g',
-                ...
-            }
+        This is a copy of the method from SeleniumAsdaScraper to make it accessible here.
         """
-        import re
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
-        from selenium.common.exceptions import TimeoutException, NoSuchElementException
-        from bs4 import BeautifulSoup
-        
-        # Import nutrition config - Use absolute import instead of relative
         try:
-            from asda_scraper.nutrition_config import (
-                NUTRITION_SELECTORS, 
-                NUTRITION_FIELD_MAPPINGS,
-                NUTRITION_VALUE_PATTERNS,
-                EXCLUSION_KEYWORDS,
-                NUTRITION_EXTRACTION_CONFIG
+            # Store current URL to return to later
+            current_url = self.driver.current_url
+            
+            # Navigate to product page
+            logger.info(f"🍎 Navigating to product page for nutrition: {product_url}")
+            self.driver.get(product_url)
+            
+            # Wait for page to load
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-        except ImportError as e:
-            logger.error(f"Failed to import nutrition_config: {str(e)}")
-            logger.error("Make sure nutrition_config.py exists in the asda_scraper directory")
-            return None
-        
-        nutritional_data = {}
-        
-        try:
-            # Navigate to product page if not already there
-            if self.driver.current_url != product_url:
-                logger.info(f"Navigating to product page: {product_url}")
-                self.driver.get(product_url)
-                
-                # Wait for page to load
-                WebDriverWait(self.driver, NUTRITION_EXTRACTION_CONFIG['page_load_timeout']).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "body"))
-                )
-                
-                # Handle any popups - Import PopupHandler correctly
-                try:
-                    from asda_scraper.selenium_scraper import PopupHandler
-                except ImportError:
-                    # If circular import, use local reference
-                    popup_handler = PopupHandler(self.driver)
-                else:
-                    popup_handler = PopupHandler(self.driver)
-                
+            
+            # Small delay to ensure content loads
+            time.sleep(2)
+            
+            # Handle popups if any
+            try:
+                from .selenium_scraper import PopupHandler
+                popup_handler = PopupHandler(self.driver)
                 popup_handler.handle_popups()
-                
-                # Small delay to ensure page is fully loaded
-                time.sleep(NUTRITION_EXTRACTION_CONFIG['extraction_delay'])
+            except:
+                pass
             
-            # Get page source and parse with BeautifulSoup
-            page_source = self.driver.page_source
-            soup = BeautifulSoup(page_source, 'html.parser')
+            # Look for nutrition section
+            nutrition_data = {}
             
-            # Log page title for debugging
-            page_title = soup.find('title')
-            if page_title:
-                logger.debug(f"Page title: {page_title.text}")
+            # Based on the manual test, we know nutrition is in elements with class*='nutrition'
+            nutrition_elements = self.driver.find_elements(By.CSS_SELECTOR, "[class*='nutrition']")
             
-            # Try to find nutritional tables using various selectors
-            nutrition_table = None
-            
-            # First try table selectors
-            for selector in NUTRITION_SELECTORS['nutrition_tables']:
-                tables = soup.select(selector)
-                if tables:
-                    nutrition_table = tables[0]  # Use first matching table
-                    logger.debug(f"Found nutrition table with selector: {selector}")
-                    break
-            
-            # If no table found, look for nutrition sections
-            if not nutrition_table:
-                for header_selector in NUTRITION_SELECTORS['section_headers']:
-                    # Handle jQuery-style :contains selector
-                    if ':contains(' in header_selector:
-                        text_to_find = header_selector.split('"')[1]
-                        headers = soup.find_all(
-                            ['h2', 'h3', 'h4'], 
-                            string=lambda s: s and text_to_find.lower() in s.lower()
-                        )
-                        if headers:
-                            # Find the parent section or next sibling with nutritional data
-                            for header in headers:
-                                parent = header.find_parent(['section', 'div'])
-                                if parent:
-                                    nutrition_table = parent
-                                    break
-                                # Check next siblings
-                                for sibling in header.find_next_siblings():
-                                    if sibling.name in ['table', 'div', 'ul']:
-                                        nutrition_table = sibling
-                                        break
-                    else:
-                        sections = soup.select(header_selector)
-                        if sections:
-                            nutrition_table = sections[0]
-                            break
-            
-            if not nutrition_table:
-                logger.warning(f"No nutritional information section found on {product_url}")
-                # Log some page structure for debugging
-                logger.debug(f"Available headers: {[h.text for h in soup.find_all(['h2', 'h3', 'h4'])[:10]]}")
-                return None
-            
-            # Extract nutritional values from the found section
-            logger.debug("Extracting nutritional values from found section")
-            
-            # Look for rows within the nutrition section
-            rows = []
-            for row_selector in NUTRITION_SELECTORS['nutrition_rows']:
-                rows.extend(nutrition_table.select(row_selector))
-            
-            if not rows:
-                # If no specific rows, try to find all text elements
-                rows = nutrition_table.find_all(['tr', 'div', 'li', 'p'])
-            
-            logger.debug(f"Found {len(rows)} potential nutritional data rows")
-            
-            # Process each row
-            for row in rows:
-                try:
-                    # Get text content
-                    row_text = row.get_text(strip=True)
+            for element in nutrition_elements:
+                text = element.text
+                if any(keyword in text.lower() for keyword in ['energy', 'fat', 'protein', 'carbohydrate']):
+                    # This element contains nutrition data
+                    lines = text.strip().split('\n')
                     
-                    # Skip empty rows
-                    if not row_text:
-                        continue
-                    
-                    # Skip if contains exclusion keywords
-                    if any(keyword.lower() in row_text.lower() for keyword in EXCLUSION_KEYWORDS):
-                        continue
-                    
-                    # Try to extract nutrient name and value
-                    # Look for cells within the row
-                    cells = row.find_all(['td', 'th', 'span', 'div'])
-                    
-                    if len(cells) >= 2:
-                        # Standard table format: name in first cell, value in second
-                        nutrient_name = cells[0].get_text(strip=True)
-                        nutrient_value = cells[1].get_text(strip=True)
-                    else:
-                        # Try to parse from full text using patterns
-                        # Common pattern: "Nutrient name: value" or "Nutrient name value"
-                        parts = re.split(r'[:：]|\s{2,}', row_text)
-                        if len(parts) >= 2:
-                            nutrient_name = parts[0].strip()
-                            nutrient_value = parts[1].strip()
-                        else:
-                            # Skip if can't parse
-                            continue
-                    
-                    # Clean and standardize nutrient name
-                    nutrient_name_lower = nutrient_name.lower().strip()
-                    
-                    # Map to standard names
-                    mapped_name = None
-                    for pattern, standard_name in NUTRITION_FIELD_MAPPINGS.items():
-                        if pattern in nutrient_name_lower:
-                            mapped_name = standard_name
-                            break
-                    
-                    if not mapped_name:
-                        # Use original name if no mapping found, but clean it
-                        mapped_name = nutrient_name.strip()
-                    
-                    # Extract numeric value using regex patterns
-                    value_extracted = None
-                    for pattern in NUTRITION_VALUE_PATTERNS:
-                        match = re.search(pattern, nutrient_value)
-                        if match:
-                            value_extracted = match.group(0)
-                            break
-                    
-                    if not value_extracted:
-                        # If no pattern matches, use the full value if it contains numbers
-                        if re.search(r'\d', nutrient_value):
-                            value_extracted = nutrient_value.strip()
-                    
-                    # Store if we have both name and value
-                    if mapped_name and value_extracted:
-                        nutritional_data[mapped_name] = value_extracted
-                        logger.debug(f"Extracted: {mapped_name} = {value_extracted}")
+                    i = 0
+                    while i < len(lines):
+                        line = lines[i].strip()
                         
-                except Exception as e:
-                    logger.debug(f"Error processing row: {str(e)}")
-                    continue
+                        # Check if this is a nutrient name
+                        if line in ['Energy', 'Fat', 'Saturates', 'Sugars', 'Salt', 'Protein', 'Carbohydrate', 'Fibre']:
+                            nutrient_name = line
+                            
+                            # Get the value(s) from next line(s)
+                            if i + 1 < len(lines):
+                                value = lines[i + 1].strip()
+                                
+                                # Handle energy which has both kJ and kcal
+                                if nutrient_name == 'Energy' and i + 2 < len(lines):
+                                    kj_value = value
+                                    kcal_value = lines[i + 2].strip()
+                                    nutrition_data['Energy (kJ)'] = kj_value
+                                    nutrition_data['Energy (kcal)'] = kcal_value
+                                    i += 2
+                                else:
+                                    nutrition_data[nutrient_name] = value
+                                    i += 1
+                        i += 1
+                    
+                    # If we found data, break
+                    if nutrition_data:
+                        break
             
-            # Log the results
-            if nutritional_data:
-                logger.info(f"Successfully extracted {len(nutritional_data)} nutritional values from {product_url}")
-                logger.debug(f"Nutritional data: {nutritional_data}")
-            else:
-                logger.warning(f"No nutritional values extracted from {product_url}")
+            # Navigate back to category page
+            self.driver.get(current_url)
+            time.sleep(2)
             
-            return nutritional_data
+            if nutrition_data:
+                logger.info(f"✅ Extracted {len(nutrition_data)} nutritional values")
+                logger.debug(f"Nutrition data: {nutrition_data}")
             
-        except TimeoutException:
-            logger.error(f"Timeout while loading product page: {product_url}")
-            return None
+            return nutrition_data if nutrition_data else None
+            
         except Exception as e:
-            logger.error(f"Error extracting nutritional info from {product_url}: {str(e)}")
-            logger.exception("Full traceback:")
+            logger.error(f"Error extracting nutritional info: {e}")
+            if hasattr(self.session, 'increment_nutrition_errors'):
+                self.session.increment_nutrition_errors()
+            # Try to navigate back on error
+            try:
+                self.driver.get(current_url)
+            except:
+                pass
             return None
-
 
 
 
