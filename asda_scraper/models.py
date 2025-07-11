@@ -16,6 +16,7 @@ from django.core.validators import URLValidator, MinValueValidator, MaxValueVali
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +282,127 @@ class AsdaProduct(models.Model):
             logger.info(f"New ASDA product added: {self.name} - £{self.price}")
         else:
             logger.info(f"ASDA product updated: {self.name}")
+
+
+
+    def has_nutritional_info(self) -> bool:
+        """
+        Check if the product has nutritional information.
+        
+        Returns:
+            bool: True if nutritional info exists and is not empty
+        """
+        if not self.nutritional_info:
+            return False
+        
+        # Check if it's a dict with actual nutritional data
+        if isinstance(self.nutritional_info, dict):
+            # Check for the 'nutrition' key (structure from crawl_nutrition)
+            if 'nutrition' in self.nutritional_info:
+                nutrition_data = self.nutritional_info.get('nutrition', {})
+                return bool(nutrition_data)
+            # Check if dict has any nutritional keys directly
+            else:
+                # Look for common nutritional keys
+                nutritional_keys = [
+                    'Energy (kJ)', 'Energy (kcal)', 'Fat', 'Protein', 
+                    'Carbohydrate', 'Salt', 'Calories'
+                ]
+                return any(key in self.nutritional_info for key in nutritional_keys)
+        
+        return False
+
+    def get_nutritional_info(self) -> dict:
+        """
+        Get the nutritional information for this product.
+        
+        Returns:
+            dict: Nutritional data or empty dict if not available
+        """
+        if not self.nutritional_info:
+            return {}
+        
+        if isinstance(self.nutritional_info, dict):
+            # If data is wrapped in 'nutrition' key (from crawl_nutrition command)
+            if 'nutrition' in self.nutritional_info:
+                return self.nutritional_info.get('nutrition', {})
+            # Otherwise return the dict directly
+            else:
+                return self.nutritional_info
+        
+        return {}
+
+    def get_nutritional_data_summary(self) -> dict:
+        """
+        Get a summary of the nutritional data status.
+        
+        Returns:
+            dict: Summary information about nutritional data
+        """
+        summary = {
+            'has_data': self.has_nutritional_info(),
+            'nutrient_count': 0,
+            'extracted_at': None,
+            'extraction_method': None
+        }
+        
+        if self.nutritional_info and isinstance(self.nutritional_info, dict):
+            # Get metadata if available
+            summary['extracted_at'] = self.nutritional_info.get('extracted_at')
+            summary['extraction_method'] = self.nutritional_info.get('extraction_method')
+            
+            # Count nutrients
+            nutrition_data = self.get_nutritional_info()
+            summary['nutrient_count'] = len(nutrition_data)
+        
+        return summary
+
+    def get_nutrient_value(self, nutrient_name: str) -> Optional[str]:
+        """
+        Get a specific nutrient value.
+        
+        Args:
+            nutrient_name: Name of the nutrient (e.g., 'Energy (kcal)', 'Fat')
+            
+        Returns:
+            str or None: The nutrient value or None if not found
+        """
+        nutrition_data = self.get_nutritional_info()
+        return nutrition_data.get(nutrient_name)
+
+    def format_nutritional_display(self) -> str:
+        """
+        Format nutritional information for display.
+        
+        Returns:
+            str: Formatted nutritional information
+        """
+        nutrition_data = self.get_nutritional_info()
+        
+        if not nutrition_data:
+            return "No nutritional information available"
+        
+        lines = ["Nutritional Information (per 100g):"]
+        
+        # Define display order
+        display_order = [
+            'Energy (kJ)', 'Energy (kcal)', 'Fat', 'Saturates',
+            'Carbohydrate', 'Sugars', 'Fibre', 'Protein', 'Salt'
+        ]
+        
+        # Display in order if available
+        for nutrient in display_order:
+            if nutrient in nutrition_data:
+                lines.append(f"  • {nutrient}: {nutrition_data[nutrient]}")
+        
+        # Add any other nutrients not in display order
+        for nutrient, value in nutrition_data.items():
+            if nutrient not in display_order:
+                lines.append(f"  • {nutrient}: {value}")
+        
+        return "\n".join(lines)
+
+        
 
 
 class CrawlSession(models.Model):

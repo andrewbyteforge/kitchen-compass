@@ -1485,21 +1485,277 @@ class SeleniumAsdaScraper:
             result.errors.append(str(e))
         
         return result
-
-
-
-
-
-
-
-    def _cleanup(self):
-        """Clean up resources."""
+    
+    def _extract_nutritional_info_from_product_page(self, product_url: str) -> Optional[Dict[str, str]]:
+        """
+        Extract nutritional information from a product detail page.
+        
+        This method navigates to the product page and extracts all available
+        nutritional information using the configured selectors and patterns.
+        
+        Args:
+            product_url: Full URL of the product page
+            
+        Returns:
+            Dict[str, str]: Dictionary of nutritional values or None if extraction fails
+            Example: {
+                'Energy (kJ)': '559',
+                'Energy (kcal)': '132',
+                'Fat': '1.9g',
+                'Saturates': '0.3g',
+                ...
+            }
+        """
+        import re
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.common.exceptions import TimeoutException, NoSuchElementException
+        from bs4 import BeautifulSoup
+        
+        # Import nutrition config
         try:
-            if self.driver_manager:
-                self.driver_manager.cleanup()
-            logger.info("Scraper cleanup complete")
+            from .nutrition_config import (
+                NUTRITION_SELECTORS, 
+                NUTRITION_FIELD_MAPPINGS,
+                NUTRITION_VALUE_PATTERNS,
+                EXCLUSION_KEYWORDS,
+                NUTRITION_EXTRACTION_CONFIG
+            )
+        except ImportError:
+            logger.error("Failed to import nutrition_config")
+            return None
+        
+        nutritional_data = {}
+        
+        try:
+            # Navigate to product page if not already there
+            if self.driver.current_url != product_url:
+                logger.info(f"Navigating to product page: {product_url}")
+                self.driver.get(product_url)
+                
+                # Wait for page to load
+                WebDriverWait(self.driver, NUTRITION_EXTRACTION_CONFIG['page_load_timeout']).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+                
+                # Handle any popups
+                from .selenium_scraper import PopupHandler
+                popup_handler = PopupHandler(self.driver)
+                popup_handler.handle_popups()
+                
+                # Small delay to ensure page is fully loaded
+                time.sleep(NUTRITION_EXTRACTION_CONFIG['extraction_delay'])
+            
+            # Get page source and parse with BeautifulSoup
+            page_source = self.driver.page_source
+            soup = BeautifulSoup(page_source, 'html.parser')
+            
+            # Try to find nutritional tables using various selectors
+            nutrition_table = None
+            
+            # First try table selectors
+            for selector in NUTRITION_SELECTORS['nutrition_tables']:
+                tables = soup.select(selector)
+                if tables:
+                    nutrition_table = tables[0]  # Use first matching table
+                    logger.debug(f"Found nutrition table with selector: {selector}")
+                    break
+            
+            # If no table found, look for nutrition sections
+            if not nutrition_table:
+                for header_selector in NUTRITION_SELECTORS['section_headers']:
+                    # Handle jQuery-style :contains selector
+                    if ':contains(' in header_selector:
+                        text_to_find = header_selector.split('"')[1]
+                        headers = soup.find_all(
+                            ['h2', 'h3', 'h4'], 
+                            string=lambda s: s and text_to_find.lower() in s.lower()
+                        )
+                        if headers:
+                            # Find the parent section or next sibling with nutritional data
+                            for header in headers:
+                                parent = header.find_parent(['section', 'div'])
+                                if parent:
+                                    nutrition_table = parent
+                                    break
+                                # Check next siblings
+                                for sibling in header.find_next_siblings():
+                                    if sibling.name in ['table', 'div', 'ul']:
+                                        nutrition_table = sibling
+                                        break
+                    else:
+                        sections = soup.select(header_selector)
+                        if sections:
+                            nutrition_table = sections[0]
+                            break
+            
+            if not nutrition_table:
+                logger.warning(f"No nutritional information section found on {product_url}")
+                return None
+            
+            # Extract nutritional values from the found section
+            logger.debug("Extracting nutritional values from found section")
+            
+            # Look for rows within the nutrition section
+            rows = []
+            for row_selector in NUTRITION_SELECTORS['nutrition_rows']:
+                rows.extend(nutrition_table.select(row_selector))
+            
+            if not rows:
+                # If no specific rows, try to find all text elements
+                rows = nutrition_table.find_all(['tr', 'div', 'li', 'p'])
+            
+            # Process each row
+            for row in rows:
+                try:
+                    # Get text content
+                    row_text = row.get_text(strip=True)
+                    
+                    # Skip if contains exclusion keywords
+                    if any(keyword.lower() in row_text.lower() for keyword in EXCLUSION_KEYWORDS):
+                        continue
+                    
+                    # Try to extract nutrient name and value
+                    # Look for cells within the row
+                    cells = row.find_all(['td', 'th', 'span', 'div'])
+                    
+                    if len(cells) >= 2:
+                        # Standard table format: name in first cell, value in second
+                        nutrient_name = cells[0].get_text(strip=True)
+                        nutrient_value = cells[1].get_text(strip=True)
+                    else:
+                        # Try to parse from full text using patterns
+                        # Common pattern: "Nutrient name: value" or "Nutrient name value"
+                        parts = re.split(r'[:：]|\s{2,}', row_text)
+                        if len(parts) >= 2:
+                            nutrient_name = parts[0].strip()
+                            nutrient_value = parts[1].strip()
+                        else:
+                            # Skip if can't parse
+                            continue
+                    
+                    # Clean and standardize nutrient name
+                    nutrient_name_lower = nutrient_name.lower().strip()
+                    
+                    # Map to standard names
+                    mapped_name = None
+                    for pattern, standard_name in NUTRITION_FIELD_MAPPINGS.items():
+                        if pattern in nutrient_name_lower:
+                            mapped_name = standard_name
+                            break
+                    
+                    if not mapped_name:
+                        # Use original name if no mapping found, but clean it
+                        mapped_name = nutrient_name.strip()
+                    
+                    # Extract numeric value using regex patterns
+                    value_extracted = None
+                    for pattern in NUTRITION_VALUE_PATTERNS:
+                        match = re.search(pattern, nutrient_value)
+                        if match:
+                            value_extracted = match.group(0)
+                            break
+                    
+                    if not value_extracted:
+                        # If no pattern matches, use the full value if it contains numbers
+                        if re.search(r'\d', nutrient_value):
+                            value_extracted = nutrient_value.strip()
+                    
+                    # Store if we have both name and value
+                    if mapped_name and value_extracted:
+                        nutritional_data[mapped_name] = value_extracted
+                        logger.debug(f"Extracted: {mapped_name} = {value_extracted}")
+                        
+                except Exception as e:
+                    logger.debug(f"Error processing row: {str(e)}")
+                    continue
+            
+            # Validate extracted data
+            if nutritional_data:
+                # Check if we have minimum required fields
+                required_found = any(
+                    field in nutritional_data 
+                    for field in ['Energy (kJ)', 'Energy (kcal)', 'Calories']
+                )
+                
+                if required_found:
+                    logger.info(
+                        f"Successfully extracted {len(nutritional_data)} nutritional values "
+                        f"from {product_url}"
+                    )
+                    return nutritional_data
+                else:
+                    logger.warning(
+                        f"Extracted {len(nutritional_data)} values but missing required "
+                        f"energy fields from {product_url}"
+                    )
+                    # Return data anyway as some products might not have energy values
+                    return nutritional_data if len(nutritional_data) > 2 else None
+            else:
+                logger.warning(f"No nutritional values could be extracted from {product_url}")
+                return None
+                
+        except TimeoutException:
+            logger.error(f"Timeout while loading product page: {product_url}")
+            return None
         except Exception as e:
-            logger.error(f"Error during scraper cleanup: {e}")
+            logger.error(f"Error extracting nutritional info from {product_url}: {str(e)}")
+            return None
+        
+        finally:
+            # Log extraction attempt for debugging
+            if NUTRITION_EXTRACTION_CONFIG.get('log_extraction_details'):
+                logger.debug(f"Extraction attempt completed for {product_url}")
+                logger.debug(f"Data found: {nutritional_data}")
+
+
+
+
+
+
+
+    def cleanup(self):
+        """
+        Clean up resources and close the browser.
+        
+        This method ensures proper cleanup of the WebDriver and any
+        associated resources to prevent memory leaks and hanging processes.
+        """
+        try:
+            if hasattr(self, 'driver') and self.driver:
+                try:
+                    # Close all windows
+                    for handle in self.driver.window_handles:
+                        self.driver.switch_to.window(handle)
+                        self.driver.close()
+                except Exception as e:
+                    logger.debug(f"Error closing windows: {str(e)}")
+                
+                try:
+                    # Quit the driver
+                    self.driver.quit()
+                    logger.info("WebDriver closed successfully")
+                except Exception as e:
+                    logger.error(f"Error quitting driver: {str(e)}")
+                
+                self.driver = None
+            
+            # Clean up driver manager if exists
+            if hasattr(self, 'driver_manager') and self.driver_manager:
+                try:
+                    self.driver_manager.cleanup()
+                    logger.info("Driver manager cleanup complete")
+                except Exception as e:
+                    logger.error(f"Error cleaning up driver manager: {str(e)}")
+                
+                self.driver_manager = None
+            
+            logger.info("Selenium scraper cleanup complete")
+            
+        except Exception as e:
+            logger.error(f"Error during selenium scraper cleanup: {str(e)}")
+            # Don't re-raise - cleanup should always complete
 
 
 def create_selenium_scraper(crawl_session: CrawlSession, headless: bool = False) -> SeleniumAsdaScraper:

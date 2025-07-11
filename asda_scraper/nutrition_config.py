@@ -195,3 +195,4 @@ NUTRITION_EXPORT_CONFIG = {
     'xlsx_sheet_name': 'Nutritional Data',
     'xlsx_include_charts': False
 }
+
