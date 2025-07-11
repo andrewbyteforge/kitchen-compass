@@ -6,22 +6,19 @@ Save this as: asda_scraper/management/commands/crawl_nutrition.py
 
 import logging
 import time
+import random
+import traceback
+from datetime import timedelta
 from django.core.management.base import BaseCommand, CommandError
-from django.db.models import Q
+from django.db import models, transaction
+from django.db.models import Q, Count, Min, OuterRef
 from django.contrib.auth.models import User
 from django.utils import timezone
-from asda_scraper.models import AsdaProduct, CrawlSession
-from asda_scraper.selenium_scraper import SeleniumAsdaScraper
-from datetime import timedelta
-from django.db import models
-from django.db.models import Count, Min, OuterRef
-from datetime import timedelta
-import random
-from django.db import models
-from django.db.models import Q, Count, Min, OuterRef
 from asda_scraper.models import AsdaProduct, AsdaCategory, CrawlSession
+from asda_scraper.selenium_scraper import SeleniumAsdaScraper
 
 logger = logging.getLogger(__name__)
+
 
 class Command(BaseCommand):
     """
@@ -44,7 +41,7 @@ class Command(BaseCommand):
         parser.add_argument(
             '--category',
             type=str,
-            help='Crawl nutritional info for products in specific category (by name or slug)'
+            help='Crawl nutritional info for products in specific category (by name)'
         )
         
         parser.add_argument(
@@ -90,6 +87,14 @@ class Command(BaseCommand):
             action='store_true',
             help='Force recrawl of products even if updated within 3 days'
         )
+        
+        parser.add_argument(
+            '--distribution',
+            type=str,
+            choices=['round_robin', 'least_processed', 'default'],
+            default='round_robin',
+            help='How to distribute crawling across categories (default: round_robin)'
+        )
     
     def handle(self, *args, **options):
         """Execute the command."""
@@ -121,8 +126,7 @@ class Command(BaseCommand):
                 )
             )
             
-            # Initialize scraper with proper crawl session using correct fields
-            # Get or create a default user for the crawl session
+            # Initialize scraper with proper crawl session
             user, created = User.objects.get_or_create(
                 username='nutrition_crawler',
                 defaults={'email': 'crawler@example.com'}
@@ -193,8 +197,7 @@ class Command(BaseCommand):
             self.style.SUCCESS(f"🧪 Testing nutritional extraction on: {test_url}")
         )
         
-        # Create a temporary crawl session for testing using correct fields
-        # Get or create a default user for the test session
+        # Create a temporary crawl session for testing
         user, created = User.objects.get_or_create(
             username='nutrition_test_user',
             defaults={'email': 'test@example.com'}
@@ -243,10 +246,6 @@ class Command(BaseCommand):
         finally:
             scraper.cleanup()
     
-    from django.db.models import Count, Min
-    import random
-
-    # Replace the _get_products_to_process method with this improved version
     def _get_products_to_process(self, options) -> 'QuerySet':
         """
         Get products to process based on command options.
@@ -314,7 +313,7 @@ class Command(BaseCommand):
         # Filter to products with valid URLs
         products = products.exclude(product_url='').exclude(product_url__isnull=True)
         
-        # Get distribution strategy from options (new option)
+        # Get distribution strategy from options
         distribution_strategy = options.get('distribution', 'round_robin')
         
         if distribution_strategy == 'round_robin' and not options.get('category'):
@@ -389,75 +388,7 @@ class Command(BaseCommand):
         
         # Return limited queryset
         return products[:limit]
-
-
-    # Update the add_arguments method to include the new distribution option
-    def add_arguments(self, parser):
-        """Add command line arguments."""
-        parser.add_argument(
-            '--product-ids',
-            nargs='+',
-            help='Specific ASDA product IDs to crawl nutritional info for'
-        )
-        
-        parser.add_argument(
-            '--category',
-            type=str,
-            help='Crawl nutritional info for products in specific category (by name)'
-        )
-        
-        parser.add_argument(
-            '--limit',
-            type=int,
-            default=50,
-            help='Maximum number of products to process (default: 50)'
-        )
-        
-        parser.add_argument(
-            '--missing-only',
-            action='store_true',
-            help='Only process products without existing nutritional information'
-        )
-        
-        parser.add_argument(
-            '--delay',
-            type=float,
-            default=3.0,
-            help='Delay between product crawls in seconds (default: 3.0)'
-        )
-        
-        parser.add_argument(
-            '--test-url',
-            type=str,
-            help='Test nutritional extraction on a specific product URL'
-        )
-        
-        parser.add_argument(
-            '--headless',
-            action='store_true',
-            help='Run browser in headless mode'
-        )
-        
-        parser.add_argument(
-            '--dry-run',
-            action='store_true',
-            help='Test run without saving data to database'
-        )
-        
-        parser.add_argument(
-            '--force-recrawl',
-            action='store_true',
-            help='Force recrawl of products even if updated within 3 days'
-        )
-        
-        parser.add_argument(
-            '--distribution',
-            type=str,
-            choices=['round_robin', 'least_processed', 'default'],
-            default='round_robin',
-            help='How to distribute crawling across categories (default: round_robin)'
-        )
-
+    
     def _get_session_description(self, options) -> str:
         """Get description for crawl session."""
         if options['product_ids']:
@@ -583,7 +514,6 @@ class Command(BaseCommand):
                 error_count += 1
                 
                 # Log the full error for debugging
-                import traceback
                 logger.error(f"Error processing product {product.asda_id}: {traceback.format_exc()}")
                 
                 # Continue with next product after error
@@ -601,9 +531,6 @@ class Command(BaseCommand):
             f"{'='*80}"
         )
 
-
-
-
     def _save_nutritional_data_to_product(self, product, nutritional_data, scraper):
         """
         Save nutritional data to a specific product with enhanced error handling.
@@ -617,8 +544,6 @@ class Command(BaseCommand):
             bool: True if save was successful
         """
         try:
-            from django.db import transaction
-            
             # Use database transaction to ensure data integrity
             with transaction.atomic():
                 # Add metadata to nutritional data

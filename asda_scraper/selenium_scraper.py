@@ -128,150 +128,72 @@ logger.info("ASDA scraper logging configured successfully")
 
 # Configuration constants (moved inline for now)
 ASDA_CATEGORY_MAPPINGS = {
-    # Core Food Categories (Priority 1)
+    # Food Categories Only - No Baby Items
     '1215686352935': {
         'name': 'Fruit, Veg & Flowers',
         'slug': 'fruit-veg-flowers',
         'priority': 1,
-        'keywords': [
-            'banana', 'apple', 'orange', 'grape', 'tomato', 'cucumber',
-            'lettuce', 'carrot', 'onion', 'potato', 'avocado', 'melon',
-            'berry', 'cherry', 'plum', 'spinach', 'broccoli', 'pepper',
-            'fruit', 'vegetable', 'veg', 'salad', 'herbs', 'flowers'
-        ]
+        'keywords': ['fruit', 'vegetable', 'veg', 'salad', 'herbs']
     },
     '1215135760597': {
         'name': 'Meat, Poultry & Fish',
         'slug': 'meat-poultry-fish',
         'priority': 1,
-        'keywords': [
-            'chicken', 'beef', 'pork', 'lamb', 'turkey', 'bacon', 'ham',
-            'sausage', 'mince', 'steak', 'chop', 'breast', 'thigh', 'wing',
-            'fish', 'salmon', 'cod', 'tuna', 'meat', 'poultry'
-        ]
-    },
-    '1215660378320': {
-        'name': 'Chilled Food',
-        'slug': 'chilled-food',
-        'priority': 1,
-        'keywords': [
-            'milk', 'cheese', 'yogurt', 'butter', 'cream', 'egg', 'dairy',
-            'fresh', 'organic', 'free range', 'chilled', 'refrigerated'
-        ]
-    },
-    '1215338621416': {
-        'name': 'Frozen Food',
-        'slug': 'frozen-food',
-        'priority': 1,
-        'keywords': [
-            'frozen', 'ice cream', 'ice', 'freezer', 'sorbet', 'gelato',
-            'frozen meal', 'frozen pizza', 'frozen vegetables'
-        ]
-    },
-    '1215337189632': {
-        'name': 'Food Cupboard',
-        'slug': 'food-cupboard',
-        'priority': 1,
-        'keywords': [
-            'pasta', 'rice', 'flour', 'sugar', 'oil', 'vinegar', 'sauce',
-            'tin', 'can', 'jar', 'packet', 'cereal', 'biscuit', 'crisp',
-            'canned', 'dried', 'instant', 'cooking', 'seasoning', 'spice'
-        ]
+        'keywords': ['chicken', 'beef', 'pork', 'lamb', 'fish', 'salmon']
     },
     '1215686354843': {
         'name': 'Bakery',
         'slug': 'bakery',
         'priority': 1,
-        'keywords': [
-            'bread', 'roll', 'bun', 'cake', 'pastry', 'croissant', 'bagel',
-            'bakery', 'baked', 'loaf', 'sandwich', 'toast', 'muffin', 'scone'
-        ]
+        'keywords': ['bread', 'roll', 'cake', 'pastry', 'croissant']
     },
-    '1215135760614': {
-        'name': 'Drinks',
-        'slug': 'drinks',
+    '1215660378320': {
+        'name': 'Chilled Food',
+        'slug': 'chilled-food',
         'priority': 1,
-        'keywords': [
-            'water', 'juice', 'soft drink', 'tea', 'coffee', 'squash',
-            'drink', 'beverage', 'cola', 'lemonade', 'smoothie', 'energy drink'
-        ]
+        'keywords': ['milk', 'cheese', 'yogurt', 'butter', 'cream']
     },
-    
-    # Household & Personal Care (Priority 2)
-    '1215135760665': {
-        'name': 'Laundry & Household',
-        'slug': 'laundry-household',
-        'priority': 2,
-        'keywords': [
-            'cleaning', 'cleaner', 'toilet', 'kitchen', 'bathroom', 'washing up',
-            'detergent', 'bleach', 'disinfectant', 'sponge', 'cloth', 'foil',
-            'cling film', 'bag', 'bin', 'tissue', 'paper', 'household', 'laundry'
-        ]
+    '1215338621416': {
+        'name': 'Frozen Food',
+        'slug': 'frozen-food',
+        'priority': 1,
+        'keywords': ['frozen', 'ice cream', 'frozen vegetables']
     },
-    '1215135760648': {
-        'name': 'Toiletries & Beauty',
-        'slug': 'toiletries-beauty',
-        'priority': 2,
-        'keywords': [
-            'toothpaste', 'shampoo', 'soap', 'deodorant', 'moisturiser',
-            'makeup', 'skincare', 'hair', 'dental', 'beauty', 'cosmetic',
-            'toiletries', 'personal care', 'hygiene'
-        ]
+    '1215337189632': {
+        'name': 'Food Cupboard',
+        'slug': 'food-cupboard',
+        'priority': 1,
+        'keywords': ['pasta', 'rice', 'sauce', 'tin', 'jar']
     },
-    '1215686353929': {
-        'name': 'Health & Wellness',
-        'slug': 'health-wellness',
-        'priority': 2,
-        'keywords': [
-            'vitamin', 'supplement', 'medicine', 'health', 'wellness',
-            'pharmacy', 'medical', 'first aid', 'pain relief'
-        ]
-    },
-    
-    # Specialty Categories (Priority 3)
     '1215686356579': {
         'name': 'Sweets, Treats & Snacks',
         'slug': 'sweets-treats-snacks',
-        'priority': 3,
-        'keywords': [
-            'chocolate', 'sweet', 'candy', 'snack', 'crisp', 'nuts',
-            'treat', 'biscuit', 'cookie', 'confectionery'
-        ]
-    },
-    '1215135760631': {
-        'name': 'Baby, Toddler & Kids',
-        'slug': 'baby-toddler-kids',
-        'priority': 3,
-        'keywords': [
-            'baby', 'toddler', 'child', 'kids', 'infant', 'nappy',
-            'formula', 'baby food', 'children'
-        ]
-    },
-    '1215662103573': {
-        'name': 'Pet Food & Accessories',
-        'slug': 'pet-food-accessories',
-        'priority': 3,
-        'keywords': [
-            'pet', 'dog', 'cat', 'animal', 'pet food', 'dog food', 'cat food'
-        ]
-    },
-    '1215686351451': {
-        'name': 'World Food',
-        'slug': 'world-food',
-        'priority': 3,
-        'keywords': [
-            'world', 'international', 'ethnic', 'asian', 'indian',
-            'chinese', 'mexican', 'italian', 'foreign'
-        ]
+        'priority': 2,
+        'keywords': ['chocolate', 'sweet', 'snack', 'crisp']
     },
     '1215686355606': {
         'name': 'Dietary & Lifestyle',
         'slug': 'dietary-lifestyle',
+        'priority': 1,
+        'keywords': ['gluten free', 'vegan', 'organic', 'free from']
+    },
+    '1215135760614': {
+        'name': 'Drinks',
+        'slug': 'drinks',
+        'priority': 2,
+        'keywords': ['water', 'juice', 'soft drink', 'tea', 'coffee']
+    },
+    '1215685911554': {
+        'name': 'Beer, Wine & Spirits',
+        'slug': 'beer-wine-spirits',
         'priority': 3,
-        'keywords': [
-            'organic', 'gluten free', 'vegan', 'vegetarian', 'healthy',
-            'diet', 'low fat', 'sugar free', 'free from'
-        ]
+        'keywords': ['beer', 'wine', 'spirits', 'alcohol']
+    },
+    '1215686351451': {
+        'name': 'World Food',
+        'slug': 'world-food',
+        'priority': 2,
+        'keywords': ['asian', 'indian', 'mexican', 'italian', 'chinese']
     }
 }
 
