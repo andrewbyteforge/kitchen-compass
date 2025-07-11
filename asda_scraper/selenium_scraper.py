@@ -10,12 +10,9 @@ File: asda_scraper/selenium_scraper.py
 import logging
 import time
 import re
-import random
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 from urllib.parse import urljoin
-from datetime import datetime, timedelta
-
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -25,8 +22,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import (
     TimeoutException, 
     NoSuchElementException, 
-    WebDriverException,
-    StaleElementReferenceException
+    WebDriverException
 )
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
@@ -35,6 +31,265 @@ from django.utils import timezone
 from .models import AsdaCategory, AsdaProduct, CrawlSession
 
 logger = logging.getLogger(__name__)
+
+
+"""
+Manual logging setup for ASDA scraper
+Add this at the top of selenium_scraper.py and asda_link_crawler.py
+"""
+
+import logging
+import sys
+from pathlib import Path
+
+# Create logs directory if it doesn't exist
+logs_dir = Path(__file__).resolve().parent.parent / "logs"
+logs_dir.mkdir(exist_ok=True)
+
+# Configure logging manually for the asda_scraper module
+def setup_asda_logging():
+    """
+    Setup logging for ASDA scraper with console and file handlers.
+    
+    This function configures logging with proper Unicode handling for Windows.
+    
+    Returns:
+        logging.Logger: Configured logger instance
+    """
+    
+    # Import SafeUnicodeFormatter from logging_config
+    from .logging_config import SafeUnicodeFormatter
+    
+    # Create formatter for console (with emoji replacement on Windows)
+    console_formatter = SafeUnicodeFormatter(
+        '[%(levelname)s] %(asctime)s [%(name)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Create formatter for file (supports full Unicode)
+    file_formatter = logging.Formatter(
+        '[%(levelname)s] %(asctime)s [%(name)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Console handler with SafeUnicodeFormatter
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.DEBUG)
+    console_handler.setFormatter(console_formatter)
+    
+    # File handler with UTF-8 encoding
+    file_handler = logging.handlers.RotatingFileHandler(
+        logs_dir / 'asda_scraper.log',
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5,
+        encoding='utf-8'  # Ensure file handler uses UTF-8
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(file_formatter)
+    
+    # Get the asda_scraper logger and configure it
+    asda_logger = logging.getLogger('asda_scraper')
+    asda_logger.setLevel(logging.DEBUG)
+    asda_logger.handlers.clear()  # Remove any existing handlers
+    asda_logger.addHandler(console_handler)
+    asda_logger.addHandler(file_handler)
+    asda_logger.propagate = False
+    
+    # Also configure submodule loggers
+    for submodule in ['selenium_scraper', 'asda_link_crawler', 'management.commands.run_asda_crawl']:
+        sublogger = logging.getLogger(f'asda_scraper.{submodule}')
+        sublogger.setLevel(logging.DEBUG)
+        sublogger.handlers.clear()
+        sublogger.addHandler(console_handler)
+        sublogger.addHandler(file_handler)
+        sublogger.propagate = False
+    
+    return asda_logger
+
+
+
+# Setup logging when module is imported
+logger = setup_asda_logging()
+logger.info("ASDA scraper logging configured successfully")
+
+# Configuration constants (moved inline for now)
+ASDA_CATEGORY_MAPPINGS = {
+    # Core Food Categories (Priority 1)
+    '1215686352935': {
+        'name': 'Fruit, Veg & Flowers',
+        'slug': 'fruit-veg-flowers',
+        'priority': 1,
+        'keywords': [
+            'banana', 'apple', 'orange', 'grape', 'tomato', 'cucumber',
+            'lettuce', 'carrot', 'onion', 'potato', 'avocado', 'melon',
+            'berry', 'cherry', 'plum', 'spinach', 'broccoli', 'pepper',
+            'fruit', 'vegetable', 'veg', 'salad', 'herbs', 'flowers'
+        ]
+    },
+    '1215135760597': {
+        'name': 'Meat, Poultry & Fish',
+        'slug': 'meat-poultry-fish',
+        'priority': 1,
+        'keywords': [
+            'chicken', 'beef', 'pork', 'lamb', 'turkey', 'bacon', 'ham',
+            'sausage', 'mince', 'steak', 'chop', 'breast', 'thigh', 'wing',
+            'fish', 'salmon', 'cod', 'tuna', 'meat', 'poultry'
+        ]
+    },
+    '1215660378320': {
+        'name': 'Chilled Food',
+        'slug': 'chilled-food',
+        'priority': 1,
+        'keywords': [
+            'milk', 'cheese', 'yogurt', 'butter', 'cream', 'egg', 'dairy',
+            'fresh', 'organic', 'free range', 'chilled', 'refrigerated'
+        ]
+    },
+    '1215338621416': {
+        'name': 'Frozen Food',
+        'slug': 'frozen-food',
+        'priority': 1,
+        'keywords': [
+            'frozen', 'ice cream', 'ice', 'freezer', 'sorbet', 'gelato',
+            'frozen meal', 'frozen pizza', 'frozen vegetables'
+        ]
+    },
+    '1215337189632': {
+        'name': 'Food Cupboard',
+        'slug': 'food-cupboard',
+        'priority': 1,
+        'keywords': [
+            'pasta', 'rice', 'flour', 'sugar', 'oil', 'vinegar', 'sauce',
+            'tin', 'can', 'jar', 'packet', 'cereal', 'biscuit', 'crisp',
+            'canned', 'dried', 'instant', 'cooking', 'seasoning', 'spice'
+        ]
+    },
+    '1215686354843': {
+        'name': 'Bakery',
+        'slug': 'bakery',
+        'priority': 1,
+        'keywords': [
+            'bread', 'roll', 'bun', 'cake', 'pastry', 'croissant', 'bagel',
+            'bakery', 'baked', 'loaf', 'sandwich', 'toast', 'muffin', 'scone'
+        ]
+    },
+    '1215135760614': {
+        'name': 'Drinks',
+        'slug': 'drinks',
+        'priority': 1,
+        'keywords': [
+            'water', 'juice', 'soft drink', 'tea', 'coffee', 'squash',
+            'drink', 'beverage', 'cola', 'lemonade', 'smoothie', 'energy drink'
+        ]
+    },
+    
+    # Household & Personal Care (Priority 2)
+    '1215135760665': {
+        'name': 'Laundry & Household',
+        'slug': 'laundry-household',
+        'priority': 2,
+        'keywords': [
+            'cleaning', 'cleaner', 'toilet', 'kitchen', 'bathroom', 'washing up',
+            'detergent', 'bleach', 'disinfectant', 'sponge', 'cloth', 'foil',
+            'cling film', 'bag', 'bin', 'tissue', 'paper', 'household', 'laundry'
+        ]
+    },
+    '1215135760648': {
+        'name': 'Toiletries & Beauty',
+        'slug': 'toiletries-beauty',
+        'priority': 2,
+        'keywords': [
+            'toothpaste', 'shampoo', 'soap', 'deodorant', 'moisturiser',
+            'makeup', 'skincare', 'hair', 'dental', 'beauty', 'cosmetic',
+            'toiletries', 'personal care', 'hygiene'
+        ]
+    },
+    '1215686353929': {
+        'name': 'Health & Wellness',
+        'slug': 'health-wellness',
+        'priority': 2,
+        'keywords': [
+            'vitamin', 'supplement', 'medicine', 'health', 'wellness',
+            'pharmacy', 'medical', 'first aid', 'pain relief'
+        ]
+    },
+    
+    # Specialty Categories (Priority 3)
+    '1215686356579': {
+        'name': 'Sweets, Treats & Snacks',
+        'slug': 'sweets-treats-snacks',
+        'priority': 3,
+        'keywords': [
+            'chocolate', 'sweet', 'candy', 'snack', 'crisp', 'nuts',
+            'treat', 'biscuit', 'cookie', 'confectionery'
+        ]
+    },
+    '1215135760631': {
+        'name': 'Baby, Toddler & Kids',
+        'slug': 'baby-toddler-kids',
+        'priority': 3,
+        'keywords': [
+            'baby', 'toddler', 'child', 'kids', 'infant', 'nappy',
+            'formula', 'baby food', 'children'
+        ]
+    },
+    '1215662103573': {
+        'name': 'Pet Food & Accessories',
+        'slug': 'pet-food-accessories',
+        'priority': 3,
+        'keywords': [
+            'pet', 'dog', 'cat', 'animal', 'pet food', 'dog food', 'cat food'
+        ]
+    },
+    '1215686351451': {
+        'name': 'World Food',
+        'slug': 'world-food',
+        'priority': 3,
+        'keywords': [
+            'world', 'international', 'ethnic', 'asian', 'indian',
+            'chinese', 'mexican', 'italian', 'foreign'
+        ]
+    },
+    '1215686355606': {
+        'name': 'Dietary & Lifestyle',
+        'slug': 'dietary-lifestyle',
+        'priority': 3,
+        'keywords': [
+            'organic', 'gluten free', 'vegan', 'vegetarian', 'healthy',
+            'diet', 'low fat', 'sugar free', 'free from'
+        ]
+    }
+}
+
+SELENIUM_CONFIG = {
+    'user_agent': (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    ),
+    'default_timeout': 10,
+    'page_load_timeout': 30,
+    'implicit_wait': 5,
+    'window_size': '1920,1080',
+}
+
+SCRAPER_SETTINGS = {
+    'max_pages_per_category': 5,
+    'max_retries': 3,
+    'retry_delay': 2.0,
+    'request_delay': 1.0,
+    'category_delay': 2.0,
+}
+
+DEFAULT_CRAWL_SETTINGS = {
+    'max_categories': 10,
+    'category_priority': 2,
+    'max_products_per_category': 100,
+    'delay_between_requests': 2.0,
+    'use_selenium': True,
+    'headless': False,
+    'respect_robots_txt': True,
+    'user_agent': SELENIUM_CONFIG['user_agent']
+}
 
 
 # Custom exception classes
@@ -92,53 +347,6 @@ class ProductData:
     price_per_unit: str = ''
 
 
-class DelayManager:
-    """Manages intelligent delays to avoid rate limiting."""
-    
-    def __init__(self):
-        self.last_request_time = None
-        self.error_count = 0
-        self.current_delay_multiplier = 1.0
-        
-    def wait(self, delay_type='between_requests', force_delay=None):
-        """Apply intelligent delay based on context."""
-        try:
-            if force_delay:
-                delay_seconds = force_delay
-            else:
-                base_delays = {
-                    'between_requests': 2.0,
-                    'between_categories': 60.0,
-                    'after_error': 5.0,
-                    'after_navigation_error': 10.0,
-                    'page_load': 3.0
-                }
-                delay_seconds = base_delays.get(delay_type, 2.0) * self.current_delay_multiplier
-            
-            # Add random jitter
-            jitter = random.uniform(0.8, 1.2)
-            actual_delay = delay_seconds * jitter
-            
-            logger.debug(f"[DELAY] Applying {actual_delay:.2f}s delay for {delay_type}")
-            time.sleep(actual_delay)
-            
-            self.last_request_time = datetime.now()
-            
-        except Exception as e:
-            logger.error(f"Error in delay manager: {e}")
-    
-    def increase_delay(self):
-        """Increase delay multiplier after errors."""
-        self.error_count += 1
-        self.current_delay_multiplier = min(5.0, 1.0 + (self.error_count * 0.5))
-        logger.info(f"[DELAY] Increased delay multiplier to {self.current_delay_multiplier:.1f}x")
-    
-    def reset_delay(self):
-        """Reset delay multiplier after success."""
-        self.error_count = 0
-        self.current_delay_multiplier = 1.0
-
-
 class WebDriverManager:
     """Manages WebDriver setup and configuration."""
     
@@ -179,72 +387,65 @@ class WebDriverManager:
     
     def _get_chrome_options(self) -> Options:
         """Get Chrome options configuration."""
-        options = Options()
+        chrome_options = Options()
         
         if self.headless:
-            options.add_argument("--headless=new")
+            chrome_options.add_argument("--headless")
         
-        # Standard options for stability
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--disable-extensions")
-        options.add_argument("--disable-plugins")
-        options.add_argument("--disable-images")
-        options.add_argument("--disable-javascript")
-        options.add_argument("--window-size=1920,1080")
+        # Essential options for web scraping
+        options_list = [
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-extensions",
+            "--disable-gpu",
+            "--disable-web-security",
+            "--allow-running-insecure-content",
+            "--window-size=1920,1080",
+            f"--user-agent={SELENIUM_CONFIG['user_agent']}"
+        ]
         
-        # Anti-detection measures
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option('useAutomationExtension', False)
+        for option in options_list:
+            chrome_options.add_argument(option)
         
-        # User agent
-        user_agent = (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        options.add_argument(f"--user-agent={user_agent}")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
         
-        return options
+        return chrome_options
     
-    def _setup_with_chrome_driver_manager(self, options: Options) -> webdriver.Chrome:
-        """Setup using ChromeDriverManager."""
+    def _setup_with_chrome_driver_manager(self, chrome_options: Options) -> webdriver.Chrome:
+        """Setup driver using ChromeDriverManager auto-download."""
         logger.info("Attempting ChromeDriverManager auto-download...")
         service = Service(ChromeDriverManager().install())
-        return webdriver.Chrome(service=service, options=options)
+        return webdriver.Chrome(service=service, options=chrome_options)
     
-    def _setup_with_system_chrome(self, options: Options) -> webdriver.Chrome:
-        """Setup using system Chrome."""
+    def _setup_with_system_chrome(self, chrome_options: Options) -> webdriver.Chrome:
+        """Setup driver using system Chrome installation."""
         logger.info("Attempting system Chrome setup...")
-        return webdriver.Chrome(options=options)
+        return webdriver.Chrome(options=chrome_options)
     
-    def _setup_with_manual_paths(self, options: Options) -> webdriver.Chrome:
-        """Setup using manual paths."""
-        logger.info("Attempting manual Chrome paths...")
+    def _setup_with_manual_paths(self, chrome_options: Options) -> webdriver.Chrome:
+        """Setup driver using manual chromedriver paths."""
+        import os
         
-        driver_paths = [
+        possible_paths = [
             r"C:\Program Files\Google\Chrome\Application\chromedriver.exe",
             r"C:\Program Files (x86)\Google\Chrome\Application\chromedriver.exe",
             r"C:\chromedriver\chromedriver.exe",
             "./chromedriver.exe",
+            "chromedriver.exe"
         ]
         
-        for driver_path in driver_paths:
-            try:
-                service = Service(driver_path)
-                return webdriver.Chrome(service=service, options=options)
-            except Exception:
-                continue
+        for path in possible_paths:
+            if os.path.exists(path):
+                logger.info(f"Trying manual path: {path}")
+                service = Service(path)
+                return webdriver.Chrome(service=service, options=chrome_options)
         
-        raise DriverSetupException("No valid Chrome driver path found")
+        raise Exception("No valid chromedriver path found")
     
     def _configure_driver(self):
-        """Configure the driver after setup."""
-        # Set timeouts
-        self.driver.set_page_load_timeout(30)
-        self.driver.implicitly_wait(5)
-        
+        """Configure driver after setup."""
         # Set up WebDriverWait
         self.wait = WebDriverWait(self.driver, 10)
         
@@ -279,39 +480,20 @@ class PopupHandler:
             logger.info("🍪 Checking for popups and cookie banners")
             time.sleep(2)  # Wait for popups to appear
             
-            popup_selectors = [
-                # Cookie banners
-                'button[id*="accept"]',
-                'button[class*="accept"]',
-                'button:contains("Accept")',
-                'button:contains("Allow")',
-                '#onetrust-accept-btn-handler',
-                '.cookie-banner button',
-                '[data-testid="accept-cookies"]',
-                
-                # Close buttons
-                'button[aria-label="Close"]',
-                'button[class*="close"]',
-                '.modal-close',
-                '[data-testid="close"]',
-            ]
-            
+            popup_selectors = self._get_popup_selectors()
             popups_handled = 0
             
             for selector in popup_selectors:
                 try:
-                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    elements = self._find_elements_by_selector(selector)
                     
                     for element in elements:
-                        if element.is_displayed() and element.is_enabled():
-                            try:
-                                element.click()
+                        if self._is_element_interactable(element):
+                            if self._click_element(element):
                                 logger.info(f"✅ Clicked popup with selector: {selector}")
                                 popups_handled += 1
                                 time.sleep(1)
                                 break
-                            except Exception:
-                                continue
                     
                     if popups_handled >= 3:  # Don't handle too many popups
                         break
@@ -330,215 +512,236 @@ class PopupHandler:
         except Exception as e:
             logger.warning(f"⚠️ Error handling popups: {e}")
             return 0
+    
+    def _get_popup_selectors(self) -> List[str]:
+        """Get list of popup selectors."""
+        return [
+            "button[id*='accept']",
+            "button[class*='accept']", 
+            "button[data-testid*='accept']",
+            "#accept-cookies",
+            ".cookie-accept",
+            "button[aria-label*='close']",
+            "button[aria-label*='Close']",
+            ".modal-close",
+            ".popup-close",
+            "[data-testid*='close']",
+            ".notification-banner button",
+            ".banner-close",
+            ".consent-banner button"
+        ]
+    
+    def _find_elements_by_selector(self, selector: str) -> List:
+        """Find elements by CSS selector or XPath."""
+        if ':contains(' in selector:
+            text = selector.split("'")[1]
+            xpath = f"//button[contains(text(), '{text}')]"
+            return self.driver.find_elements(By.XPATH, xpath)
+        else:
+            return self.driver.find_elements(By.CSS_SELECTOR, selector)
+    
+    def _is_element_interactable(self, element) -> bool:
+        """Check if element is displayable and enabled."""
+        try:
+            return element.is_displayed() and element.is_enabled()
+        except:
+            return False
+    
+    def _click_element(self, element) -> bool:
+        """Attempt to click element with fallback methods."""
+        try:
+            element.click()
+            return True
+        except:
+            try:
+                self.driver.execute_script("arguments[0].click();", element)
+                return True
+            except:
+                return False
 
 
 class CategoryManager:
-    """Manages category discovery and navigation."""
+    """Manages ASDA category discovery and validation."""
     
     def __init__(self, driver: webdriver.Chrome, session: CrawlSession):
         self.driver = driver
         self.session = session
+        self._category_cache = {}
     
     def discover_categories(self) -> bool:
-        """Discover categories from ASDA homepage."""
+        """Create categories using ASDA's actual category structure with real codes."""
         try:
-            logger.info("🔍 Starting category discovery")
+            logger.info("🏪 Setting up ASDA categories using real category structure")
             
-            self.driver.get("https://groceries.asda.com/")
+            max_categories = self.session.crawl_settings.get('max_categories', 10)
+            include_priority = self.session.crawl_settings.get('category_priority', 2)
+            
+            categories_created = 0
+            
+            for url_code, cat_info in ASDA_CATEGORY_MAPPINGS.items():
+                if cat_info['priority'] > include_priority:
+                    continue
+                    
+                if categories_created >= max_categories:
+                    break
+                
+                if self._create_or_update_category(url_code, cat_info):
+                    categories_created += 1
+            
+            self._deactivate_promotional_categories()
+            
+            active_categories = AsdaCategory.objects.filter(is_active=True).count()
+            logger.info(f"🏁 Category setup complete. Active categories: {active_categories}")
+            
+            return active_categories > 0
+            
+        except Exception as e:
+            logger.error(f"❌ Critical error in category discovery: {e}")
+            return False
+    
+    def _create_or_update_category(self, url_code: str, cat_info: Dict) -> bool:
+        """Create or update a single category."""
+        try:
+            test_url = f"https://groceries.asda.com/cat/{cat_info['slug']}/{url_code}"
+            logger.info(f"🧪 Testing category: {cat_info['name']} → {test_url}")
+            
+            self.driver.get(test_url)
+            time.sleep(2)
+            
+            if self._is_valid_category_page():
+                category, created = AsdaCategory.objects.get_or_create(
+                    url_code=url_code,
+                    defaults={
+                        'name': cat_info['name'],
+                        'is_active': True
+                    }
+                )
+                
+                if category.name != cat_info['name']:
+                    category.name = cat_info['name']
+                    category.save()
+                
+                action = "Created" if created else "Updated"
+                logger.info(f"✅ {action} category: {category.name}")
+                
+                return True
+            else:
+                logger.warning(f"❌ Invalid category URL: {cat_info['name']}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error processing category {cat_info['name']}: {e}")
+            return False
+    
+    def _is_valid_category_page(self) -> bool:
+        """Check if current page is a valid category page."""
+        page_title = self.driver.title.lower()
+        current_url = self.driver.current_url
+        
+        return ('404' not in page_title and 
+                'error' not in page_title and 
+                'not found' not in page_title and
+                'groceries.asda.com' in current_url)
+    
+    def _deactivate_promotional_categories(self):
+        """Deactivate old/promotional categories."""
+        promotional_codes = ['rollback', 'summer', 'events-inspiration']
+        for promo in promotional_codes:
+            AsdaCategory.objects.filter(
+                url_code__icontains=promo
+            ).update(is_active=False)
+            logger.info(f"🚫 Deactivated promotional category: {promo}")
+
+
+class ProductExtractor:
+    """Extracts product data from ASDA category pages."""
+    
+    def __init__(self, driver: webdriver.Chrome, session: CrawlSession):
+        self.driver = driver
+        self.session = session
+        self.base_url = "https://groceries.asda.com"
+    
+    def extract_products_from_category(self, category: AsdaCategory) -> int:
+        """Extract products from a specific category."""
+        try:
+            category_url = self._build_category_url(category)
+            if not category_url:
+                return 0
+            
+            logger.info(f"🛒 Crawling category: {category.name}")
+            logger.info(f"🔗 URL: {category_url}")
+            
+            self.driver.get(category_url)
             time.sleep(3)
             
-            # Handle popups first
             popup_handler = PopupHandler(self.driver)
             popup_handler.handle_popups()
             
-            # Find navigation menu
-            nav_selectors = [
-                'nav[class*="navigation"]',
-                '.main-nav',
-                '[data-testid="navigation"]',
-                'ul[class*="category"]'
-            ]
+            return self._extract_products_from_current_page(category)
             
-            nav_element = None
-            for selector in nav_selectors:
-                try:
-                    nav_element = self.driver.find_element(By.CSS_SELECTOR, selector)
-                    if nav_element:
-                        break
-                except NoSuchElementException:
-                    continue
+        except Exception as e:
+            logger.error(f"❌ Error crawling category {category.name}: {e}")
+            return 0
+    
+    def _build_category_url(self, category: AsdaCategory) -> Optional[str]:
+        """Build category URL from category object."""
+        for url_code, cat_info in ASDA_CATEGORY_MAPPINGS.items():
+            if url_code == category.url_code:
+                return f"https://groceries.asda.com/cat/{cat_info['slug']}/{category.url_code}"
+        
+        logger.warning(f"⚠️ No URL slug found for category {category.name} ({category.url_code})")
+        return None
+    
+    def _extract_products_from_current_page(self, category: AsdaCategory) -> int:
+        """Extract products from the current page with pagination support."""
+        try:
+            products_found = 0
+            max_products = self.session.crawl_settings.get('max_products_per_category', 100)
             
-            if not nav_element:
-                logger.warning("Could not find navigation menu")
-                return False
+            logger.info(f"🔍 Extracting products from {category.name} page")
             
-            # Extract category links
-            category_links = nav_element.find_elements(By.TAG_NAME, "a")
-            categories_found = 0
+            if not self._wait_for_products_to_load():
+                logger.warning(f"⏰ Timeout waiting for products to load on {category.name}")
+                return 0
             
-            for link in category_links:
-                try:
-                    href = link.get_attribute("href")
-                    text = link.text.strip()
-                    
-                    if href and "dept" in href and text:
-                        category_code = self._extract_category_code(href)
-                        if category_code:
-                            category, created = AsdaCategory.objects.get_or_create(
-                                url_code=category_code,
-                                defaults={
-                                    'name': text,
-                                    'full_url': href,
-                                    'is_active': True
-                                }
-                            )
-                            
-                            if created:
-                                categories_found += 1
-                                logger.info(f"📂 Found category: {text}")
+            page_num = 1
+            max_pages = SCRAPER_SETTINGS.get('max_pages_per_category', 5)
+            
+            while page_num <= max_pages and products_found < max_products:
+                logger.info(f"📄 Processing page {page_num} of {category.name}")
                 
-                except Exception as e:
-                    logger.debug(f"Error processing category link: {e}")
-                    continue
+                page_products = self._extract_products_from_page(category)
+                products_found += page_products
+                
+                logger.info(f"📊 Page {page_num}: {page_products} products extracted")
+                
+                if page_products > 0 and products_found < max_products:
+                    if not self._navigate_to_next_page():
+                        logger.info(f"🔚 No more pages available for {category.name}")
+                        break
+                    page_num += 1
+                    time.sleep(2)
+                else:
+                    break
             
-            logger.info(f"✅ Category discovery complete. Found {categories_found} new categories")
-            return categories_found > 0
+            logger.info(f"🎯 Total products extracted from {category.name}: {products_found}")
+            return products_found
             
         except Exception as e:
-            logger.error(f"❌ Category discovery failed: {e}")
-            return False
-    
-    def _extract_category_code(self, url: str) -> Optional[str]:
-        """Extract category code from URL."""
-        try:
-            match = re.search(r'/dept/([^/]+)', url)
-            return match.group(1) if match else None
-        except Exception:
-            return None
+            logger.error(f"❌ Error extracting products from {category.name}: {e}")
+            return 0
 
-
-class SeleniumAsdaScraper:
-    """Production-ready Selenium-based ASDA scraper."""
-    
-    def __init__(self, crawl_session: CrawlSession, headless: bool = False):
-        self.session = crawl_session
-        self.headless = headless
-        self.driver_manager = None
-        self.driver = None
-        self.base_url = "https://groceries.asda.com"
+    def _extract_products_from_current_page_by_url(self, url=None):
+        """
+        Extract products from the current page without requiring a category object.
+        This method is used by the link crawler when processing discovered links.
         
-        logger.info(f"Selenium ASDA Scraper initialized for session {self.session.pk}")
-        
-        try:
-            self.driver_manager = WebDriverManager(headless=headless)
-            self.driver = self.driver_manager.setup_driver()
-        except DriverSetupException as e:
-            logger.error(f"Failed to initialize scraper: {e}")
-            raise
-    
-    def start_crawl(self) -> ScrapingResult:
-        """Start the crawling process using Selenium."""
-        start_time = time.time()
-        result = ScrapingResult()
-        
-        try:
-            logger.info(f"Starting Selenium crawl session {self.session.pk}")
+        Args:
+            url: Optional URL (for logging purposes, doesn't navigate)
             
-            self.session.status = 'RUNNING'
-            self.session.save()
-            
-            if self._should_discover_categories():
-                category_manager = CategoryManager(self.driver, self.session)
-                if not category_manager.discover_categories():
-                    raise ScraperException("Category discovery failed")
-            
-            result = self._crawl_all_products()
-            
-            self.session.mark_completed()
-            result.duration = time.time() - start_time
-            
-            logger.info(f"🎉 Crawl completed successfully in {result.duration:.2f} seconds")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error in Selenium crawl session {self.session.pk}: {e}")
-            self.session.mark_failed(str(e))
-            result.errors.append(str(e))
-            result.duration = time.time() - start_time
-            return result
-        finally:
-            self._cleanup()
-    
-    def _should_discover_categories(self) -> bool:
-        """Determine if category discovery is needed."""
-        active_categories = AsdaCategory.objects.filter(is_active=True).count()
-        return active_categories == 0
-    
-    def _crawl_all_products(self) -> ScrapingResult:
-        """Crawl products for all active categories with intelligent delays."""
-        result = ScrapingResult()
-        delay_manager = DelayManager()
-        
-        try:
-            # Get categories to crawl - FIXED: Removed 'priority' field
-            categories = AsdaCategory.objects.filter(
-                is_active=True
-            ).order_by('name')  # Changed from 'priority', 'name' to just 'name'
-            
-            if not categories.exists():
-                logger.warning("⚠️ No active categories found")
-                return result
-            
-            total_categories = categories.count()
-            logger.info(f"🎯 Starting product crawl for {total_categories} categories")
-            
-            # Process each category
-            for i, category in enumerate(categories, 1):
-                try:
-                    logger.info(f"\n{'='*80}")
-                    logger.info(f"📂 CATEGORY {i}/{total_categories}: {category.name}")
-                    logger.info(f"🔗 URL: {category.full_url}")
-                    logger.info(f"{'='*80}")
-                    
-                    # Navigate to category
-                    self.driver.get(category.full_url)
-                    delay_manager.wait('page_load')
-                    
-                    # Handle popups
-                    popup_handler = PopupHandler(self.driver)
-                    popup_handler.handle_popups()
-                    
-                    # Extract products from this category
-                    products_found = self._extract_products_from_current_page_by_url(category.full_url)
-                    logger.info(f"✅ Found {products_found} products on {category.name} page")
-                    
-                    # Update category timestamp
-                    category.last_crawled = timezone.now()
-                    category.save()
-                    
-                    # Reset delay multiplier after successful category
-                    delay_manager.reset_delay()
-                    
-                    # Apply delay between main categories (except for last one)
-                    if i < total_categories:
-                        logger.info(f"[DELAY] Applying 60-second delay before next main category...")
-                        delay_manager.wait('between_categories')
-                    
-                except Exception as e:
-                    error_msg = f"Error crawling category {category.name}: {e}"
-                    logger.error(error_msg)
-                    result.errors.append(error_msg)
-                    delay_manager.increase_delay()
-                    
-            return result
-            
-        except Exception as e:
-            logger.error(f"Fatal error in product crawl: {e}")
-            result.errors.append(str(e))
-            return result
-    
-    def _extract_products_from_current_page_by_url(self, url=None) -> int:
-        """Extract products from current page."""
+        Returns:
+            int: Number of products found and saved
+        """
         logger.info("="*80)
         logger.info("🛒 PRODUCT EXTRACTION STARTED (BY URL)")
         if url:
@@ -643,7 +846,7 @@ class SeleniumAsdaScraper:
                         price_elem = soup.select_one(selector)
                         if price_elem:
                             price_text = price_elem.get_text(strip=True)
-                            price_match = re.search(r'£?(\d+\.\d*)', price_text)
+                            price_match = re.search(r'£?(\d+\.?\d*)', price_text)
                             if price_match:
                                 price = float(price_match.group(1))
                                 logger.info(f"💰 Price: £{price}")
@@ -701,7 +904,7 @@ class SeleniumAsdaScraper:
                     # Was price (for offers)
                     was_price_elem = soup.select_one("span.co-product__was-price, [class*='was-price']")
                     if was_price_elem:
-                        was_price_match = re.search(r'£?(\d+\.\d*)', was_price_elem.get_text())
+                        was_price_match = re.search(r'£?(\d+\.?\d*)', was_price_elem.get_text())
                         if was_price_match:
                             product_data['was_price'] = float(was_price_match.group(1))
                             logger.info(f"🏷️ Was price: £{product_data['was_price']}")
@@ -743,55 +946,288 @@ class SeleniumAsdaScraper:
             return 0
 
     def _infer_category_from_page(self):
-        """Try to infer the category from the current page URL or content."""
+        """
+        Try to infer the category from the current page URL or content.
+        
+        Returns:
+            AsdaCategory or None
+        """
         try:
             current_url = self.driver.current_url
             
-            # Extract dept code from URL
-            dept_match = re.search(r'/dept/([^/]+)', current_url)
-            if dept_match:
-                dept_code = dept_match.group(1)
+            # Try to extract category code from URL
+            category_code_match = re.search(r'(\d{13})', current_url)
+            if category_code_match:
+                category_code = category_code_match.group(1)
                 
                 # Try to find existing category
-                category = AsdaCategory.objects.filter(url_code=dept_code).first()
-                if category:
-                    logger.info(f"📂 Matched category: {category.name}")
+                try:
+                    category = AsdaCategory.objects.get(url_code=category_code)
+                    logger.info(f"📁 Found category from URL: {category.name}")
+                    return category
+                except AsdaCategory.DoesNotExist:
+                    # Create a basic category
+                    category_name = "Unknown Category"
+                    
+                    # Try to get category name from page
+                    try:
+                        breadcrumb = self.driver.find_element(By.CSS_SELECTOR, "[class*='breadcrumb'] span:last-child")
+                        category_name = breadcrumb.text.strip()
+                    except:
+                        try:
+                            title = self.driver.title
+                            if " | " in title:
+                                category_name = title.split(" | ")[0].strip()
+                        except:
+                            pass
+                    
+                    category = AsdaCategory.objects.create(
+                        url_code=category_code,
+                        name=category_name,
+                        is_active=True
+                    )
+                    logger.info(f"📁 Created new category: {category_name}")
                     return category
             
-            # Fallback: create a generic category
-            fallback_category, created = AsdaCategory.objects.get_or_create(
-                url_code='general',
-                defaults={'name': 'General Products', 'is_active': True}
+            # If no category code in URL, use a default category
+            default_category, created = AsdaCategory.objects.get_or_create(
+                url_code='0000000000000',
+                defaults={'name': 'Uncategorized', 'is_active': True}
             )
-            
-            if created:
-                logger.info("📂 Created fallback 'General Products' category")
-            
-            return fallback_category
+            return default_category
             
         except Exception as e:
-            logger.error(f"Error inferring category: {e}")
+            logger.error(f"Error inferring category: {str(e)}")
             return None
 
-    def _save_product_from_data(self, product_data: dict, category) -> bool:
-        """Save product data to database."""
+    def _save_product_from_data(self, product_data, category):
+        """
+        Save product from extracted data dictionary.
+        
+        Args:
+            product_data: Dictionary with product information
+            category: AsdaCategory object (can be None)
+            
+        Returns:
+            bool: True if saved successfully
+        """
         try:
-            if not category:
-                logger.warning("Cannot save product: no category provided")
+            if not product_data.get('name') or product_data.get('price') is None:
+                logger.warning("Missing required product data (name or price)")
                 return False
-                
+            
+            # Create or update the product
+            asda_id = product_data.get('asda_id', f"gen_{hash(product_data['name']) % 1000000}")
+            
             product, created = AsdaProduct.objects.get_or_create(
-                asda_id=product_data.get('asda_id', ''),
+                asda_id=asda_id,
                 defaults={
-                    'name': product_data.get('name', ''),
-                    'price': product_data.get('price', 0),
+                    'name': product_data['name'],
+                    'price': product_data['price'],
                     'was_price': product_data.get('was_price'),
                     'unit': product_data.get('unit', 'each'),
-                    'description': product_data.get('name', ''),
+                    'description': product_data.get('description', product_data['name']),
                     'image_url': product_data.get('image_url', ''),
                     'product_url': product_data.get('url', ''),
                     'category': category,
                     'in_stock': True,
+                    'special_offer': '',
+                }
+            )
+            
+            if not created:
+                # Update existing product
+                product.name = product_data['name']
+                product.price = product_data['price']
+                if 'was_price' in product_data:
+                    product.was_price = product_data.get('was_price')
+                if 'unit' in product_data:
+                    product.unit = product_data['unit']
+                if 'image_url' in product_data:
+                    product.image_url = product_data['image_url']
+                if 'url' in product_data:
+                    product.product_url = product_data['url']
+                if category:
+                    product.category = category
+                product.save()
+                
+                logger.info(f"[UPDATE] Updated existing product: {product.name}")
+            else:
+                logger.info(f"[NEW] Created new product: {product.name}")
+            
+            # Update session statistics
+            if created:
+                self.session.products_found += 1
+            else:
+                self.session.products_updated += 1
+            self.session.save()
+            
+            # Update category product count if applicable
+            if category:
+                category.product_count = category.products.count()
+                category.save()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving product: {str(e)}")
+            return False
+    
+    def _wait_for_products_to_load(self, timeout: int = 10) -> bool:
+        """Wait for products to load on the page."""
+        try:
+            WebDriverWait(self.driver, timeout).until(
+                EC.presence_of_element_located((
+                    By.CSS_SELECTOR, 
+                    'div.co-product, div[class*="co-product"], div[class*="product-tile"]'
+                ))
+            )
+            return True
+        except TimeoutException:
+            return False
+    
+    def _extract_products_from_page(self, category: AsdaCategory) -> int:
+        """Extract products from the current page."""
+        try:
+            page_source = self.driver.page_source
+            soup = BeautifulSoup(page_source, 'html.parser')
+            
+            product_containers = self._find_product_containers(soup)
+            
+            if not product_containers:
+                logger.warning(f"❌ No product containers found on {category.name}")
+                return 0
+            
+            logger.info(f"🛍️ Found {len(product_containers)} product containers")
+            
+            products_saved = 0
+            for container in product_containers:
+                try:
+                    product_data = self._extract_product_data(container, category)
+                    
+                    if product_data:
+                        if self._save_product_data(product_data, category):
+                            products_saved += 1
+                            logger.debug(f"✅ Saved product: {product_data.name[:50]}...")
+                
+                except Exception as e:
+                    logger.error(f"❌ Error extracting product data: {e}")
+                    continue
+            
+            return products_saved
+            
+        except Exception as e:
+            logger.error(f"❌ Error extracting products from page: {e}")
+            return 0
+    
+    def _find_product_containers(self, soup: BeautifulSoup) -> List:
+        """Find product containers using multiple selectors."""
+        selectors = [
+            'div.co-product',
+            'div[class*="co-product"]',
+            'div[class*="product-tile"]',
+            'div[class*="product-item"]',
+            'article[class*="product"]',
+            '[data-testid*="product"]'
+        ]
+        
+        for selector in selectors:
+            containers = soup.select(selector)
+            if containers:
+                logger.info(f"Found {len(containers)} products using selector: {selector}")
+                return containers
+        
+        logger.warning("No product containers found with any selector")
+        return []
+    
+    def _extract_product_data(self, container, category: AsdaCategory) -> Optional[ProductData]:
+        """Extract product data from container."""
+        try:
+            title_link = container.select_one('a.co-product__anchor, a[href*="/product/"]')
+            if not title_link:
+                return None
+            
+            name = title_link.get_text(strip=True)
+            product_url = urljoin(self.base_url, title_link.get('href', ''))
+            
+            price_element = container.select_one('strong.co-product__price, .price strong')
+            if not price_element:
+                return None
+            
+            price_text = price_element.get_text(strip=True)
+            price_match = re.search(r'£(\d+\.?\d*)', price_text)
+            if not price_match:
+                return None
+            
+            price = float(price_match.group(1))
+            
+            asda_id_match = re.search(r'/(\d+)$', product_url)
+            asda_id = (asda_id_match.group(1) if asda_id_match 
+                      else f"{category.url_code}_{hash(name) % 100000}")
+            
+            was_price = self._extract_was_price(container)
+            unit = self._extract_unit(container)
+            image_url = self._extract_image_url(container)
+            
+            return ProductData(
+                name=name,
+                price=price,
+                was_price=was_price,
+                unit=unit,
+                description=name,
+                image_url=image_url,
+                product_url=product_url,
+                asda_id=asda_id,
+                in_stock=True,
+                special_offer='',
+                rating=None,
+                review_count='',
+                price_per_unit='',
+            )
+            
+        except Exception as e:
+            logger.error(f"Error extracting product data: {e}")
+            return None
+    
+    def _extract_was_price(self, container) -> Optional[float]:
+        """Extract was price if product is on sale."""
+        was_price_element = container.select_one('span.co-product__was-price')
+        if was_price_element:
+            was_price_match = re.search(r'£(\d+\.?\d*)', was_price_element.get_text())
+            if was_price_match:
+                return float(was_price_match.group(1))
+        return None
+    
+    def _extract_unit(self, container) -> str:
+        """Extract unit information."""
+        unit_element = container.select_one('span.co-product__volume')
+        return unit_element.get_text(strip=True) if unit_element else 'each'
+    
+    def _extract_image_url(self, container) -> str:
+        """Extract product image URL."""
+        img_element = container.select_one('img.asda-img')
+        return img_element.get('src', '') if img_element else ''
+    
+    def _save_product_data(self, product_data: ProductData, category: AsdaCategory) -> bool:
+        """Save product data to database."""
+        try:
+            product, created = AsdaProduct.objects.get_or_create(
+                asda_id=product_data.asda_id,
+                defaults={
+                    'name': product_data.name,
+                    'price': product_data.price,
+                    'was_price': product_data.was_price,
+                    'unit': product_data.unit,
+                    'description': product_data.description,
+                    'image_url': product_data.image_url,
+                    'product_url': product_data.product_url,
+                    'asda_id': product_data.asda_id,
+                    'category': category,
+                    'in_stock': product_data.in_stock,
+                    'special_offer': product_data.special_offer,
+                    'rating': product_data.rating,
+                    'review_count': product_data.review_count,
+                    'price_per_unit': product_data.price_per_unit,
                 }
             )
             
@@ -799,10 +1235,10 @@ class SeleniumAsdaScraper:
                 self.session.products_found += 1
                 logger.info(f"✅ Created: {product.name} in {category.name}")
             else:
-                # Update existing product
                 for field in ['name', 'price', 'was_price', 'unit', 'description', 
-                             'image_url', 'product_url', 'in_stock']:
-                    value = product_data.get(field)
+                             'image_url', 'product_url', 'in_stock', 'special_offer',
+                             'rating', 'review_count', 'price_per_unit']:
+                    value = getattr(product_data, field)
                     if value is not None:
                         setattr(product, field, value)
                 product.category = category
@@ -818,930 +1254,229 @@ class SeleniumAsdaScraper:
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error saving product {product_data.get('name', 'Unknown')}: {e}")
+            logger.error(f"❌ Error saving product {product_data.name}: {e}")
+            return False
+    
+    def _navigate_to_next_page(self) -> bool:
+        """Navigate to the next page of products if pagination exists."""
+        try:
+            next_selectors = [
+                'a[aria-label="Next"]',
+                'a.pagination-next',
+                'a[class*="next"]',
+                'button[aria-label="Next"]',
+                'button.pagination-next',
+                'button[class*="next"]'
+            ]
+            
+            for selector in next_selectors:
+                try:
+                    next_button = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    
+                    if next_button.is_enabled() and next_button.is_displayed():
+                        self.driver.execute_script("arguments[0].scrollIntoView(true);", next_button)
+                        time.sleep(1)
+                        next_button.click()
+                        time.sleep(3)
+                        logger.debug(f"✅ Navigated to next page using selector: {selector}")
+                        return True
+                        
+                except (NoSuchElementException, Exception):
+                    continue
+            
+            logger.debug("🔚 No next page button found or enabled")
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Error navigating to next page: {e}")
             return False
 
-    # ==============================================================================
-    # NUTRITIONAL INFORMATION EXTRACTION METHODS
-    # ==============================================================================
     
-    def cleanup(self):
-        """
-        Clean up the scraper resources.
-        Public method that calls the private _cleanup method.
-        """
+
+
+class SeleniumAsdaScraper:
+    """Production-ready Selenium-based ASDA scraper."""
+    
+    def __init__(self, crawl_session: CrawlSession, headless: bool = False):
+        self.session = crawl_session
+        self.headless = headless
+        self.driver_manager = None
+        self.driver = None
+        self.base_url = "https://groceries.asda.com"
+        
+        logger.info(f"Selenium ASDA Scraper initialized for session {self.session.pk}")
+        
         try:
+            self.driver_manager = WebDriverManager(headless=headless)
+            self.driver = self.driver_manager.setup_driver()
+        except DriverSetupException as e:
+            logger.error(f"Failed to initialize scraper: {e}")
+            raise
+    
+    def start_crawl(self) -> ScrapingResult:
+        """Start the crawling process using Selenium."""
+        start_time = time.time()
+        result = ScrapingResult()
+        
+        try:
+            logger.info(f"Starting Selenium crawl session {self.session.pk}")
+            
+            self.session.status = 'RUNNING'
+            self.session.save()
+            
+            if self._should_discover_categories():
+                category_manager = CategoryManager(self.driver, self.session)
+                if not category_manager.discover_categories():
+                    raise ScraperException("Category discovery failed")
+            
+            result = self._crawl_all_products()
+            
+            self.session.mark_completed()
+            result.duration = time.time() - start_time
+            
+            logger.info(f"🎉 Crawl completed successfully in {result.duration:.2f} seconds")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in Selenium crawl session {self.session.pk}: {e}")
+            self.session.mark_failed(str(e))
+            result.errors.append(str(e))
+            result.duration = time.time() - start_time
+            return result
+        finally:
             self._cleanup()
-            logger.info("🧹 Public cleanup completed")
-        except Exception as e:
-            logger.error(f"❌ Error during public cleanup: {str(e)}")
-
-    def _extract_nutritional_info_from_product_page(self, product_url: str, max_retries: int = 3) -> dict:
-        """
-        Navigate to individual product page and extract nutritional information.
-        
-        Args:
-            product_url: Full URL to the product detail page
-            max_retries: Maximum number of retry attempts
-            
-        Returns:
-            dict: Nutritional information dictionary
-        """
-        logger.info(f"🧪 Extracting nutritional info from: {product_url[:60]}...")
-        
-        # Store current URL to return to it later
-        original_url = self.driver.current_url
-        nutritional_data = {}
-        
-        for attempt in range(max_retries):
-            try:
-                # Navigate to product page
-                logger.debug(f"📍 Navigating to product page (attempt {attempt + 1})")
-                self.driver.get(product_url)
-                
-                # Wait for page to load
-                WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "body"))
-                )
-                
-                # Small delay to ensure dynamic content loads
-                time.sleep(2)
-                
-                # Check if we've been redirected or blocked
-                current_page_url = self.driver.current_url
-                if 'error' in current_page_url.lower() or 'block' in current_page_url.lower():
-                    logger.warning(f"⚠️ Possible block detected on attempt {attempt + 1}")
-                    time.sleep(5)  # Wait longer before retry
-                    continue
-                
-                # Extract nutritional information
-                nutritional_data = self._parse_nutritional_info_from_page()
-                
-                if nutritional_data:
-                    logger.info(f"✅ Successfully extracted nutritional info with {len(nutritional_data)} fields")
-                    break
-                else:
-                    logger.warning(f"⚠️ No nutritional data found on attempt {attempt + 1}")
-                    
-            except TimeoutException:
-                logger.warning(f"⏰ Timeout loading product page on attempt {attempt + 1}")
-                if attempt < max_retries - 1:
-                    time.sleep(3)
-                    continue
-                    
-            except Exception as e:
-                logger.error(f"❌ Error extracting nutritional info on attempt {attempt + 1}: {str(e)}")
-                if attempt < max_retries - 1:
-                    time.sleep(3)
-                    continue
-        
-        # Return to original page
-        try:
-            if original_url != self.driver.current_url:
-                logger.debug(f"🔙 Returning to original page: {original_url[:60]}...")
-                self.driver.get(original_url)
-                time.sleep(2)
-        except Exception as e:
-            logger.error(f"❌ Error returning to original page: {str(e)}")
-        
-        return nutritional_data
-
-    def _parse_nutritional_info_from_page(self) -> dict:
-        """
-        Enhanced parsing of nutritional information from the current product page.
-        
-        Returns:
-            dict: Dictionary containing all nutritional values
-        """
-        logger.debug("🔍 Parsing nutritional information from page...")
-        
-        try:
-            # Get page source and parse with BeautifulSoup
-            page_source = self.driver.page_source
-            soup = BeautifulSoup(page_source, 'html.parser')
-            
-            nutritional_data = {}
-            
-            # Strategy 1: Look for "Nutritional Values" heading and nearby table
-            nutrition_section = self._find_nutrition_section(soup)
-            
-            if nutrition_section:
-                logger.debug("📊 Found nutritional values section")
-                
-                # Extract from table structure (primary method)
-                nutritional_data = self._extract_from_nutrition_table(nutrition_section)
-                
-                # If table extraction didn't get everything, try additional methods
-                if len(nutritional_data) < 6:  # We expect at least 6-9 nutritional values
-                    logger.debug("🔄 Table extraction incomplete, trying additional methods...")
-                    additional_data = self._extract_from_nutrition_divs(nutrition_section)
-                    nutritional_data.update(additional_data)
-            
-            # Strategy 2: If main section not found, try alternative page-wide extraction
-            if not nutritional_data:
-                logger.debug("🔄 Main nutrition section not found, trying page-wide extraction...")
-                nutritional_data = self._extract_nutrition_from_entire_page(soup)
-            
-            # Strategy 3: Try regex patterns on raw text as final fallback
-            if len(nutritional_data) < 4:  # If we still don't have enough data
-                logger.debug("🔄 Trying regex patterns on page text...")
-                regex_data = self._extract_nutrition_with_regex(soup)
-                nutritional_data.update(regex_data)
-            
-            # Clean and validate the data
-            nutritional_data = self._clean_and_validate_nutritional_data(nutritional_data)
-            
-            if nutritional_data:
-                logger.info(f"📊 Extracted {len(nutritional_data)} nutritional values")
-                for key, value in sorted(nutritional_data.items()):
-                    logger.debug(f"  {key}: {value}")
-            else:
-                logger.warning("⚠️ No nutritional data could be extracted from page")
-                # Debug: Save page source for analysis
-                self._debug_save_page_source(soup)
-            
-            return nutritional_data
-            
-        except Exception as e:
-            logger.error(f"❌ Error parsing nutritional information: {str(e)}")
-            import traceback
-            logger.debug(f"Traceback: {traceback.format_exc()}")
-            return {}
-
-    def _find_nutrition_section(self, soup) -> object:
-        """
-        Find the nutritional values section using multiple strategies.
-        
-        Args:
-            soup: BeautifulSoup object of the page
-            
-        Returns:
-            BeautifulSoup element containing nutrition data or None
-        """
-        # Strategy 1: Look for exact text matches
-        nutrition_headers = [
-            'Nutritional Values',
-            'Nutrition Information', 
-            'Nutrition Facts',
-            'Nutritional Information',
-            'Per 100g'
-        ]
-        
-        for header_text in nutrition_headers:
-            # Try different heading levels
-            for tag in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                section = soup.find(tag, string=header_text)
-                if section:
-                    logger.debug(f"Found nutrition section with {tag}: {header_text}")
-                    return section.find_parent() or section
-        
-        # Strategy 2: Look for partial text matches
-        nutrition_section = soup.find(string=lambda text: text and 'nutritional' in text.lower())
-        if nutrition_section:
-            logger.debug("Found nutrition section with partial text match")
-            return nutrition_section.find_parent()
-        
-        # Strategy 3: Look for elements with nutrition-related classes or IDs
-        nutrition_selectors = [
-            '[class*="nutrition"]',
-            '[id*="nutrition"]',
-            '[class*="nutritional"]',
-            '[id*="nutritional"]',
-            '.product-nutrition',
-            '.nutrition-table',
-            '#nutrition-info'
-        ]
-        
-        for selector in nutrition_selectors:
-            section = soup.select_one(selector)
-            if section:
-                logger.debug(f"Found nutrition section with CSS selector: {selector}")
-                return section
-        
-        # Strategy 4: Look for tables containing nutrition keywords
-        tables = soup.find_all('table')
-        for table in tables:
-            table_text = table.get_text().lower()
-            nutrition_keywords = ['energy', 'protein', 'fat', 'carbohydrate', 'salt', 'kj', 'kcal']
-            if any(keyword in table_text for keyword in nutrition_keywords):
-                logger.debug("Found nutrition section in table containing nutrition keywords")
-                return table
-        
-        logger.debug("❌ No nutrition section found")
-        return None
-
-    def _extract_from_nutrition_table(self, container) -> dict:
-        """
-        Enhanced extraction from table structure with better pattern recognition.
-        IMPROVED to handle ASDA's specific table format.
-        
-        Args:
-            container: BeautifulSoup element containing the nutrition table
-            
-        Returns:
-            dict: Nutritional data dictionary
-        """
-        nutritional_data = {}
-        
-        try:
-            # Find all tables in the container
-            tables = container.find_all('table') if container else []
-            if not tables and hasattr(container, 'name') and container.name == 'table':
-                tables = [container]
-            
-            for table in tables:
-                rows = table.find_all('tr')
-                
-                for row in rows:
-                    cells = row.find_all(['td', 'th'])
-                    if len(cells) >= 2:
-                        # Get nutrient name from first cell
-                        nutrient_name = cells[0].get_text(strip=True)
-                        # Get value from last cell (in case there are multiple columns)
-                        nutrient_value = cells[-1].get_text(strip=True)
-                        
-                        # Skip header rows
-                        if nutrient_name.lower() in ['typical values', 'per 100g', 'nutritional values']:
-                            continue
-                        
-                        if nutrient_name and nutrient_value and nutrient_name.lower() != nutrient_value.lower():
-                            # Clean and standardize the data
-                            clean_name = self._standardize_nutrient_name(nutrient_name)
-                            clean_value = self._standardize_nutrient_value(nutrient_value)
-                            
-                            # Additional validation for table data
-                            if clean_name and clean_value and len(clean_value) < 20:  # Reasonable length
-                                nutritional_data[clean_name] = clean_value
-                                logger.debug(f"  Table extraction: {clean_name} = {clean_value}")
-            
-            # If no table data found, try looking for structured divs/spans
-            if not nutritional_data:
-                logger.debug("🔄 No table data found, trying structured elements...")
-                nutritional_data = self._extract_from_structured_elements(container)
-        
-        except Exception as e:
-            logger.error(f"❌ Error extracting from nutrition table: {str(e)}")
-        
-        return nutritional_data
     
-    def _extract_nutrition_aggressive_regex(self, text: str) -> dict:
-        """
-        More aggressive regex extraction for ASDA's specific format.
-        
-        Args:
-            text: Nutrition section text
-            
-        Returns:
-            dict: Additional nutritional data
-        """
-        nutritional_data = {}
+    def _should_discover_categories(self) -> bool:
+        """Determine if category discovery is needed."""
+        active_categories = AsdaCategory.objects.filter(is_active=True).count()
+        return active_categories == 0
+    
+    def _crawl_all_products(self) -> ScrapingResult:
+        """Crawl products for all active categories with intelligent delays."""
+        result = ScrapingResult()
         
         try:
-            # ASDA concatenates everything together, so we need to be very specific
-            # Example: "Energy kJ559Energy kcal132Fat1.9gof which saturates0.5gCarbohydrate<0.5g"
+            active_categories = AsdaCategory.objects.filter(is_active=True)
+            total_categories = active_categories.count()
             
-            # Split the text on nutrition keywords to isolate values
-            nutrition_keywords = [
-                'energy kj', 'energy kcal', 'fat', 'carbohydrate', 
-                'protein', 'salt', 'fibre', 'saturates', 'sugars'
-            ]
+            logger.info(f"Crawling products for {total_categories} categories")
             
-            # Create pattern to capture: keyword + value + optional next keyword
-            master_pattern = r'(energy\s*kj|energy\s*kcal|(?:of\s+which\s+)?(?:fat|carbohydrate|protein|salt|fibre|saturates|sugars))\s*([<>]?\d+(?:\.\d+)?)\s*(?:g|kj|kcal)?'
+            # Initialize components
+            product_extractor = ProductExtractor(self.driver, self.session)
+            from .asda_link_crawler import AsdaLinkCrawler
+            link_crawler = AsdaLinkCrawler(self)
+            link_crawler.scraper = product_extractor
             
-            matches = re.findall(master_pattern, text, re.IGNORECASE)
+            # Initialize delay manager
+            delay_manager = DelayManager()
             
-            for keyword, value in matches:
-                # Clean up the keyword
-                clean_keyword = keyword.strip().lower()
-                
-                # Map to standard names
-                name_mapping = {
-                    'energy kj': 'Energy (kJ)',
-                    'energy kcal': 'Energy (kcal)',
-                    'fat': 'Fat',
-                    'of which saturates': 'Saturates',
-                    'saturates': 'Saturates',
-                    'carbohydrate': 'Carbohydrate',
-                    'of which sugars': 'Sugars',
-                    'sugars': 'Sugars',
-                    'fibre': 'Fibre',
-                    'protein': 'Protein',
-                    'salt': 'Salt'
-                }
-                
-                standard_name = name_mapping.get(clean_keyword)
-                if standard_name and value:
-                    # Format the value
-                    if standard_name in ['Energy (kJ)', 'Energy (kcal)']:
-                        unit = 'kJ' if 'kJ' in standard_name else 'kcal'
-                        formatted_value = f"{value}{unit}"
+            logger.info("="*80)
+            logger.info("LINK CRAWLER INITIALIZED - Will discover and follow subcategory links")
+            logger.info("DELAY STRATEGY: 60 seconds between main categories")
+            logger.info("="*80)
+            
+            for i, category in enumerate(active_categories, 1):
+                try:
+                    logger.info(f"\n{'='*80}")
+                    logger.info(f"PROCESSING MAIN CATEGORY {i}/{total_categories}: {category.name}")
+                    logger.info(f"{'='*80}")
+                    
+                    self.session.categories_crawled = i
+                    self.session.save()
+                    
+                    # Build and navigate to category URL
+                    category_url = product_extractor._build_category_url(category)
+                    if not category_url:
+                        logger.warning(f"Skipping {category.name} - no URL mapping")
+                        continue
+                    
+                    logger.info(f"Navigating to category: {category_url}")
+                    self.driver.get(category_url)
+                    
+                    # Check for rate limiting
+                    if delay_manager.check_rate_limit(self.driver.page_source):
+                        logger.warning("Rate limit detected - applying extended delay")
+                    
+                    # Wait after navigation
+                    delay_manager.wait('between_requests')
+                    
+                    # Handle popups
+                    popup_handler = PopupHandler(self.driver)
+                    popup_handler.handle_popups()
+                    delay_manager.wait('after_popup_handling')
+                    
+                    # Extract products from main category page
+                    logger.info(f"Extracting products from main category page...")
+                    main_page_products = product_extractor._extract_products_from_page(category)
+                    result.products_found += main_page_products
+                    logger.info(f"Found {main_page_products} products on main category page")
+                    
+                    # Delay after extraction
+                    delay_manager.wait('after_product_extraction')
+                    
+                    # Discover links on this category page
+                    logger.info(f"Discovering subcategory links...")
+                    discovered_links = link_crawler.discover_page_links(category_url)
+                    
+                    # Process subcategory links with delays
+                    subcategory_links = discovered_links.get('subcategories', [])
+                    if subcategory_links:
+                        logger.info(f"Found {len(subcategory_links)} subcategory links to explore")
+                        
+                        # Add delay manager to link crawler
+                        link_crawler.delay_manager = delay_manager
+                        
+                        # Crawl subcategories
+                        link_crawler.crawl_discovered_links(discovered_links, max_depth=2, current_depth=0)
                     else:
-                        formatted_value = f"{value}g"
+                        logger.warning(f"No subcategory links found on {category.name} page")
                     
-                    nutritional_data[standard_name] = formatted_value
-                    logger.debug(f"  Aggressive regex: {standard_name} = {formatted_value}")
-        
-        except Exception as e:
-            logger.error(f"❌ Error in aggressive regex extraction: {str(e)}")
-        
-        return nutritional_data
-
-    def _extract_from_nutrition_divs(self, container) -> dict:
-        """
-        Extract nutritional data from div/span structure with improved parsing.
-        
-        Args:
-            container: BeautifulSoup element containing nutrition data
-            
-        Returns:
-            dict: Nutritional data dictionary
-        """
-        nutritional_data = {}
-        
-        try:
-            # Look for common nutrition layout patterns
-            nutrition_patterns = [
-                # Pattern 1: Two adjacent elements (name and value)
-                {'name_selector': 'dt', 'value_selector': 'dd'},
-                {'name_selector': '.nutrient-name', 'value_selector': '.nutrient-value'},
-                {'name_selector': '[class*="name"]', 'value_selector': '[class*="value"]'},
-                
-                # Pattern 2: Single elements containing both name and value
-                {'combined_selector': '.nutrition-item'},
-                {'combined_selector': '.nutrient'},
-                {'combined_selector': '[class*="nutrition"]'},
-            ]
-            
-            for pattern in nutrition_patterns:
-                if 'combined_selector' in pattern:
-                    # Handle combined name+value elements
-                    elements = container.select(pattern['combined_selector'])
-                    for element in elements:
-                        text = element.get_text(strip=True)
-                        name, value = self._split_nutrient_text(text)
-                        if name and value:
-                            clean_name = self._standardize_nutrient_name(name)
-                            clean_value = self._standardize_nutrient_value(value)
-                            if clean_name and clean_value:
-                                nutritional_data[clean_name] = clean_value
-                else:
-                    # Handle separate name and value elements
-                    name_elements = container.select(pattern['name_selector'])
-                    value_elements = container.select(pattern['value_selector'])
+                    # Update category timestamp
+                    category.last_crawled = timezone.now()
+                    category.save()
                     
-                    for name_elem, value_elem in zip(name_elements, value_elements):
-                        name = name_elem.get_text(strip=True)
-                        value = value_elem.get_text(strip=True)
-                        
-                        if name and value:
-                            clean_name = self._standardize_nutrient_name(name)
-                            clean_value = self._standardize_nutrient_value(value)
-                            if clean_name and clean_value:
-                                nutritional_data[clean_name] = clean_value
-        
-        except Exception as e:
-            logger.error(f"❌ Error extracting from nutrition divs: {str(e)}")
-        
-        return nutritional_data
-
-    def _extract_from_structured_elements(self, container) -> dict:
-        """
-        Extract from structured HTML elements like lists, divs with specific patterns.
-        
-        Args:
-            container: BeautifulSoup element containing nutrition data
-            
-        Returns:
-            dict: Nutritional data dictionary
-        """
-        nutritional_data = {}
-        
-        try:
-            # Look for list items
-            list_items = container.find_all(['li', 'div', 'span', 'p'])
-            
-            for item in list_items:
-                text = item.get_text(strip=True)
-                if text and any(keyword in text.lower() for keyword in 
-                              ['kj', 'kcal', 'energy', 'fat', 'protein', 'carbohydrate', 'salt', 'sugar', 'fibre']):
+                    # Reset delay multiplier after successful category
+                    delay_manager.reset_delay()
                     
-                    name, value = self._split_nutrient_text(text)
-                    if name and value:
-                        clean_name = self._standardize_nutrient_name(name)
-                        clean_value = self._standardize_nutrient_value(value)
-                        if clean_name and clean_value:
-                            nutritional_data[clean_name] = clean_value
-        
-        except Exception as e:
-            logger.error(f"❌ Error extracting from structured elements: {str(e)}")
-        
-        return nutritional_data
-
-    def _extract_nutrition_from_entire_page(self, soup) -> dict:
-        """
-        Fallback method to extract nutrition data from the entire page.
-        
-        Args:
-            soup: BeautifulSoup object of the entire page
-            
-        Returns:
-            dict: Nutritional data dictionary
-        """
-        nutritional_data = {}
-        
-        try:
-            # Get all text from the page
-            page_text = soup.get_text()
-            lines = page_text.split('\n')
-            
-            # Look for lines that might contain nutritional information
-            for i, line in enumerate(lines):
-                line = line.strip()
-                if line and any(keyword in line.lower() for keyword in 
-                              ['energy', 'fat', 'protein', 'carbohydrate', 'salt', 'sugar', 'fibre', 'saturates']):
+                    # Apply delay between main categories (except for last one)
+                    if i < total_categories:
+                        logger.info(f"[DELAY] Applying 60-second delay before next main category...")
+                        delay_manager.wait('between_categories')
                     
-                    # Try to extract name and value from this line
-                    name, value = self._split_nutrient_text(line)
+                except Exception as e:
+                    error_msg = f"Error crawling category {category.name}: {e}"
+                    logger.error(error_msg)
+                    result.errors.append(error_msg)
                     
-                    # If value not found in same line, check next few lines
-                    if name and not value and i + 1 < len(lines):
-                        for j in range(1, min(4, len(lines) - i)):  # Check next 3 lines
-                            next_line = lines[i + j].strip()
-                            if next_line and re.search(r'\d', next_line):  # Contains numbers
-                                value = self._extract_numeric_value(next_line)
-                                if value:
-                                    break
-                    
-                    if name and value:
-                        clean_name = self._standardize_nutrient_name(name)
-                        clean_value = self._standardize_nutrient_value(value)
-                        if clean_name and clean_value:
-                            nutritional_data[clean_name] = clean_value
-        
-        except Exception as e:
-            logger.error(f"❌ Error extracting nutrition from entire page: {str(e)}")
-        
-        return nutritional_data
-
-    def _extract_nutrition_with_regex(self, soup) -> dict:
-        """
-        Use regex patterns to extract nutrition data as final fallback.
-        IMPROVED VERSION specifically for ASDA's concatenated format.
-        
-        Args:
-            soup: BeautifulSoup object of the page
+                    # Increase delay after error
+                    delay_manager.increase_delay()
+                    delay_manager.wait('after_navigation_error')
+                    continue
             
-        Returns:
-            dict: Nutritional data dictionary
-        """
-        nutritional_data = {}
-        
-        try:
-            # Get text but focus on the nutritional section only
-            page_text = soup.get_text()
+            # Update final counts
+            result.categories_processed = total_categories
+            result.products_saved = self.session.products_found
             
-            # Try to find the nutritional section first
-            nutrition_section_match = re.search(
-                r'(nutritional\s+values.*?(?=features|storage|cooking|ingredients|allergens|quality|$))',
-                page_text, 
-                re.IGNORECASE | re.DOTALL
-            )
+            # Keep browser open for inspection
+            logger.info("\n" + "="*80)
+            logger.info("CRAWLING COMPLETE - Browser window will remain open")
+            logger.info("Close the browser window manually when done inspecting")
+            logger.info("="*80)
             
-            if nutrition_section_match:
-                # Focus on just the nutritional section
-                nutrition_text = nutrition_section_match.group(1)
-                logger.debug(f"Found nutrition section: {nutrition_text[:200]}...")
-            else:
-                # Fallback to full page but with more careful extraction
-                nutrition_text = page_text
-                logger.debug("No specific nutrition section found, using full page")
-            
-            # ASDA specific patterns - they concatenate values without spaces
-            # Format: "Energy kJ559Energy kcal132Fat1.9gof which saturates0.5g"
-            nutrition_patterns = {
-                'Energy (kJ)': [
-                    r'energy\s*kj\s*(\d+)',
-                    r'kj\s*(\d+)',
-                ],
-                'Energy (kcal)': [
-                    r'energy\s*kcal\s*(\d+)',
-                    r'kcal\s*(\d+)',
-                ],
-                'Fat': [
-                    r'fat\s*([<>]?\d+(?:\.\d+)?)g',
-                    r'(?<!which\s)fat([<>]?\d+(?:\.\d+)?)g',  # Not preceded by "which"
-                ],
-                'Saturates': [
-                    r'saturates\s*([<>]?\d+(?:\.\d+)?)g',
-                    r'which\s+saturates\s*([<>]?\d+(?:\.\d+)?)g',
-                ],
-                'Carbohydrate': [
-                    r'carbohydrate\s*([<>]?\d+(?:\.\d+)?)g',
-                    r'(?<!of\s)carbohydrate([<>]?\d+(?:\.\d+)?)g',
-                ],
-                'Sugars': [
-                    r'sugars\s*([<>]?\d+(?:\.\d+)?)g',
-                    r'which\s+sugars\s*([<>]?\d+(?:\.\d+)?)g',
-                ],
-                'Fibre': [
-                    r'fibre\s*([<>]?\d+(?:\.\d+)?)g',
-                    r'fibre([<>]?\d+(?:\.\d+)?)g',
-                ],
-                'Protein': [
-                    r'protein\s*([<>]?\d+(?:\.\d+)?)g',
-                    r'protein([<>]?\d+(?:\.\d+)?)g',
-                ],
-                'Salt': [
-                    r'salt\s*([<>]?\d+(?:\.\d+)?)g',
-                    r'salt([<>]?\d+(?:\.\d+)?)g',
-                ]
-            }
-            
-            # Apply patterns to extract data from nutrition section only
-            for nutrient_name, patterns in nutrition_patterns.items():
-                for pattern in patterns:
-                    matches = re.findall(pattern, nutrition_text, re.IGNORECASE)
-                    if matches:
-                        # Take the first match found
-                        value = matches[0]
-                        
-                        # Format the value properly
-                        if nutrient_name in ['Energy (kJ)', 'Energy (kcal)']:
-                            unit = 'kJ' if 'kJ' in nutrient_name else 'kcal'
-                            formatted_value = f"{value}{unit}"
-                        else:
-                            # Add 'g' if not present
-                            formatted_value = f"{value}g" if not value.endswith('g') else value
-                        
-                        nutritional_data[nutrient_name] = formatted_value
-                        logger.debug(f"  Regex extraction: {nutrient_name} = {formatted_value}")
-                        break  # Stop after first successful match for this nutrient
-            
-            # If we still don't have enough data, try a more aggressive approach
-            if len(nutritional_data) < 6:
-                logger.debug("🔄 Trying more aggressive regex extraction...")
-                additional_data = self._extract_nutrition_aggressive_regex(nutrition_text)
-                nutritional_data.update(additional_data)
-        
-        except Exception as e:
-            logger.error(f"❌ Error extracting nutrition with regex: {str(e)}")
-        
-        return nutritional_data
-    
-    def _split_nutrient_text(self, text: str) -> tuple:
-        """
-        Split text containing both nutrient name and value.
-        
-        Args:
-            text: Text like "Energy kJ 559" or "Fat: 1.9g"
-            
-        Returns:
-            tuple: (nutrient_name, value) or (name, None) if value not found
-        """
-        try:
-            # Common separators
-            separators = [':', '-', '–', '—', '\t']
-            
-            # Try splitting by separators first
-            for sep in separators:
-                if sep in text:
-                    parts = text.split(sep, 1)
-                    if len(parts) == 2:
-                        name = parts[0].strip()
-                        value = parts[1].strip()
-                        if name and value:
-                            return name, value
-            
-            # Try regex patterns for different formats
-            patterns = [
-                r'^(.+?)\s+([<>]?\d+(?:\.\d+)?(?:\s*[a-zA-Z]+)?)$',  # "Energy kJ 559"
-                r'^(.+?)\s*:\s*([<>]?\d+(?:\.\d+)?(?:\s*[a-zA-Z]+)?)$',  # "Fat: 1.9g"
-                r'^(.+?)\s*\(\s*([^)]+)\s*\)$',  # "Energy (559 kJ)"
-            ]
-            
-            for pattern in patterns:
-                match = re.match(pattern, text.strip())
-                if match:
-                    name = match.group(1).strip()
-                    value = match.group(2).strip()
-                    if name and value:
-                        return name, value
-            
-            # If no clear separation, check if text contains nutrition keywords
-            nutrition_keywords = ['energy', 'fat', 'protein', 'carbohydrate', 'salt', 'sugar', 'fibre', 'saturates']
-            text_lower = text.lower()
-            
-            for keyword in nutrition_keywords:
-                if keyword in text_lower:
-                    # Extract numeric value from the text
-                    value = self._extract_numeric_value(text)
-                    if value:
-                        return keyword.title(), value
-            
-            return text, None
+            # Wait for user to close browser
+            input("\nPress Enter to close the browser and complete cleanup...")
             
         except Exception as e:
-            logger.debug(f"Error splitting nutrient text '{text}': {e}")
-            return text, None
-
-    def _extract_numeric_value(self, text: str) -> str:
-        """
-        Extract numeric value with units from text.
+            logger.error(f"Error crawling products: {e}")
+            result.errors.append(str(e))
         
-        Args:
-            text: Text containing numeric value
-            
-        Returns:
-            str: Extracted value with unit or None
-        """
-        try:
-            # Patterns to match values with units
-            value_patterns = [
-                r'([<>]?\d+(?:\.\d+)?)\s*(kj|kcal|g|mg|μg|mcg)',  # With unit
-                r'([<>]?\d+(?:\.\d+)?)',  # Just number
-            ]
-            
-            for pattern in value_patterns:
-                match = re.search(pattern, text.lower())
-                if match:
-                    if len(match.groups()) == 2:
-                        return f"{match.group(1)}{match.group(2)}"
-                    else:
-                        return match.group(1)
-            
-            return None
-            
-        except Exception as e:
-            logger.debug(f"Error extracting numeric value from '{text}': {e}")
-            return None
-
-    def _standardize_nutrient_name(self, name: str) -> str:
-        """
-        Enhanced standardization of nutrient names to match ASDA format exactly.
-        
-        Args:
-            name: Raw nutrient name
-            
-        Returns:
-            str: Standardized nutrient name
-        """
-        if not name:
-            return ""
-        
-        # Remove extra whitespace and normalize
-        clean_name = name.strip()
-        
-        # Comprehensive mappings based on ASDA format
-        mappings = {
-            # Energy variations
-            'energy kj': 'Energy (kJ)',
-            'energy (kj)': 'Energy (kJ)', 
-            'energy kilojoules': 'Energy (kJ)',
-            'kj': 'Energy (kJ)',
-            
-            'energy kcal': 'Energy (kcal)',
-            'energy (kcal)': 'Energy (kcal)',
-            'energy kilocalories': 'Energy (kcal)',
-            'kcal': 'Energy (kcal)',
-            'calories': 'Energy (kcal)',
-            
-            # Fat variations
-            'fat': 'Fat',
-            'total fat': 'Fat',
-            'fats': 'Fat',
-            
-            'of which saturates': 'Saturates',
-            'saturates': 'Saturates',
-            'saturated fat': 'Saturates',
-            'saturated fats': 'Saturates',
-            
-            # Carbohydrate variations
-            'carbohydrate': 'Carbohydrate',
-            'carbohydrates': 'Carbohydrate',
-            'total carbohydrate': 'Carbohydrate',
-            'carbs': 'Carbohydrate',
-            
-            'of which sugars': 'Sugars',
-            'sugars': 'Sugars',
-            'sugar': 'Sugars',
-            'total sugars': 'Sugars',
-            
-            # Fiber variations
-            'fibre': 'Fibre',
-            'fiber': 'Fibre',
-            'dietary fibre': 'Fibre',
-            'dietary fiber': 'Fibre',
-            
-            # Protein variations
-            'protein': 'Protein',
-            'proteins': 'Protein',
-            'total protein': 'Protein',
-            
-            # Salt variations
-            'salt': 'Salt',
-            'sodium': 'Salt',  # Convert sodium to salt for consistency
-        }
-        
-        # Check for exact matches first
-        clean_lower = clean_name.lower()
-        if clean_lower in mappings:
-            return mappings[clean_lower]
-        
-        # Check for partial matches
-        for key, value in mappings.items():
-            if key in clean_lower or clean_lower in key:
-                return value
-        
-        # If no mapping found, clean up and capitalize
-        # Remove common prefixes/suffixes
-        clean_name = re.sub(r'^(typical\s+values?\s*)', '', clean_name, flags=re.IGNORECASE)
-        clean_name = re.sub(r'\s*(per\s+100g?)\s*$', '', clean_name, flags=re.IGNORECASE)
-        
-        return clean_name.title()
-
-    def _standardize_nutrient_value(self, value: str) -> str:
-        """
-        Enhanced standardization of nutrient values.
-        
-        Args:
-            value: Raw nutrient value
-            
-        Returns:
-            str: Standardized nutrient value
-        """
-        if not value:
-            return ""
-        
-        # Remove extra whitespace
-        clean_value = value.strip()
-        
-        # Remove any parenthetical notes like "(overbaked)" or "(per 100g)"
-        clean_value = re.sub(r'\([^)]*\)', '', clean_value).strip()
-        
-        # Remove common non-nutritional text
-        clean_value = re.sub(r'(per\s+100g?|typical\s+values?)', '', clean_value, flags=re.IGNORECASE).strip()
-        
-        # Standardize spacing around units
-        clean_value = re.sub(r'(\d)\s*([a-zA-Z]+)', r'\1\2', clean_value)
-        
-        # Ensure proper formatting for less than/greater than values
-        clean_value = re.sub(r'<\s*(\d)', r'<\1', clean_value)
-        clean_value = re.sub(r'>\s*(\d)', r'>\1', clean_value)
-        
-        return clean_value
-
-    def _clean_and_validate_nutritional_data(self, data: dict) -> dict:
-        """
-        Enhanced cleaning and validation of nutritional data with strict filtering.
-        
-        Args:
-            data: Raw nutritional data dictionary
-            
-        Returns:
-            dict: Cleaned and validated nutritional data
-        """
-        cleaned_data = {}
-        
-        # Words to exclude from keys
-        exclude_keys = [
-            'typical values', 'per 100g', 'overbaked', 'preparation', 
-            'instructions', 'contains', 'allergens', 'ingredients', 
-            'storage', 'best before', 'use by', 'nutritional values',
-            'cooking', 'cook', 'oven', 'fry', 'chill', 'refrigerat'
-        ]
-        
-        # Words that indicate cooking instructions (not nutritional data)
-        cooking_keywords = [
-            'cook', 'oven', 'fry', 'heat', 'temperature', 'minutes', 'mins',
-            'preheat', 'oil', 'season', 'pepper', 'salt and pepper', 'serving',
-            'reheat', 'foil', 'rest', 'instructions', 'guide', 'chilled',
-            'packaging', 'refrigerat', 'freezing', 'defrost', 'storage',
-            'skewer', 'juices', 'piping hot', 'bones', 'wash', 'handling'
-        ]
-        
-        for key, value in data.items():
-            if not key or not value:
-                continue
-                
-            key_lower = key.lower()
-            value_lower = value.lower()
-            
-            # Skip excluded keys
-            if any(exclude in key_lower for exclude in exclude_keys):
-                logger.debug(f"❌ Excluded key: {key}")
-                continue
-                
-            # Skip if key and value are the same (likely header text)
-            if key_lower == value_lower:
-                logger.debug(f"❌ Key equals value: {key}")
-                continue
-                
-            # Skip if value doesn't contain numbers (likely not a nutritional value)
-            if not re.search(r'\d', value):
-                logger.debug(f"❌ No numbers in value: {key} = {value}")
-                continue
-            
-            # NEW: Skip if value is too long (likely cooking instructions)
-            if len(value) > 50:  # Nutritional values should be short like "559kJ" or "<0.5g"
-                logger.debug(f"❌ Value too long (cooking instructions): {key} = {value[:50]}...")
-                continue
-                
-            # NEW: Skip if value contains cooking-related keywords
-            if any(cooking_word in value_lower for cooking_word in cooking_keywords):
-                logger.debug(f"❌ Contains cooking keywords: {key} = {value[:50]}...")
-                continue
-                
-            # NEW: Validate that nutritional values follow expected patterns
-            if not self._is_valid_nutritional_value(key, value):
-                logger.debug(f"❌ Invalid nutritional format: {key} = {value}")
-                continue
-                
-            # Add to cleaned data
-            cleaned_data[key] = value
-            logger.debug(f"✅ Valid nutritional data: {key} = {value}")
-        
-        # Log final results
-        if cleaned_data:
-            logger.debug(f"✅ Final cleaned nutritional data ({len(cleaned_data)} items):")
-            for key, value in sorted(cleaned_data.items()):
-                logger.debug(f"    {key}: {value}")
-        
-        return cleaned_data
-    
-    def _is_valid_nutritional_value(self, key: str, value: str) -> bool:
-        """
-        Validate that a key-value pair represents actual nutritional information.
-        
-        Args:
-            key: Nutrient name
-            value: Nutrient value
-            
-        Returns:
-            bool: True if this appears to be valid nutritional data
-        """
-        try:
-            # Expected nutritional value patterns
-            valid_patterns = [
-                r'^[<>]?\d+(?:\.\d+)?[a-zA-Z]*$',           # "559", "1.9g", "<0.5g"
-                r'^[<>]?\d+(?:\.\d+)?\s*[a-zA-Z]+$',        # "559 kJ", "1.9 g"
-                r'^\d+(?:\.\d+)?[a-zA-Z]{1,4}$',            # "559kJ", "1.9g"
-            ]
-            
-            # Check if value matches expected nutritional patterns
-            value_clean = value.strip()
-            for pattern in valid_patterns:
-                if re.match(pattern, value_clean):
-                    return True
-            
-            # Additional validation for energy values
-            if 'energy' in key.lower():
-                # Energy values should be 2-4 digits, possibly with kJ/kcal
-                if re.match(r'^\d{2,4}(?:kj|kcal)?$', value_clean.lower()):
-                    return True
-            
-            # Additional validation for other nutrients (should be decimal + unit)
-            expected_nutrients = ['fat', 'protein', 'carbohydrate', 'salt', 'sugar', 'fibre', 'saturates']
-            if any(nutrient in key.lower() for nutrient in expected_nutrients):
-                # Should be like "1.9g", "<0.5g", "28g"
-                if re.match(r'^[<>]?\d+(?:\.\d+)?g?$', value_clean.lower()):
-                    return True
-            
-            logger.debug(f"Value '{value}' doesn't match expected nutritional patterns")
-            return False
-            
-        except Exception as e:
-            logger.debug(f"Error validating nutritional value: {e}")
-            return False
+        return result
 
 
-    def _debug_save_page_source(self, soup):
-        """
-        Save page source for debugging when no nutrition data is found.
-        
-        Args:
-            soup: BeautifulSoup object of the page
-        """
-        try:
-            # Save a snippet of the page source for debugging
-            debug_text = soup.get_text()[:2000]  # First 2000 characters
-            logger.debug(f"DEBUG: Page content snippet for analysis:\n{debug_text}")
-            
-            # Look for any nutrition-related text in the page
-            nutrition_keywords = ['energy', 'kj', 'kcal', 'fat', 'protein', 'carbohydrate', 'salt']
-            found_keywords = []
-            
-            for keyword in nutrition_keywords:
-                if keyword.lower() in debug_text.lower():
-                    found_keywords.append(keyword)
-            
-            if found_keywords:
-                logger.debug(f"DEBUG: Found nutrition keywords in page: {found_keywords}")
-            else:
-                logger.debug("DEBUG: No nutrition keywords found in page text")
-                
-        except Exception as e:
-            logger.debug(f"Error in debug page source analysis: {e}")
+
+
+
+
 
     def _cleanup(self):
         """Clean up resources."""
@@ -1756,3 +1491,353 @@ class SeleniumAsdaScraper:
 def create_selenium_scraper(crawl_session: CrawlSession, headless: bool = False) -> SeleniumAsdaScraper:
     """Factory function to create a Selenium scraper instance."""
     return SeleniumAsdaScraper(crawl_session, headless)
+
+
+# Add this class to selenium_scraper.py
+
+import random
+from datetime import datetime, timedelta
+
+class DelayManager:
+    """Manages intelligent delays to avoid rate limiting."""
+    
+    def __init__(self):
+        self.last_request_time = None
+        self.error_count = 0
+        self.current_delay_multiplier = 1.0
+        
+    def wait(self, delay_type='between_requests', force_delay=None):
+        """
+        Apply intelligent delay based on context.
+        
+        Args:
+            delay_type: Type of delay from DELAY_CONFIG
+            force_delay: Override with specific delay in seconds
+        """
+        if force_delay:
+            delay = force_delay
+        else:
+            # Get base delay from config
+            from .scraper_config import DELAY_CONFIG
+            base_delay = DELAY_CONFIG.get(delay_type, 2.0)
+            
+            # Apply progressive delay if errors occurred
+            delay = base_delay * self.current_delay_multiplier
+            
+            # Add random component
+            random_addition = random.uniform(
+                DELAY_CONFIG['random_delay_min'],
+                DELAY_CONFIG['random_delay_max']
+            )
+            delay += random_addition
+            
+            # Cap at maximum
+            delay = min(delay, DELAY_CONFIG['max_progressive_delay'])
+        
+        logger.info(f"[DELAY] Waiting {delay:.1f} seconds ({delay_type})")
+        time.sleep(delay)
+        self.last_request_time = datetime.now()
+        
+    def increase_delay(self):
+        """Increase delay multiplier after errors."""
+        from .scraper_config import DELAY_CONFIG
+        self.error_count += 1
+        self.current_delay_multiplier *= DELAY_CONFIG['progressive_delay_factor']
+        logger.warning(f"[DELAY] Increased delay multiplier to {self.current_delay_multiplier:.2f} after {self.error_count} errors")
+        
+    def reset_delay(self):
+        """Reset delay multiplier after successful operations."""
+        if self.error_count > 0:
+            logger.info("[DELAY] Resetting delay multiplier after successful operation")
+        self.error_count = 0
+        self.current_delay_multiplier = 1.0
+        
+    def check_rate_limit(self, page_source):
+        """Check if page indicates rate limiting."""
+        from .scraper_config import SCRAPER_SETTINGS
+        
+        page_text = page_source.lower()
+        for indicator in SCRAPER_SETTINGS['rate_limit_indicators']:
+            if indicator in page_text:
+                logger.error(f"[RATE LIMIT] Detected rate limit indicator: '{indicator}'")
+                self.wait('after_rate_limit_detected')
+                return True
+        return False
+    
+    def _crawl_products_from_url(self, url: str, category: Optional[AsdaCategory] = None) -> int:
+        """
+        Crawl products from a specific URL with improved product detection.
+        
+        Args:
+            url: The URL to crawl products from
+            category: The category these products belong to
+            
+        Returns:
+            int: Number of products successfully scraped
+            
+        Raises:
+            ScraperException: If critical errors occur during scraping
+        """
+        products_scraped = 0
+        
+        try:
+            logger.info(f"🌐 Navigating to: {url}")
+            self.driver.get(url)
+            
+            # Wait for initial page load
+            time.sleep(3)
+            
+            # Handle popups first
+            popup_handler = PopupHandler(self.driver)
+            popup_handler.handle_popups()
+            
+            # Additional wait after popup handling
+            time.sleep(2)
+            
+            # Check if we're on a valid product page
+            current_url = self.driver.current_url
+            logger.debug(f"Current URL after navigation: {current_url}")
+            
+            # Wait for products to load with multiple possible selectors
+            logger.info("⏳ Waiting for products to load...")
+            
+            # First, try to wait for any indication of products
+            product_loaded = False
+            wait_selectors = [
+                # ASDA specific selectors (based on their current structure)
+                'li[class*="co-item"]',
+                'li.co-product-list__item',
+                'article.co-product',
+                'div.co-product',
+                'div.co-item',
+                
+                # Generic product selectors
+                'div[class*="product-item"]',
+                'div[class*="product-tile"]',
+                'article[class*="product"]',
+                '[data-testid*="product"]',
+                
+                # Link-based selectors
+                'a[href*="/product/"]',
+                'a[href*="/products/"]',
+                
+                # List item selectors
+                'ul[class*="product"] li',
+                'div[class*="products-list"] > div',
+            ]
+            
+            # Try each selector with a shorter timeout
+            wait = WebDriverWait(self.driver, 5)
+            for selector in wait_selectors:
+                try:
+                    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+                    product_loaded = True
+                    logger.info(f"✅ Found products using selector: {selector}")
+                    break
+                except TimeoutException:
+                    continue
+            
+            if not product_loaded:
+                logger.warning("⚠️ No products found with wait conditions, trying scroll strategy...")
+                
+                # Scroll to trigger lazy loading
+                for i in range(3):
+                    scroll_height = self.driver.execute_script("return document.body.scrollHeight")
+                    self.driver.execute_script(f"window.scrollTo(0, {scroll_height * (i+1) / 3});")
+                    time.sleep(2)
+            
+            # Get page source for BeautifulSoup parsing
+            page_source = self.driver.page_source
+            soup = BeautifulSoup(page_source, 'html.parser')
+            
+            # Log page title for debugging
+            page_title = soup.find('title')
+            if page_title:
+                logger.debug(f"Page title: {page_title.text}")
+            
+            # Find products using multiple strategies
+            product_elements = []
+            
+            # Strategy 1: ASDA specific selectors
+            asda_selectors = [
+                'li.co-product-list__item',
+                'li[class*="co-item"]',
+                'article.co-product',
+                'div.co-product',
+                'div.co-item',
+            ]
+            
+            for selector in asda_selectors:
+                elements = soup.select(selector)
+                if elements:
+                    logger.info(f"📦 Found {len(elements)} products with ASDA selector: {selector}")
+                    product_elements = elements
+                    break
+            
+            # Strategy 2: Find product containers by structure
+            if not product_elements:
+                logger.info("🔍 Trying structural approach...")
+                
+                # Look for lists containing product links
+                product_lists = soup.find_all(['ul', 'ol', 'div'], class_=re.compile('product|item', re.I))
+                for lst in product_lists:
+                    items = lst.find_all(['li', 'article', 'div'], recursive=False)
+                    if items and any(item.find('a', href=re.compile('/product', re.I)) for item in items):
+                        product_elements = items
+                        logger.info(f"📦 Found {len(product_elements)} products in list structure")
+                        break
+            
+            # Strategy 3: Find by product links and their containers
+            if not product_elements:
+                logger.info("🔍 Finding products by link patterns...")
+                
+                product_links = soup.find_all('a', href=re.compile('/product/', re.I))
+                if product_links:
+                    # Group by parent containers
+                    parent_containers = {}
+                    for link in product_links:
+                        # Find the nearest meaningful parent
+                        parent = link.find_parent(['li', 'article', 'div'])
+                        while parent and len(str(parent)) < 200:  # Too small, go up
+                            next_parent = parent.find_parent(['li', 'article', 'div'])
+                            if next_parent and len(str(next_parent)) < 2000:  # Not too big
+                                parent = next_parent
+                            else:
+                                break
+                        
+                        if parent:
+                            parent_id = id(parent)
+                            if parent_id not in parent_containers:
+                                parent_containers[parent_id] = parent
+                    
+                    product_elements = list(parent_containers.values())
+                    logger.info(f"📦 Found {len(product_elements)} unique product containers")
+            
+            # Strategy 4: Find by price elements
+            if not product_elements:
+                logger.info("🔍 Finding products by price patterns...")
+                
+                # Look for elements containing prices
+                price_regex = re.compile(r'£\d+\.?\d*')
+                for elem in soup.find_all(text=price_regex):
+                    parent = elem.find_parent(['li', 'article', 'div'])
+                    if parent and parent.find('a', href=re.compile('/product', re.I)):
+                        if parent not in product_elements:
+                            product_elements.append(parent)
+                
+                if product_elements:
+                    logger.info(f"📦 Found {len(product_elements)} products by price pattern")
+            
+            if not product_elements:
+                logger.warning("⚠️ No products found after all strategies")
+                
+                # Save page source for debugging
+                debug_file = f"debug_page_{category.slug if category else 'unknown'}_{int(time.time())}.html"
+                with open(debug_file, 'w', encoding='utf-8') as f:
+                    f.write(page_source)
+                logger.info(f"💾 Saved page source to {debug_file} for debugging")
+                
+                # Log some diagnostic information
+                self._log_page_diagnostics(soup)
+                
+                return 0
+            
+            # Remove duplicates
+            seen_html = set()
+            unique_products = []
+            for elem in product_elements:
+                elem_html = str(elem)[:200]  # Use first 200 chars as fingerprint
+                if elem_html not in seen_html:
+                    seen_html.add(elem_html)
+                    unique_products.append(elem)
+            
+            product_elements = unique_products
+            logger.info(f"📦 Processing {len(product_elements)} unique products")
+            
+            # Process products
+            for idx, product_element in enumerate(product_elements[:self.max_products_per_category]):
+                try:
+                    logger.info(f"\n{'─'*60}")
+                    logger.info(f"🔍 Processing product {idx + 1}/{min(len(product_elements), self.max_products_per_category)}")
+                    
+                    product_data = self._extract_product_data_from_element(product_element)
+                    
+                    if product_data and product_data.get('name'):
+                        # Log extracted data
+                        logger.debug(f"Extracted: {product_data.get('name', 'Unknown')[:50]}... @ £{product_data.get('price', 'N/A')}")
+                        
+                        # Save product (if not dry run)
+                        if not self.session.crawl_settings.get('dry_run', False):
+                            saved = self._save_product(product_data, category)
+                            if saved:
+                                products_scraped += 1
+                                logger.info(f"✅ Saved: {product_data['name'][:50]}...")
+                        else:
+                            products_scraped += 1
+                            logger.info(f"✅ [DRY RUN] Would save: {product_data['name'][:50]}...")
+                    else:
+                        logger.warning("⚠️ No valid product data extracted")
+                    
+                    # Delay between products
+                    if idx < len(product_elements) - 1:
+                        delay = random.uniform(1.0, 2.5)
+                        logger.debug(f"⏳ Waiting {delay:.1f}s before next product...")
+                        time.sleep(delay)
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error processing product {idx + 1}: {str(e)}")
+                    continue
+            
+            logger.info(f"✅ Completed: Scraped {products_scraped} products from {url}")
+            return products_scraped
+            
+        except Exception as e:
+            logger.error(f"❌ Error crawling products from {url}: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return products_scraped
+
+    def _log_page_diagnostics(self, soup):
+        """
+        Log diagnostic information about the page structure.
+        
+        Args:
+            soup: BeautifulSoup object
+        """
+        try:
+            logger.info("📋 PAGE DIAGNOSTICS:")
+            
+            # Check if we're on an error page
+            error_indicators = ['404', 'not found', 'error', 'oops']
+            page_text_lower = soup.get_text().lower()[:500]
+            
+            for indicator in error_indicators:
+                if indicator in page_text_lower:
+                    logger.warning(f"⚠️ Possible error page - found '{indicator}' in content")
+            
+            # Log all unique class names containing 'product' or 'item'
+            all_classes = []
+            for elem in soup.find_all(class_=True):
+                all_classes.extend(elem.get('class', []))
+            
+            product_classes = set([c for c in all_classes if 'product' in c.lower() or 'item' in c.lower()])
+            if product_classes:
+                logger.info(f"Found classes with 'product/item': {list(product_classes)[:10]}")
+            
+            # Log sample links
+            links = soup.find_all('a', href=True)[:10]
+            logger.info(f"Sample links on page: {[link.get('href') for link in links]}")
+            
+            # Check for common ASDA elements
+            asda_elements = {
+                'Header': soup.find(['header', 'div'], class_=re.compile('header', re.I)),
+                'Navigation': soup.find(['nav', 'div'], class_=re.compile('nav', re.I)),
+                'Search': soup.find(['input', 'div'], class_=re.compile('search', re.I)),
+                'Footer': soup.find(['footer', 'div'], class_=re.compile('footer', re.I)),
+            }
+            
+            for name, elem in asda_elements.items():
+                logger.info(f"{name}: {'Found' if elem else 'Not found'}")
+                
+        except Exception as e:
+            logger.error(f"Error in diagnostics: {str(e)}")
