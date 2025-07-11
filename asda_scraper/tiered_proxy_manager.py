@@ -624,34 +624,3 @@ class TieredProxyManager:
         return imported
 
 
-# Integration with settings.py
-"""
-# Add to your Django settings.py:
-
-PROXY_PROVIDERS = {
-    'bright_data': {
-        'tier': 'premium',
-        'api_key': env('BRIGHT_DATA_API_KEY', default=''),
-        'username': env('BRIGHT_DATA_USERNAME', default=''),
-        'password': env('BRIGHT_DATA_PASSWORD', default=''),
-        'cost_per_gb': 3.0,  # $3 per GB
-    },
-    'smartproxy': {
-        'tier': 'standard',
-        'username': env('SMARTPROXY_USERNAME', default=''),
-        'password': env('SMARTPROXY_PASSWORD', default=''),
-        'api_endpoint': 'gate.smartproxy.com:10000',
-        'cost_per_gb': 1.5,  # $1.5 per GB
-    },
-}
-
-# Proxy behavior settings
-PROXY_SETTINGS = {
-    'prefer_paid': True,  # Use paid proxies first
-    'fallback_to_free': True,  # Fallback to free if paid fail
-    'free_proxy_update_interval': 3600,  # Update free proxies every hour
-    'max_consecutive_failures': 3,
-    'health_check_interval': 300,
-    'cost_alert_threshold': 100.0,  # Alert if daily cost exceeds $100
-}
-"""
