@@ -32,13 +32,77 @@ from .models import AsdaCategory, AsdaProduct, CrawlSession
 
 logger = logging.getLogger(__name__)
 
-# Logger initialization - add this after your imports
-try:
-    from . import setup_logger_with_handlers
-    logger = setup_logger_with_handlers(__name__)
-except ImportError:
-    # Fallback if running file directly
-    logger = logging.getLogger(__name__)
+# Update your logging configuration in selenium_scraper.py to handle Windows file locking
+
+import logging
+import logging.handlers
+import os
+from pathlib import Path
+
+# Configure logging with Windows-friendly settings
+def setup_logger():
+    """
+    Set up logger with proper configuration for Windows.
+    
+    Returns:
+        logging.Logger: Configured logger instance
+    """
+    # Get the logger
+    logger = logging.getLogger('asda_scraper.selenium_scraper')
+    logger.setLevel(logging.DEBUG)
+    
+    # Remove existing handlers to avoid duplicates
+    logger.handlers = []
+    
+    # Create logs directory if it doesn't exist
+    log_dir = Path('D:/kitchencompass/kitchen_compass/logs')
+    log_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    
+    # File handler with Windows-friendly configuration
+    log_file = log_dir / 'asda_scraper.log'
+    
+    try:
+        # Use RotatingFileHandler with delayed file opening
+        file_handler = logging.handlers.RotatingFileHandler(
+            str(log_file),
+            maxBytes=10*1024*1024,  # 10MB
+            backupCount=5,
+            encoding='utf-8',
+            delay=True  # This is important for Windows
+        )
+        file_handler.setLevel(logging.DEBUG)
+        
+        # Create formatter
+        formatter = logging.Formatter(
+            '[%(levelname)s] %(asctime)s [%(name)s] %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        
+        # Set formatter for both handlers
+        console_handler.setFormatter(formatter)
+        file_handler.setFormatter(formatter)
+        
+        # Add handlers to logger
+        logger.addHandler(console_handler)
+        logger.addHandler(file_handler)
+        
+    except Exception as e:
+        # If file handler fails, just use console
+        print(f"Warning: Could not set up file logging: {e}")
+        logger.addHandler(console_handler)
+    
+    return logger
+
+# Initialize logger
+logger = setup_logger()
+
+
+
+# Rest of your selenium_scraper.py code continues here...
 
 
 """
@@ -123,8 +187,7 @@ def setup_asda_logging():
 
 
 
-# Setup logging when module is imported
-logger.info("ASDA scraper logging configured successfully")
+
 
 # Configuration constants (moved inline for now)
 ASDA_CATEGORY_MAPPINGS = {
@@ -1407,6 +1470,263 @@ class SeleniumAsdaScraper:
             result.errors.append(str(e))
         
         return result
+    
+        # Add these methods to your SeleniumAsdaScraper class in selenium_scraper.py
+
+    def scrape_nutritional_info(self, product_url: str, session: CrawlSession) -> Dict[str, Any]:
+        """
+        Scrape nutritional information from a product page.
+        
+        Args:
+            product_url: URL of the product page
+            session: Current crawl session
+            
+        Returns:
+            Dict[str, Any]: Nutritional information or empty dict if not found
+        """
+        try:
+            self.driver.get(product_url)
+            time.sleep(self.delay_between_requests)
+            
+            # Wait for page to load
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            
+            nutritional_info = {}
+            
+            # Look for nutrition table or section - ASDA specific selectors
+            nutrition_selectors = [
+                "table[class*='nutrition']",
+                "div[class*='nutrition-table']",
+                "div[data-test-id='nutrition-information']",
+                "section[aria-label*='Nutrition']",
+                "div.product-nutrition",
+                "[data-testid='product-nutrition']"
+            ]
+            
+            nutrition_element = None
+            for selector in nutrition_selectors:
+                try:
+                    nutrition_element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if nutrition_element:
+                        logger.info(f"Found nutrition element with selector: {selector}")
+                        break
+                except NoSuchElementException:
+                    continue
+            
+            if nutrition_element:
+                # Try to extract structured data from table
+                try:
+                    rows = nutrition_element.find_elements(By.TAG_NAME, "tr")
+                    for row in rows:
+                        cells = row.find_elements(By.TAG_NAME, "td")
+                        if len(cells) >= 2:
+                            nutrient_name = cells[0].text.strip().lower()
+                            nutrient_value = cells[1].text.strip()
+                            
+                            # Standardize nutrient names
+                            nutrient_key = self._standardize_nutrient_name(nutrient_name)
+                            if nutrient_key:
+                                nutritional_info[nutrient_key] = nutrient_value
+                except Exception as e:
+                    logger.warning(f"Error parsing nutrition table: {e}")
+                    
+                # If table parsing failed, try text extraction
+                if not nutritional_info:
+                    nutrition_text = nutrition_element.text
+                    nutritional_info = self._parse_nutrition_text(nutrition_text)
+            
+            # Log result
+            if nutritional_info:
+                session.increment_nutrition_count()
+                logger.info(f"Found {len(nutritional_info)} nutritional values for {product_url}")
+            else:
+                logger.warning(f"No nutritional info found for {product_url}")
+                
+            return nutritional_info
+            
+        except Exception as e:
+            logger.error(f"Error scraping nutritional info from {product_url}: {e}")
+            session.increment_nutrition_errors()
+            return {}
+
+
+    def _standardize_nutrient_name(self, name: str) -> str:
+        """
+        Standardize nutrient names for consistent storage.
+        
+        Args:
+            name: Raw nutrient name
+            
+        Returns:
+            str: Standardized nutrient name
+        """
+        # Remove common suffixes and clean up
+        name = name.lower().strip()
+        name = name.replace('per 100g', '').replace('per serving', '')
+        name = name.replace('of which', '').replace('- of which', '')
+        name = name.strip(' -:')
+        
+        # Map to standard names
+        nutrient_mapping = {
+            'energy': 'calories',
+            'energy (kcal)': 'calories',
+            'kcal': 'calories',
+            'total fat': 'fat',
+            'fat': 'fat',
+            'saturated fat': 'saturated_fat',
+            'saturates': 'saturated_fat',
+            'carbohydrate': 'carbohydrates',
+            'carbs': 'carbohydrates',
+            'total sugars': 'sugars',
+            'sugars': 'sugars',
+            'protein': 'protein',
+            'salt': 'salt',
+            'sodium': 'sodium',
+            'fibre': 'fiber',
+            'dietary fiber': 'fiber',
+        }
+        
+        return nutrient_mapping.get(name, name.replace(' ', '_'))
+
+
+    def _parse_nutrition_text(self, text: str) -> Dict[str, str]:
+        """
+        Parse nutritional information from unstructured text.
+        
+        Args:
+            text: Raw text containing nutritional information
+            
+        Returns:
+            Dict[str, str]: Parsed nutritional information
+        """
+        nutritional_info = {}
+        
+        # Common nutrition patterns
+        patterns = {
+            'calories': r'(?:energy|calories|kcal)[:\s]*(\d+(?:\.\d+)?)\s*(?:kcal)?',
+            'fat': r'(?:total\s)?fat[:\s]*(\d+(?:\.\d+)?)\s*g',
+            'saturated_fat': r'saturate[ds]?(?:\s+fat)?[:\s]*(\d+(?:\.\d+)?)\s*g',
+            'carbohydrates': r'carbohydrate[s]?[:\s]*(\d+(?:\.\d+)?)\s*g',
+            'sugars': r'(?:total\s)?sugars?[:\s]*(\d+(?:\.\d+)?)\s*g',
+            'protein': r'protein[:\s]*(\d+(?:\.\d+)?)\s*g',
+            'salt': r'salt[:\s]*(\d+(?:\.\d+)?)\s*g',
+            'fiber': r'(?:dietary\s)?fib(?:re|er)[:\s]*(\d+(?:\.\d+)?)\s*g',
+        }
+        
+        text_lower = text.lower()
+        for nutrient, pattern in patterns.items():
+            match = re.search(pattern, text_lower, re.IGNORECASE)
+            if match:
+                nutritional_info[nutrient] = match.group(1) + ('g' if nutrient != 'calories' else '')
+        
+        return nutritional_info
+
+
+    def crawl_products_in_category(self, category: AsdaCategory, session: CrawlSession) -> None:
+        """
+        Enhanced crawl method that handles both product and nutritional information.
+        
+        Args:
+            category: Category to crawl
+            session: Current crawl session
+        """
+        try:
+            logger.info(f"Starting crawl for category: {category.name}")
+            
+            # Navigate to category page
+            category_url = f"{self.base_url}/browse/{category.url_code}"
+            self.driver.get(category_url)
+            time.sleep(self.delay_between_requests)
+            
+            # Check crawl type from session
+            crawl_type = session.crawl_type
+            should_crawl_products = crawl_type in ['PRODUCT', 'BOTH']
+            should_crawl_nutrition = crawl_type in ['NUTRITION', 'BOTH']
+            
+            if should_crawl_products:
+                # Existing product crawling code
+                products = self._extract_products_from_page()
+                
+                for product_data in products:
+                    try:
+                        # Create or update product
+                        product, created = AsdaProduct.objects.update_or_create(
+                            product_id=product_data['product_id'],
+                            defaults=product_data
+                        )
+                        
+                        if created:
+                            session.products_found += 1
+                        else:
+                            session.products_updated += 1
+                        
+                        # Crawl nutrition if needed and product has URL
+                        if should_crawl_nutrition and product.url:
+                            if not product.nutritional_info or crawl_type == 'NUTRITION':
+                                nutrition_data = self.scrape_nutritional_info(
+                                    product.url, 
+                                    session
+                                )
+                                if nutrition_data:
+                                    product.nutritional_info = nutrition_data
+                                    product.save(update_fields=['nutritional_info'])
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing product: {e}")
+                        session.errors_count += 1
+                        
+            elif should_crawl_nutrition:
+                # Nutrition-only mode: crawl existing products
+                products = AsdaProduct.objects.filter(
+                    category=category,
+                    nutritional_info__isnull=True
+                )[:session.crawl_settings.get('max_products_per_category', 100)]
+                
+                for product in products:
+                    if product.url:
+                        nutrition_data = self.scrape_nutritional_info(
+                            product.url,
+                            session
+                        )
+                        if nutrition_data:
+                            product.nutritional_info = nutrition_data
+                            product.save(update_fields=['nutritional_info'])
+                            session.products_updated += 1
+            
+            # Update session
+            session.categories_crawled += 1
+            session.save(update_fields=[
+                'categories_crawled', 'products_found', 'products_updated',
+                'products_with_nutrition', 'nutrition_errors', 'errors_count'
+            ])
+            
+        except Exception as e:
+            logger.error(f"Error crawling category {category.name}: {e}")
+            session.errors_count += 1
+            raise
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     
     def _extract_nutritional_info_from_product_page(self, product_url: str) -> Optional[Dict[str, str]]:
         """

@@ -407,13 +407,14 @@ class AsdaProduct(models.Model):
 
 class CrawlSession(models.Model):
     """
-    Model for tracking individual crawl sessions with enhanced link mapping support.
+    Model for tracking individual crawl sessions with enhanced link mapping support and crawl types.
     
     Attributes:
         user: User who started the crawl
         session_id: Unique identifier for this crawl session
         start_url: Starting URL for the crawl
         status: Current status of the crawl
+        crawl_type: Type of information to crawl (Product, Nutrition, or Both)
         max_depth: Maximum crawling depth
         delay_seconds: Delay between requests in seconds
         user_agent: User agent string for requests
@@ -422,6 +423,8 @@ class CrawlSession(models.Model):
         categories_crawled: Number of categories processed
         products_found: Number of products discovered
         products_updated: Number of existing products updated
+        products_with_nutrition: Number of products with nutritional information found
+        nutrition_errors: Number of nutrition crawl errors
         urls_discovered: Total number of URLs discovered
         urls_crawled: Number of URLs successfully crawled
         errors_count: Number of errors encountered
@@ -437,6 +440,13 @@ class CrawlSession(models.Model):
         ('FAILED', 'Failed'),
         ('CANCELLED', 'Cancelled'),
         ('PAUSED', 'Paused'),
+    ]
+    
+    # Add crawl type choices
+    CRAWL_TYPE_CHOICES = [
+        ('PRODUCT', 'Product Information'),
+        ('NUTRITION', 'Nutritional Information'),
+        ('BOTH', 'Product & Nutrition'),
     ]
     
     user = models.ForeignKey(
@@ -459,6 +469,12 @@ class CrawlSession(models.Model):
         choices=STATUS_CHOICES,
         default='PENDING'
     )
+    crawl_type = models.CharField(
+        max_length=20,
+        choices=CRAWL_TYPE_CHOICES,
+        default='PRODUCT',
+        help_text='Type of information to crawl'
+    )
     max_depth = models.PositiveIntegerField(
         default=3,
         help_text="Maximum crawling depth"
@@ -476,6 +492,14 @@ class CrawlSession(models.Model):
     categories_crawled = models.IntegerField(default=0)
     products_found = models.IntegerField(default=0)
     products_updated = models.IntegerField(default=0)
+    products_with_nutrition = models.IntegerField(
+        default=0,
+        help_text='Number of products with nutritional information found'
+    )
+    nutrition_errors = models.IntegerField(
+        default=0,
+        help_text='Number of nutrition crawl errors'
+    )
     urls_discovered = models.PositiveIntegerField(
         default=0,
         help_text="Total number of URLs discovered"
@@ -511,15 +535,16 @@ class CrawlSession(models.Model):
         duration = ""
         if self.end_time:
             duration = f" ({(self.end_time - self.start_time).seconds}s)"
-        return f"Crawl {self.session_id or self.pk} - {self.status}{duration}"
+        return f"Crawl {self.session_id or self.pk} - {self.crawl_type} - {self.status}{duration}"
     
     def save(self, *args, **kwargs):
         """Save with automatic session ID generation."""
         if not self.session_id:
-            # Generate session ID based on timestamp
-            self.session_id = f"asda_{timezone.now().strftime('%Y%m%d_%H%M%S')}"
+            # Generate session ID based on timestamp and crawl type
+            crawl_type_prefix = self.crawl_type.lower()[:3]
+            self.session_id = f"asda_{crawl_type_prefix}_{timezone.now().strftime('%Y%m%d_%H%M%S')}"
         
-        logger.info(f"Saving crawl session: {self.session_id}")
+        logger.info(f"Saving {self.crawl_type} crawl session: {self.session_id}")
         super().save(*args, **kwargs)
     
     def get_duration(self):
@@ -545,15 +570,49 @@ class CrawlSession(models.Model):
             return 0
         return min(100, (self.urls_crawled / self.urls_discovered) * 100)
     
+    def get_crawl_type_display_icon(self):
+        """
+        Get icon for crawl type display.
+        
+        Returns:
+            str: Bootstrap icon class
+        """
+        icons = {
+            'PRODUCT': 'bi-box',
+            'NUTRITION': 'bi-clipboard-data',
+            'BOTH': 'bi-layers'
+        }
+        return icons.get(self.crawl_type, 'bi-robot')
+    
+    def increment_nutrition_count(self):
+        """
+        Increment the count of products with nutritional information.
+        """
+        self.products_with_nutrition = models.F('products_with_nutrition') + 1
+        self.save(update_fields=['products_with_nutrition'])
+        
+    def increment_nutrition_errors(self):
+        """
+        Increment the nutrition error count.
+        """
+        self.nutrition_errors = models.F('nutrition_errors') + 1
+        self.save(update_fields=['nutrition_errors'])
+    
     def mark_completed(self):
         """Mark the crawl session as completed."""
         self.status = 'COMPLETED'
         self.end_time = timezone.now()
         self.save(update_fields=['status', 'end_time'])
+        
+        # Include nutrition info in completion log if applicable
+        nutrition_info = ""
+        if self.crawl_type in ['NUTRITION', 'BOTH']:
+            nutrition_info = f", Nutrition found: {self.products_with_nutrition}, Nutrition errors: {self.nutrition_errors}"
+        
         logger.info(
-            f"Crawl session {self.session_id} completed. "
+            f"Crawl session {self.session_id} ({self.crawl_type}) completed. "
             f"Products found: {self.products_found}, "
-            f"Products updated: {self.products_updated}, "
+            f"Products updated: {self.products_updated}{nutrition_info}, "
             f"URLs crawled: {self.urls_crawled}, "
             f"Rate: {self.get_products_per_minute()} products/min"
         )
@@ -565,7 +624,12 @@ class CrawlSession(models.Model):
         if error_message:
             self.error_log = f"{self.error_log}\n{error_message}" if self.error_log else error_message
         self.save(update_fields=['status', 'end_time', 'error_log'])
-        logger.error(f"Crawl session {self.session_id} failed: {error_message}")
+        logger.error(f"Crawl session {self.session_id} ({self.crawl_type}) failed: {error_message}")
+    
+    @property
+    def error_message(self):
+        """Provide backwards compatibility for views expecting error_message."""
+        return self.error_log
     
     # Enhanced methods for link mapping
     def get_discovered_urls_count(self):
@@ -644,7 +708,6 @@ class CrawlSession(models.Model):
         self.products_found = products_found
         
         self.save(update_fields=['urls_discovered', 'urls_crawled', 'products_found'])
-
 
 class UrlMap(models.Model):
     """

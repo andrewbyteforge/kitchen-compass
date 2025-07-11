@@ -2,6 +2,108 @@
 {% load static %}
 
 {% block scraper_content %}
+<!-- Crawl Settings Modal -->
+<div class="modal fade" id="crawlSettingsModal" tabindex="-1" aria-labelledby="crawlSettingsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="crawlSettingsModalLabel">
+                    <i class="bi bi-gear me-2"></i>Crawl Settings
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="crawlSettingsForm">
+                    <!-- Crawl Type Selection -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Crawl Type</label>
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="form-check crawl-type-option">
+                                    <input class="form-check-input" type="radio" name="crawl_type" id="crawlTypeProduct" value="PRODUCT" checked>
+                                    <label class="form-check-label" for="crawlTypeProduct">
+                                        <i class="bi bi-box me-2"></i>
+                                        <strong>Product Information</strong>
+                                        <br>
+                                        <small class="text-muted">Crawl basic product details (name, price, image)</small>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-check crawl-type-option">
+                                    <input class="form-check-input" type="radio" name="crawl_type" id="crawlTypeNutrition" value="NUTRITION">
+                                    <label class="form-check-label" for="crawlTypeNutrition">
+                                        <i class="bi bi-clipboard-data me-2"></i>
+                                        <strong>Nutritional Information</strong>
+                                        <br>
+                                        <small class="text-muted">Crawl nutrition facts for existing products</small>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-check crawl-type-option">
+                                    <input class="form-check-input" type="radio" name="crawl_type" id="crawlTypeBoth" value="BOTH">
+                                    <label class="form-check-label" for="crawlTypeBoth">
+                                        <i class="bi bi-layers me-2"></i>
+                                        <strong>Both</strong>
+                                        <br>
+                                        <small class="text-muted">Crawl product and nutritional information</small>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Advanced Settings (collapsible) -->
+                    <div class="accordion" id="advancedSettingsAccordion">
+                        <div class="accordion-item">
+                            <h2 class="accordion-header" id="headingAdvanced">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseAdvanced" aria-expanded="false" aria-controls="collapseAdvanced">
+                                    <i class="bi bi-sliders me-2"></i>Advanced Settings
+                                </button>
+                            </h2>
+                            <div id="collapseAdvanced" class="accordion-collapse collapse" aria-labelledby="headingAdvanced" data-bs-parent="#advancedSettingsAccordion">
+                                <div class="accordion-body">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <label for="maxCategories" class="form-label">Max Categories</label>
+                                            <input type="number" class="form-control" id="maxCategories" name="max_categories" value="10" min="1" max="50">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="maxProductsPerCategory" class="form-label">Max Products per Category</label>
+                                            <input type="number" class="form-control" id="maxProductsPerCategory" name="max_products_per_category" value="100" min="1">
+                                        </div>
+                                    </div>
+                                    <div class="row mt-3">
+                                        <div class="col-md-6">
+                                            <label for="delayBetweenRequests" class="form-label">Delay Between Requests (seconds)</label>
+                                            <input type="number" class="form-control" id="delayBetweenRequests" name="delay_between_requests" value="2" min="0" step="0.5">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="form-check mt-4">
+                                                <input class="form-check-input" type="checkbox" id="headlessMode" name="headless">
+                                                <label class="form-check-label" for="headlessMode">
+                                                    Run in headless mode (no browser window)
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" onclick="startCrawlWithSettings()">
+                    <i class="bi bi-play-fill me-1"></i>Start Crawl
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Crawl Control Panel -->
 <div class="row mb-4">
     <div class="col-12">
@@ -21,24 +123,40 @@
                                             {{ current_session.get_status_display }}
                                         </span>
                                     </span>
+                                    <span class="me-3">
+                                        <span class="badge bg-info">
+                                            <i class="{{ current_session.get_crawl_type_display_icon }} me-1"></i>
+                                            {{ current_session.get_crawl_type_display }}
+                                        </span>
+                                    </span>
                                     <span class="me-3">Session ID: {{ current_session.pk }}</span>
                                     <span>Started: {{ current_session.start_time|date:"M d, Y H:i" }}</span>
                                 </p>
                                 <div id="progress-info">
                                     <div class="row text-center">
-                                        <div class="col-md-3">
+                                        <div class="col-md-2">
                                             <div class="h5 mb-0">{{ current_session.categories_crawled }}</div>
                                             <small>Categories</small>
                                         </div>
-                                        <div class="col-md-3">
+                                        <div class="col-md-2">
                                             <div class="h5 mb-0">{{ current_session.products_found }}</div>
                                             <small>Found</small>
                                         </div>
-                                        <div class="col-md-3">
+                                        <div class="col-md-2">
                                             <div class="h5 mb-0">{{ current_session.products_updated }}</div>
                                             <small>Updated</small>
                                         </div>
-                                        <div class="col-md-3">
+                                        {% if current_session.crawl_type in 'NUTRITION,BOTH' %}
+                                        <div class="col-md-2">
+                                            <div class="h5 mb-0">{{ current_session.products_with_nutrition }}</div>
+                                            <small>With Nutrition</small>
+                                        </div>
+                                        <div class="col-md-2">
+                                            <div class="h5 mb-0">{{ current_session.nutrition_errors }}</div>
+                                            <small>Nutrition Errors</small>
+                                        </div>
+                                        {% endif %}
+                                        <div class="col-md-2">
                                             <div class="h5 mb-0">
                                                 {% if current_session.get_duration %}
                                                     {{ current_session.get_duration }}
@@ -63,18 +181,12 @@
                     </div>
                     <div class="col-md-4 text-end">
                         {% if current_session and current_session.status in 'PENDING,RUNNING' %}
-                            <button id="start-crawl-btn" class="btn btn-success btn-lg me-2" style="display: none;" onclick="startCrawl()">
-                                <i class="bi bi-play-fill"></i> Start Crawl
-                            </button>
                             <button id="stop-crawl-btn" class="btn btn-danger btn-lg" onclick="stopCrawl({{ current_session.pk }})">
                                 <i class="bi bi-stop-fill"></i> Stop Crawl
                             </button>
                         {% else %}
-                            <button id="start-crawl-btn" class="btn btn-success btn-lg me-2" onclick="startCrawl()">
+                            <button id="start-crawl-btn" class="btn btn-success btn-lg" data-bs-toggle="modal" data-bs-target="#crawlSettingsModal">
                                 <i class="bi bi-play-fill"></i> Start Crawl
-                            </button>
-                            <button id="stop-crawl-btn" class="btn btn-danger btn-lg" style="display: none;" onclick="stopCrawl()">
-                                <i class="bi bi-stop-fill"></i> Stop Crawl
                             </button>
                         {% endif %}
                     </div>
@@ -84,7 +196,7 @@
     </div>
 </div>
 
-<!-- Proxy Status Card (NEW) -->
+<!-- Proxy Status Card (EXISTING) -->
 <div class="row mb-4">
     <div class="col-12">
         <div class="card border-primary">
@@ -147,6 +259,7 @@
     </div>
 </div>
 
+<!-- Rest of the dashboard content remains the same... -->
 <!-- Action Buttons Row -->
 <div class="row mb-4">
     <div class="col-12">
@@ -248,7 +361,7 @@
     </div>
 </div>
 
-<!-- Recent Activity -->
+<!-- Recent Activity (existing sections remain the same) -->
 <div class="row">
     <!-- Recent Sessions -->
     <div class="col-md-6 mb-4">
@@ -266,13 +379,22 @@
                             <div class="list-group-item border-0 px-0">
                                 <div class="d-flex justify-content-between align-items-start">
                                     <div>
-                                        <h6 class="mb-1">Session #{{ session.pk }}</h6>
+                                        <h6 class="mb-1">
+                                            Session #{{ session.pk }}
+                                            <span class="badge bg-secondary ms-1">
+                                                <i class="{{ session.get_crawl_type_display_icon }} me-1"></i>
+                                                {{ session.get_crawl_type_display }}
+                                            </span>
+                                        </h6>
                                         <p class="mb-1 small text-muted">
                                             Started by {{ session.user.username }} on {{ session.start_time|date:"M d, Y H:i" }}
                                         </p>
                                         <small>
                                             {{ session.products_found }} products found, 
                                             {{ session.products_updated }} updated
+                                            {% if session.crawl_type in 'NUTRITION,BOTH' and session.products_with_nutrition %}
+                                                , {{ session.products_with_nutrition }} with nutrition
+                                            {% endif %}
                                         </small>
                                     </div>
                                     <span class="status-badge status-{{ session.status|lower }}">
@@ -391,23 +513,105 @@
 .btn-group .btn {
     padding: 0.375rem 0.75rem;
 }
+
+.crawl-type-option {
+    padding: 15px;
+    border: 2px solid #dee2e6;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+    height: 100%;
+}
+
+.crawl-type-option:hover {
+    border-color: #0d6efd;
+    background-color: #f8f9fa;
+}
+
+.form-check-input:checked ~ .form-check-label .crawl-type-option,
+.crawl-type-option:has(.form-check-input:checked) {
+    border-color: #0d6efd;
+    background-color: #e7f1ff;
+}
+
+.modal-body .form-check {
+    margin-bottom: 0;
+}
+
+.accordion-button:not(.collapsed) {
+    background-color: #e7f1ff;
+    color: #0d6efd;
+}
 </style>
 
 <!-- JavaScript for AJAX functionality -->
 <script>
-function startCrawl() {
-    // Get form data
-    const formData = new FormData();
-    formData.append('max_products', '100');
-    formData.append('delay', '1.0');
-    formData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
-    
-    fetch('{% url "asda_scraper:start_crawl" %}', {
-        method: 'POST',
-        body: formData,
-        headers: {
-            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+// Auto-refresh functionality for dashboard
+let refreshInterval;
+
+function startAutoRefresh() {
+    refreshInterval = setInterval(refreshStatus, 5000);
+}
+
+function stopAutoRefresh() {
+    if (refreshInterval) {
+        clearInterval(refreshInterval);
+    }
+}
+
+function refreshStatus() {
+    fetch("{% url 'asda_scraper:crawl_status' %}")
+        .then(response => response.json())
+        .then(data => {
+            if (data.has_session) {
+                updateCrawlStatus(data);
+            } else {
+                updateIdleStatus(data);
+            }
+        })
+        .catch(error => console.error('Error fetching status:', error));
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
         }
+    }
+    return cookieValue;
+}
+
+function startCrawlWithSettings() {
+    // Get form data
+    const formData = new FormData(document.getElementById('crawlSettingsForm'));
+    const settings = {};
+    
+    // Convert FormData to object
+    for (let [key, value] of formData.entries()) {
+        if (key === 'headless') {
+            settings[key] = formData.has('headless');
+        } else {
+            settings[key] = value;
+        }
+    }
+    
+    // Close modal
+    const modal = bootstrap.Modal.getInstance(document.getElementById('crawlSettingsModal'));
+    modal.hide();
+    
+    // Send start request with settings
+    fetch("{% url 'asda_scraper:start_crawl' %}", {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify(settings)
     })
     .then(response => response.json())
     .then(data => {
@@ -422,8 +626,7 @@ function startCrawl() {
         }
     })
     .catch(error => {
-        console.error('Error:', error);
-        showAlert('danger', 'An error occurred while starting the crawl.');
+        showAlert('danger', 'Failed to start crawl: ' + error);
     });
 }
 
@@ -457,6 +660,63 @@ function stopCrawl(sessionId = null) {
         console.error('Error:', error);
         showAlert('danger', 'An error occurred while stopping the crawl.');
     });
+}
+
+// Update status display to show crawl type
+function updateCrawlStatus(data) {
+    const statusBadge = document.getElementById('status-badge');
+    if (statusBadge) {
+        statusBadge.textContent = data.status;
+        statusBadge.className = `status-badge status-${data.status.toLowerCase()}`;
+    }
+    
+    // Update progress info with crawl type specific data
+    const progressInfo = document.getElementById('progress-info');
+    if (progressInfo && data.status === 'RUNNING') {
+        let extraInfo = '';
+        if (data.crawl_type === 'NUTRITION' || data.crawl_type === 'BOTH') {
+            extraInfo = `
+                <div class="col-md-2">
+                    <div class="h5 mb-0">${data.products_with_nutrition || 0}</div>
+                    <small>With Nutrition</small>
+                </div>
+                <div class="col-md-2">
+                    <div class="h5 mb-0">${data.nutrition_errors || 0}</div>
+                    <small>Nutrition Errors</small>
+                </div>
+            `;
+        }
+        
+        progressInfo.innerHTML = `
+            <div class="row text-center">
+                <div class="col-md-2">
+                    <div class="h5 mb-0">${data.categories_crawled}</div>
+                    <small>Categories</small>
+                </div>
+                <div class="col-md-2">
+                    <div class="h5 mb-0">${data.products_found}</div>
+                    <small>Found</small>
+                </div>
+                <div class="col-md-2">
+                    <div class="h5 mb-0">${data.products_updated}</div>
+                    <small>Updated</small>
+                </div>
+                ${extraInfo}
+                <div class="col-md-2">
+                    <div class="h5 mb-0">${data.duration || '0s'}</div>
+                    <small>Duration</small>
+                </div>
+            </div>
+        `;
+    }
+}
+
+function updateIdleStatus(data) {
+    const statusBadge = document.getElementById('status-badge');
+    if (statusBadge) {
+        statusBadge.textContent = 'IDLE';
+        statusBadge.className = 'status-badge bg-secondary';
+    }
 }
 
 function deleteProducts(type) {
@@ -530,6 +790,16 @@ function showAlert(type, message) {
         alertDiv.remove();
     }, 5000);
 }
+
+// Initialize auto-refresh when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    startAutoRefresh();
+});
+
+// Stop auto-refresh when leaving page
+window.addEventListener('beforeunload', function() {
+    stopAutoRefresh();
+});
 </script>
 
 <!-- CSRF Token for AJAX requests -->

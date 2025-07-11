@@ -276,12 +276,84 @@ def _check_system_health() -> Dict[str, Any]:
     return health
 
 
+# Add these updates to your asda_scraper/views.py file
+
+# Update the imports at the top
+import json
+import threading
+from django.db.models import F
+
+# Update the _parse_crawl_settings function
+def _parse_crawl_settings(request) -> Dict[str, Any]:
+    """
+    Parse crawl settings from request including crawl type.
+    
+    Args:
+        request: Django HttpRequest object
+        
+    Returns:
+        Dict[str, Any]: Parsed crawl settings
+    """
+    # Default settings
+    settings = {
+        'crawl_type': 'PRODUCT',  # Add crawl type
+        'max_categories': 10,
+        'category_priority': 2,
+        'max_products_per_category': 100,
+        'delay_between_requests': 2.0,
+        'use_selenium': True,
+        'headless': False,
+        'respect_robots_txt': True,
+        'crawl_nutrition': False,  # Legacy support
+    }
+    
+    try:
+        # Parse form data
+        if request.content_type == 'application/json':
+            data = json.loads(request.body)
+        else:
+            data = request.POST
+        
+        # Handle crawl type
+        if 'crawl_type' in data:
+            crawl_type = data['crawl_type']
+            if crawl_type in ['PRODUCT', 'NUTRITION', 'BOTH']:
+                settings['crawl_type'] = crawl_type
+                # Set legacy flag for compatibility
+                settings['crawl_nutrition'] = crawl_type in ['NUTRITION', 'BOTH']
+        
+        # Update settings with user input
+        for key in ['max_categories', 'category_priority', 'max_products_per_category']:
+            if key in data:
+                try:
+                    settings[key] = int(data[key])
+                except (ValueError, TypeError):
+                    pass
+        
+        for key in ['delay_between_requests']:
+            if key in data:
+                try:
+                    settings[key] = float(data[key])
+                except (ValueError, TypeError):
+                    pass
+        
+        for key in ['headless', 'use_selenium']:
+            if key in data:
+                settings[key] = str(data.get(key, 'false')).lower() == 'true'
+        
+    except Exception as e:
+        logger.warning(f"Error parsing crawl settings: {e}")
+    
+    return settings
+
+
+# Update the start_crawl function
 @login_required
 @user_passes_test(is_admin_user)
 @require_http_methods(["POST"])
 def start_crawl(request):
     """
-    Start a new crawl session with improved error handling.
+    Start a new crawl session with specified crawl type.
     
     Args:
         request: Django HttpRequest object
@@ -313,10 +385,11 @@ def start_crawl(request):
                 'errors': validation_errors
             })
         
-        # Create new crawl session
+        # Create new crawl session with crawl type
         session = CrawlSession.objects.create(
             user=request.user,
             status='PENDING',
+            crawl_type=crawl_settings.get('crawl_type', 'PRODUCT'),
             crawl_settings=crawl_settings
         )
         
@@ -328,12 +401,16 @@ def start_crawl(request):
         thread.daemon = True
         thread.start()
         
-        logger.info(f"Started crawl session {session.pk} by user {request.user.username}")
+        logger.info(
+            f"Started {session.crawl_type} crawl session {session.pk} "
+            f"by user {request.user.username}"
+        )
         
         return JsonResponse({
             'success': True,
-            'message': f'Crawl session {session.pk} started successfully',
-            'session_id': session.pk
+            'message': f'{session.get_crawl_type_display()} crawl session {session.pk} started successfully',
+            'session_id': session.pk,
+            'crawl_type': session.crawl_type
         })
         
     except Exception as e:
@@ -344,9 +421,15 @@ def start_crawl(request):
         })
 
 
+
+
+
+
+
+
 def _parse_crawl_settings(request) -> Dict[str, Any]:
     """
-    Parse crawl settings from request.
+    Parse crawl settings from request including crawl type.
     
     Args:
         request: Django HttpRequest object
@@ -356,6 +439,7 @@ def _parse_crawl_settings(request) -> Dict[str, Any]:
     """
     # Default settings
     settings = {
+        'crawl_type': 'PRODUCT',  # Add crawl type
         'max_categories': 10,
         'category_priority': 2,
         'max_products_per_category': 100,
@@ -363,6 +447,7 @@ def _parse_crawl_settings(request) -> Dict[str, Any]:
         'use_selenium': True,
         'headless': False,
         'respect_robots_txt': True,
+        'crawl_nutrition': False,  # Legacy support
     }
     
     try:
@@ -371,6 +456,14 @@ def _parse_crawl_settings(request) -> Dict[str, Any]:
             data = json.loads(request.body)
         else:
             data = request.POST
+        
+        # Handle crawl type
+        if 'crawl_type' in data:
+            crawl_type = data['crawl_type']
+            if crawl_type in ['PRODUCT', 'NUTRITION', 'BOTH']:
+                settings['crawl_type'] = crawl_type
+                # Set legacy flag for compatibility
+                settings['crawl_nutrition'] = crawl_type in ['NUTRITION', 'BOTH']
         
         # Update settings with user input
         for key in ['max_categories', 'category_priority', 'max_products_per_category']:
@@ -395,6 +488,7 @@ def _parse_crawl_settings(request) -> Dict[str, Any]:
         logger.warning(f"Error parsing crawl settings: {e}")
     
     return settings
+
 
 
 def _validate_crawl_settings(settings: Dict[str, Any]) -> list:
@@ -595,11 +689,12 @@ def stop_crawl(request):
         })
 
 
+# Update the crawl_status function
 @login_required
 @user_passes_test(is_admin_user)
 def crawl_status(request):
     """
-    Get current crawl status via AJAX with enhanced information.
+    Get current crawl status via AJAX with crawl type information.
     
     Args:
         request: Django HttpRequest object
@@ -631,22 +726,32 @@ def crawl_status(request):
                 'has_session': True,
                 'session_id': current_session.pk,
                 'status': current_session.status,
+                'crawl_type': current_session.crawl_type,
+                'crawl_type_display': current_session.get_crawl_type_display(),
                 'start_time': current_session.start_time.isoformat(),
                 'categories_crawled': current_session.categories_crawled,
                 'total_categories': total_categories,
                 'progress_percent': round(progress_percent, 1),
                 'products_found': current_session.products_found,
                 'products_updated': current_session.products_updated,
+                'products_with_nutrition': current_session.products_with_nutrition,
+                'nutrition_errors': current_session.nutrition_errors,
                 'duration': str(duration) if duration else None,
                 'estimated_remaining': estimated_remaining,
                 'using_selenium': current_session.crawl_settings.get('use_selenium', False),
-                'error_log': current_session.error_log,  # Use error_log instead of error_message
+                'error_log': current_session.error_log,
             }
         else:
+            # Get nutrition stats for idle display
+            products_with_nutrition = AsdaProduct.objects.filter(
+                nutritional_info__isnull=False
+            ).count()
+            
             data = {
                 'has_session': False,
                 'total_products': AsdaProduct.objects.count(),
                 'total_categories': AsdaCategory.objects.count(),
+                'products_with_nutrition': products_with_nutrition,
                 'system_health': _check_system_health(),
             }
         
@@ -657,6 +762,9 @@ def crawl_status(request):
         return JsonResponse({
             'error': str(e)
         }, status=500)
+
+
+
 
 
 @method_decorator([login_required, user_passes_test(is_admin_user)], name='dispatch')
