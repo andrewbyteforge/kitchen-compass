@@ -94,6 +94,26 @@ class AsdaCategory(models.Model):
         else:
             logger.info(f"ASDA category updated: {self.name}")
 
+    def get_absolute_url(self):
+        """
+        Get the full URL for this category on ASDA website.
+        
+        Returns:
+            str: Full URL to the category page
+        """
+        base_url = "https://groceries.asda.com"
+        return f"{base_url}/dept/{self.url_code}"
+    
+    @property
+    def full_url(self):
+        """
+        Property to get the full URL for backward compatibility.
+        
+        Returns:
+            str: Full URL to the category page
+        """
+        return self.get_absolute_url()
+
 
 class AsdaProduct(models.Model):
     """

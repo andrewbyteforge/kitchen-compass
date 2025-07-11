@@ -480,10 +480,10 @@ class SeleniumAsdaScraper:
         delay_manager = DelayManager()
         
         try:
-            # Get categories to crawl (priority 1 and 2 only for efficiency)
+            # Get categories to crawl - FIXED: Removed 'priority' field
             categories = AsdaCategory.objects.filter(
                 is_active=True
-            ).order_by('priority', 'name')
+            ).order_by('name')  # Changed from 'priority', 'name' to just 'name'
             
             if not categories.exists():
                 logger.warning("⚠️ No active categories found")
@@ -528,30 +528,14 @@ class SeleniumAsdaScraper:
                     error_msg = f"Error crawling category {category.name}: {e}"
                     logger.error(error_msg)
                     result.errors.append(error_msg)
-                    
-                    # Increase delay after error
                     delay_manager.increase_delay()
-                    delay_manager.wait('after_navigation_error')
-                    continue
-            
-            # Update final counts
-            result.categories_processed = total_categories
-            result.products_saved = self.session.products_found
-            
-            # Keep browser open for inspection
-            logger.info("\n" + "="*80)
-            logger.info("CRAWLING COMPLETE - Browser window will remain open")
-            logger.info("Close the browser window manually when done inspecting")
-            logger.info("="*80)
-            
-            # Wait for user to close browser
-            input("\nPress Enter to close the browser and complete cleanup...")
+                    
+            return result
             
         except Exception as e:
-            logger.error(f"Error crawling products: {e}")
+            logger.error(f"Fatal error in product crawl: {e}")
             result.errors.append(str(e))
-        
-        return result
+            return result
     
     def _extract_products_from_current_page_by_url(self, url=None) -> int:
         """Extract products from current page."""
