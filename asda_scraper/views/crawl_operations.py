@@ -14,12 +14,15 @@ from django.views.decorators.http import require_http_methods
 from django.utils import timezone
 
 from asda_scraper.models import AsdaCategory, AsdaProduct, CrawlSession
-from asda_scraper.selenium_scraper import (
+
+# Update imports to use the new scrapers package
+from asda_scraper.scrapers import (
     create_selenium_scraper, 
     ScrapingResult, 
     ScraperException, 
     DriverSetupException
 )
+
 from .base import is_admin_user, check_system_health
 
 logger = logging.getLogger(__name__)

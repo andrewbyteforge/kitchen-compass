@@ -274,7 +274,7 @@ class SeleniumAsdaScraper:
             # Don't re-raise - cleanup should always complete
 
 
-    def create_selenium_scraper(crawl_session: CrawlSession, headless: bool = False) -> SeleniumAsdaScraper:
+    def create_selenium_scraper(crawl_session: CrawlSession, headless: bool = False):
         """
         Factory function to create a Selenium scraper instance.
         

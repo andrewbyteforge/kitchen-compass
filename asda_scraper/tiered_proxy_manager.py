@@ -10,7 +10,7 @@ import random
 import time
 import logging
 import requests
-from typing import Dict, List, Optional, Tuple, Set
+from typing import dict, List, Optional, Tuple, Set
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum

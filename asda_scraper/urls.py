@@ -7,7 +7,7 @@ Organized to work with the new modular view structure.
 File: asda_scraper/urls.py
 """
 
-from django.urls import path
+from django.urls import path, include
 
 # Import views from the new modular structure
 from .views import (
@@ -33,6 +33,7 @@ from .views import (
 
 app_name = 'asda_scraper'
 
+# Main URL patterns
 urlpatterns = [
     # Dashboard
     path('', scraper_dashboard, name='dashboard'),
@@ -54,4 +55,24 @@ urlpatterns = [
     
     # API endpoints (if needed in future)
     # path('api/proxy-status/', get_proxy_status_summary, name='proxy_status'),
+]
+
+
+crawl_patterns = [
+    path('start/', start_crawl, name='start_crawl'),
+    path('stop/', stop_crawl, name='stop_crawl'),
+    path('status/', crawl_status, name='crawl_status'),
+]
+
+data_patterns = [
+    path('categories/', CategoryListView.as_view(), name='categories'),
+    path('products/', ProductListView.as_view(), name='products'),
+    path('delete-products/', delete_products_view, name='delete_products'),
+]
+
+urlpatterns = [
+    path('', scraper_dashboard, name='dashboard'),
+    path('crawl/', include((crawl_patterns, 'crawl'))),
+    path('data/', include((data_patterns, 'data'))),
+    path('session/<int:session_id>/', session_detail, name='session_detail'),
 ]
