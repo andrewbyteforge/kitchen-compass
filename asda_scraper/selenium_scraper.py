@@ -32,6 +32,14 @@ from .models import AsdaCategory, AsdaProduct, CrawlSession
 
 logger = logging.getLogger(__name__)
 
+# Logger initialization - add this after your imports
+try:
+    from . import setup_logger_with_handlers
+    logger = setup_logger_with_handlers(__name__)
+except ImportError:
+    # Fallback if running file directly
+    logger = logging.getLogger(__name__)
+
 
 """
 Manual logging setup for ASDA scraper
@@ -56,9 +64,16 @@ def setup_asda_logging():
     Returns:
         logging.Logger: Configured logger instance
     """
+    import sys
+    import logging.handlers
+    from pathlib import Path
     
     # Import SafeUnicodeFormatter from logging_config
     from .logging_config import SafeUnicodeFormatter
+    
+    # Create logs directory if it doesn't exist
+    logs_dir = Path(__file__).resolve().parent.parent / "logs"
+    logs_dir.mkdir(exist_ok=True)
     
     # Create formatter for console (with emoji replacement on Windows)
     console_formatter = SafeUnicodeFormatter(
@@ -109,7 +124,6 @@ def setup_asda_logging():
 
 
 # Setup logging when module is imported
-logger = setup_asda_logging()
 logger.info("ASDA scraper logging configured successfully")
 
 # Configuration constants (moved inline for now)

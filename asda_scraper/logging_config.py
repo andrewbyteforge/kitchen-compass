@@ -472,6 +472,7 @@ class SafeUnicodeFormatter(logging.Formatter):
     """
     
     # Emoji to ASCII mapping
+    # Emoji to ASCII mapping
     EMOJI_MAP = {
         '🔍': '[SEARCH]',
         '📦': '[PRODUCTS]',
@@ -495,6 +496,8 @@ class SafeUnicodeFormatter(logging.Formatter):
         '➡️': '[ARROW]',
         '🏪': '[STORE]',
         '🍪': '[COOKIE]',
+        '🎯': '[TARGET]',
+        '✅': '[OK]',
         '🔄': '[REFRESH]',
         '⏳': '[WAIT]',
         '💰': '[PRICE]',
@@ -554,32 +557,59 @@ class SafeUnicodeFormatter(logging.Formatter):
         '↪️': '[FORWARD]',
         '🔃': '[RELOAD]',
         '🔄': '[SYNC]',
+        # Additional emojis that were missing
+        '✅': '[DONE]',
+        '☑️': '[CHECKED]',
+        '✔️': '[CHECK]',
+        '⏹': '[STOP]',
+        '⚠': '[WARN]',
+        '🛑': '[STOP_SIGN]',
+        '⏱️': '[TIMER]',
+        '⏲️': '[TIMER_CLOCK]',
+        '🕐': '[CLOCK]',
+        '🕑': '[CLOCK_1]',
+        '🕒': '[CLOCK_2]',
+        '🕓': '[CLOCK_3]',
+        '🕔': '[CLOCK_4]',
+        '🕕': '[CLOCK_5]',
+        '🕖': '[CLOCK_6]',
+        '🕗': '[CLOCK_7]',
+        '🕘': '[CLOCK_8]',
+        '🕙': '[CLOCK_9]',
+        '🕚': '[CLOCK_10]',
+        '🕛': '[CLOCK_11]',
+        '🕜': '[CLOCK_12]',
     }
     
     def format(self, record):
-        """
-        Format the record, replacing emojis if needed.
-        
-        Args:
-            record: LogRecord to format
+            """
+            Format the record, replacing emojis if needed.
             
-        Returns:
-            str: Formatted log message
-        """
-        # Get the formatted message
-        msg = super().format(record)
-        
-        # Check if we're on Windows and need to replace emojis
-        if sys.platform == 'win32':
-            try:
-                # Try to encode with current encoding
-                msg.encode(sys.stdout.encoding or 'cp1252')
-            except (UnicodeEncodeError, AttributeError):
-                # Replace emojis with ASCII equivalents
+            Args:
+                record: LogRecord to format
+                
+            Returns:
+                str: Formatted log message
+            """
+            # Get the formatted message
+            msg = super().format(record)
+            
+            # Always replace emojis on Windows to avoid encoding issues
+            if sys.platform == 'win32':
+                # Replace all known emojis
                 for emoji, ascii_text in self.EMOJI_MAP.items():
                     msg = msg.replace(emoji, ascii_text)
-        
-        return msg
+                
+                # Additional safety: try to encode and catch any remaining issues
+                try:
+                    # Test encoding with cp1252 (Windows default)
+                    msg.encode('cp1252')
+                except UnicodeEncodeError:
+                    # If there are still unicode issues, do a more aggressive cleanup
+                    # Replace any non-ASCII characters with '?'
+                    msg = msg.encode('cp1252', errors='replace').decode('cp1252')
+            
+            return msg
 
 
 def setup_asda_logging():
