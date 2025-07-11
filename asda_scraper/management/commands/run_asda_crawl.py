@@ -528,28 +528,3 @@ class Command(BaseCommand):
             self.stdout.write(
                 self.style.WARNING(f"⚠️ Scraping ended with status: {session.status}")
             )
-
-
-# Example usage patterns for the management command:
-"""
-Basic usage:
-python manage.py run_asda_crawl
-
-With custom settings:
-python manage.py run_asda_crawl --headless --max-categories 5 --verbose
-
-Categories only (no products):
-python manage.py run_asda_crawl --categories-only
-
-Dry run (test without saving):
-python manage.py run_asda_crawl --dry-run --verbose
-
-Force run (override existing session):
-python manage.py run_asda_crawl --force --cleanup-stuck
-
-Production run with optimal settings:
-python manage.py run_asda_crawl --headless --max-categories 15 --category-priority 3 --delay 1.5
-
-Development/testing run:
-python manage.py run_asda_crawl --verbose --max-categories 2 --max-products 10 --user testuser
-"""
