@@ -1282,12 +1282,105 @@ class CustomAdminSite(admin.AdminSite):
 # If you're using the default admin.site, add this to the bottom of admin.py:
 original_get_urls = admin.site.get_urls
 
+def proxy_quick_setup_view(request):
+    """
+    Quick setup view for common proxy scenarios.
+    
+    Allows administrators to quickly configure proxy settings
+    with predefined configurations.
+    
+    Args:
+        request: HttpRequest object
+        
+    Returns:
+        TemplateResponse or HttpResponseRedirect
+    """
+    from .models import ProxyConfiguration
+    
+    if request.method == 'POST':
+        setup_type = request.POST.get('setup_type')
+        
+        try:
+            # Get or create configuration
+            config, created = ProxyConfiguration.objects.get_or_create(
+                is_active=True,
+                defaults={'name': 'Default Configuration'}
+            )
+            
+            if setup_type == 'free_only':
+                # Configure for free proxies only
+                config.prefer_paid_proxies = False
+                config.enable_free_proxy_fetching = True
+                config.daily_budget_limit = Decimal('0.00')
+                config.enable_proxy_service = True
+                config.save()
+                messages.success(request, "Configured for free proxies only.")
+                
+            elif setup_type == 'paid_priority':
+                # Configure to prioritize paid proxies
+                config.prefer_paid_proxies = True
+                config.fallback_to_free = True
+                config.enable_free_proxy_fetching = True
+                config.daily_budget_limit = Decimal('100.00')
+                config.enable_proxy_service = True
+                config.save()
+                messages.success(request, "Configured to prioritize paid proxies.")
+                
+            elif setup_type == 'balanced':
+                # Configure balanced proxy usage
+                config.prefer_paid_proxies = True
+                config.fallback_to_free = True
+                config.enable_free_proxy_fetching = True
+                config.daily_budget_limit = Decimal('50.00')
+                config.rotation_strategy = 'performance_based'
+                config.enable_proxy_service = True
+                config.save()
+                messages.success(request, "Configured for balanced proxy usage.")
+                
+            elif setup_type == 'disable':
+                # Disable proxy service
+                config.enable_proxy_service = False
+                config.save()
+                messages.info(request, "Proxy service disabled.")
+                
+        except Exception as e:
+            logger.error(f"Error in proxy quick setup: {str(e)}")
+            messages.error(request, f"Setup failed: {str(e)}")
+        
+        return redirect('admin:proxy_dashboard')
+    
+    context = {
+        'title': 'Quick Proxy Setup',
+        'site_header': admin.site.site_header,
+        'site_title': admin.site.site_title,
+        'has_permission': True,
+    }
+    
+    return TemplateResponse(
+        request,
+        'asda_scraper/admin/proxy_quick_setup.html',
+        context
+    )
+
+# Replace the existing get_urls_with_proxy function with this corrected version
+original_get_urls = admin.site.get_urls
+
 def get_urls_with_proxy():
-    """Add proxy dashboard URL to admin."""
+    """
+    Add proxy dashboard URLs to admin.
+    
+    This function extends the default admin URLs with custom
+    proxy management views.
+    
+    Returns:
+        list: Combined list of original and custom URLs
+    """
     urls = original_get_urls()
     custom_urls = [
         path('proxy-dashboard/', admin.site.admin_view(proxy_dashboard_view), name='proxy_dashboard'),
+        path('proxy-quick-setup/', admin.site.admin_view(proxy_quick_setup_view), name='proxy_quick_setup'),
     ]
     return custom_urls + urls
 
+# Apply the custom URLs
 admin.site.get_urls = get_urls_with_proxy
