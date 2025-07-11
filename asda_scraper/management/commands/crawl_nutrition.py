@@ -8,6 +8,8 @@ import logging
 import time
 from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Q
+from django.contrib.auth.models import User
+from django.utils import timezone
 from asda_scraper.models import AsdaProduct, CrawlSession
 from asda_scraper.selenium_scraper import SeleniumAsdaScraper
 
@@ -105,10 +107,23 @@ class Command(BaseCommand):
                 )
             )
             
-            # Initialize scraper with proper crawl session
+            # Initialize scraper with proper crawl session using correct fields
+            # Get or create a default user for the crawl session
+            user, created = User.objects.get_or_create(
+                username='nutrition_crawler',
+                defaults={'email': 'crawler@example.com'}
+            )
+            
             session = CrawlSession.objects.create(
-                session_type='nutrition_crawl',
-                target_categories=self._get_session_description(options)
+                user=user,
+                status='PENDING',
+                notes=self._get_session_description(options),
+                crawl_settings={
+                    'nutrition_crawl': True,
+                    'limit': options['limit'],
+                    'missing_only': options['missing_only'],
+                    'delay': options['delay']
+                }
             )
             
             scraper = SeleniumAsdaScraper(crawl_session=session, headless=options['headless'])
@@ -122,7 +137,8 @@ class Command(BaseCommand):
                 )
                 
                 # Finalize session
-                session.status = 'completed'
+                session.status = 'COMPLETED'
+                session.end_time = timezone.now()
                 session.save()
                 
                 self.stdout.write(
@@ -133,8 +149,9 @@ class Command(BaseCommand):
                 )
                 
             except Exception as e:
-                session.status = 'failed'
-                session.error_message = str(e)
+                session.status = 'FAILED'
+                session.end_time = timezone.now()
+                session.error_log = str(e)
                 session.save()
                 raise
             finally:
@@ -162,10 +179,18 @@ class Command(BaseCommand):
             self.style.SUCCESS(f"🧪 Testing nutritional extraction on: {test_url}")
         )
         
-        # Create a temporary crawl session for testing
+        # Create a temporary crawl session for testing using correct fields
+        # Get or create a default user for the test session
+        user, created = User.objects.get_or_create(
+            username='nutrition_test_user',
+            defaults={'email': 'test@example.com'}
+        )
+        
         session = CrawlSession.objects.create(
-            session_type='nutrition_test',
-            target_categories=f'Test URL: {test_url[:100]}'
+            user=user,
+            status='PENDING',
+            notes=f'Nutrition test for URL: {test_url[:100]}',
+            crawl_settings={'test_mode': True, 'target_url': test_url}
         )
         
         scraper = SeleniumAsdaScraper(crawl_session=session, headless=headless)
@@ -189,12 +214,14 @@ class Command(BaseCommand):
                 )
             
             # Update session status
-            session.status = 'completed'
+            session.status = 'COMPLETED'
+            session.end_time = timezone.now()
             session.save()
                 
         except Exception as e:
-            session.status = 'failed'
-            session.error_message = str(e)
+            session.status = 'FAILED'
+            session.end_time = timezone.now()
+            session.error_log = str(e)
             session.save()
             self.stdout.write(
                 self.style.ERROR(f"❌ Error testing URL: {str(e)}")

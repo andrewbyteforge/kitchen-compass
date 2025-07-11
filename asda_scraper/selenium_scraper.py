@@ -27,7 +27,13 @@ from selenium.common.exceptions import (
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 from django.utils import timezone
-
+import time
+import re
+from bs4 import BeautifulSoup
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from .models import AsdaCategory, AsdaProduct, CrawlSession
 
 logger = logging.getLogger(__name__)
@@ -2012,6 +2018,481 @@ class DelayManager:
             
         except Exception as e:
             logger.error(f"❌ Error during cleanup: {str(e)}")
+
+    def _clean_nutritional_data(self, data: dict) -> dict:
+        """
+        Final cleaning and validation of nutritional data.
+        
+        Args:
+            data: Raw nutritional data dictionary
+            
+        Returns:
+            dict: Cleaned and validated nutritional data
+        """
+        cleaned_data = {}
+        
+        for key, value in data.items():
+            if key and value and key.lower() not in ['typical values', 'per 100g', 'overbaked']:
+                cleaned_data[key] = value
+        
+        return cleaned_data
+
+    def _save_product_with_nutrition(self, product_data: dict, category, fetch_nutrition: bool = False) -> bool:
+        """
+        Enhanced save method that optionally fetches nutritional information.
+        
+        Args:
+            product_data: Dictionary containing product information
+            category: AsdaCategory instance
+            fetch_nutrition: Whether to fetch nutritional information
+            
+        Returns:
+            bool: True if save was successful
+        """
+        try:
+            # Check if product already exists
+            asda_id = product_data.get('asda_id')
+            
+            # If fetching nutrition and we have a product URL, get nutritional info
+            nutritional_info = {}
+            if fetch_nutrition and product_data.get('url'):
+                logger.info(f"🧪 Fetching nutritional info for: {product_data.get('name', 'Unknown')[:50]}")
+                nutritional_info = self._extract_nutritional_info_from_product_page(product_data['url'])
+                
+                if nutritional_info:
+                    logger.info(f"✅ Retrieved nutritional info with {len(nutritional_info)} values")
+                else:
+                    logger.warning("⚠️ No nutritional info retrieved")
+            
+            # Create or update product
+            from .models import AsdaProduct
+            
+            product, created = AsdaProduct.objects.get_or_create(
+                asda_id=asda_id,
+                defaults={
+                    'name': product_data.get('name', ''),
+                    'price': product_data.get('price', 0),
+                    'was_price': product_data.get('was_price'),
+                    'unit': product_data.get('unit', 'each'),
+                    'description': product_data.get('name', ''),
+                    'image_url': product_data.get('image_url', ''),
+                    'product_url': product_data.get('url', ''),
+                    'category': category,
+                    'in_stock': True,
+                    'nutritional_info': nutritional_info,
+                }
+            )
+            
+            if not created:
+                # Update existing product
+                product.name = product_data.get('name', product.name)
+                product.price = product_data.get('price', product.price)
+                product.was_price = product_data.get('was_price', product.was_price)
+                product.unit = product_data.get('unit', product.unit)
+                product.image_url = product_data.get('image_url', product.image_url)
+                product.product_url = product_data.get('url', product.product_url)
+                product.category = category
+                
+                # Update nutritional info if we fetched it
+                if nutritional_info:
+                    product.nutritional_info = nutritional_info
+                
+                product.save()
+            
+            # Update session counters
+            if hasattr(self, 'session'):
+                if created:
+                    self.session.products_found += 1
+                    logger.info(f"✅ Created product: {product.name[:50]}")
+                else:
+                    self.session.products_updated += 1
+                    logger.info(f"📝 Updated product: {product.name[:50]}")
+                
+                self.session.save()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error saving product with nutrition: {str(e)}")
+            import traceback
+            logger.debug(f"Traceback: {traceback.format_exc()}")
+            return False
+        
+
+    def cleanup(self):
+        """
+        Clean up the scraper resources.
+        
+        This method should be called when you're done with the scraper
+        to properly close the browser and clean up resources.
+        """
+        try:
+            if hasattr(self, '_cleanup'):
+                # Use existing cleanup method if available
+                self._cleanup()
+            elif hasattr(self, 'driver_manager') and self.driver_manager:
+                # Clean up driver manager
+                self.driver_manager.cleanup()
+            elif hasattr(self, 'driver') and self.driver:
+                # Direct driver cleanup as fallback
+                self.driver.quit()
+            
+            logger.info("🧹 Nutritional scraper cleanup completed")
+            
+        except Exception as e:
+            logger.error(f"❌ Error during cleanup: {str(e)}")
+
+    def _extract_nutritional_info_from_product_page(self, product_url: str, max_retries: int = 3) -> dict:
+        """
+        Navigate to individual product page and extract nutritional information.
+        
+        Args:
+            product_url: Full URL to the product detail page
+            max_retries: Maximum number of retry attempts
+            
+        Returns:
+            dict: Nutritional information dictionary
+        """
+        logger.info(f"🧪 Extracting nutritional info from: {product_url[:60]}...")
+        
+        # Store current URL to return to it later
+        original_url = self.driver.current_url
+        nutritional_data = {}
+        
+        for attempt in range(max_retries):
+            try:
+                # Navigate to product page
+                logger.debug(f"📍 Navigating to product page (attempt {attempt + 1})")
+                self.driver.get(product_url)
+                
+                # Wait for page to load
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+                
+                # Small delay to ensure dynamic content loads
+                time.sleep(2)
+                
+                # Check if we've been redirected or blocked
+                current_page_url = self.driver.current_url
+                if 'error' in current_page_url.lower() or 'block' in current_page_url.lower():
+                    logger.warning(f"⚠️ Possible block detected on attempt {attempt + 1}")
+                    time.sleep(5)  # Wait longer before retry
+                    continue
+                
+                # Extract nutritional information
+                nutritional_data = self._parse_nutritional_info_from_page()
+                
+                if nutritional_data:
+                    logger.info(f"✅ Successfully extracted nutritional info with {len(nutritional_data)} fields")
+                    break
+                else:
+                    logger.warning(f"⚠️ No nutritional data found on attempt {attempt + 1}")
+                    
+            except TimeoutException:
+                logger.warning(f"⏰ Timeout loading product page on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    time.sleep(3)
+                    continue
+                    
+            except Exception as e:
+                logger.error(f"❌ Error extracting nutritional info on attempt {attempt + 1}: {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(3)
+                    continue
+        
+        # Return to original page
+        try:
+            if original_url != self.driver.current_url:
+                logger.debug(f"🔙 Returning to original page: {original_url[:60]}...")
+                self.driver.get(original_url)
+                time.sleep(2)
+        except Exception as e:
+            logger.error(f"❌ Error returning to original page: {str(e)}")
+        
+        return nutritional_data
+
+    def _parse_nutritional_info_from_page(self) -> dict:
+        """
+        Parse nutritional information from the current product page.
+        
+        Returns:
+            dict: Dictionary containing nutritional values
+        """
+        logger.debug("🔍 Parsing nutritional information from page...")
+        
+        try:
+            # Get page source and parse with BeautifulSoup
+            page_source = self.driver.page_source
+            soup = BeautifulSoup(page_source, 'html.parser')
+            
+            nutritional_data = {}
+            
+            # Look for nutritional values section
+            nutrition_section = soup.find('h2', string='Nutritional Values') or \
+                               soup.find('h3', string='Nutritional Values') or \
+                               soup.find(string='Nutritional Values')
+            
+            if not nutrition_section:
+                # Try alternative selectors for nutritional information
+                nutrition_section = soup.find(text=lambda text: text and 'nutritional' in text.lower())
+            
+            if nutrition_section:
+                logger.debug("📊 Found nutritional values section")
+                
+                # Find the parent container that holds the nutritional table
+                if hasattr(nutrition_section, 'parent'):
+                    nutrition_container = nutrition_section.parent
+                else:
+                    nutrition_container = nutrition_section.find_parent()
+                
+                # Look for table rows or list items containing nutritional data
+                nutritional_data = self._extract_nutrition_table_data(nutrition_container)
+                
+                if not nutritional_data:
+                    # Try alternative extraction method
+                    nutritional_data = self._extract_nutrition_alternative(soup)
+            
+            else:
+                logger.debug("❌ No nutritional values section found")
+                # Try to extract any nutrition-related data anyway
+                nutritional_data = self._extract_nutrition_alternative(soup)
+            
+            # Clean and validate the data
+            nutritional_data = self._clean_nutritional_data(nutritional_data)
+            
+            if nutritional_data:
+                logger.info(f"📊 Extracted {len(nutritional_data)} nutritional values")
+                for key, value in nutritional_data.items():
+                    logger.debug(f"  {key}: {value}")
+            else:
+                logger.warning("⚠️ No nutritional data could be extracted from page")
+            
+            return nutritional_data
+            
+        except Exception as e:
+            logger.error(f"❌ Error parsing nutritional information: {str(e)}")
+            return {}
+
+    def _extract_nutrition_table_data(self, container) -> dict:
+        """
+        Extract nutritional data from table structure.
+        
+        Args:
+            container: BeautifulSoup element containing the nutrition table
+            
+        Returns:
+            dict: Nutritional data dictionary
+        """
+        nutritional_data = {}
+        
+        try:
+            # Look for table rows with nutritional information
+            # Based on the screenshot, ASDA uses a table format
+            rows = container.find_all('tr') if container else []
+            
+            for row in rows:
+                cells = row.find_all(['td', 'th'])
+                if len(cells) >= 2:
+                    # Extract the nutrient name and value
+                    nutrient_name = cells[0].get_text(strip=True)
+                    nutrient_value = cells[-1].get_text(strip=True)  # Take the last cell for value
+                    
+                    if nutrient_name and nutrient_value:
+                        # Clean the names to match screenshot format
+                        clean_name = self._clean_nutrient_name(nutrient_name)
+                        clean_value = self._clean_nutrient_value(nutrient_value)
+                        
+                        if clean_name and clean_value:
+                            nutritional_data[clean_name] = clean_value
+                            logger.debug(f"  Found: {clean_name} = {clean_value}")
+            
+            # If no table found, try alternative selectors
+            if not nutritional_data:
+                nutritional_data = self._extract_nutrition_from_divs(container)
+        
+        except Exception as e:
+            logger.error(f"❌ Error extracting nutrition table data: {str(e)}")
+        
+        return nutritional_data
+
+    def _extract_nutrition_from_divs(self, container) -> dict:
+        """
+        Extract nutritional data from div/span structure as fallback.
+        
+        Args:
+            container: BeautifulSoup element containing nutrition data
+            
+        Returns:
+            dict: Nutritional data dictionary
+        """
+        nutritional_data = {}
+        
+        try:
+            # Look for patterns like "Energy kJ" followed by "559"
+            # This handles cases where data is in divs rather than tables
+            
+            # Find all text elements that might contain nutritional info
+            all_text = container.get_text() if container else ""
+            
+            # Common nutritional keywords to look for
+            nutrition_keywords = [
+                'energy kj', 'energy kcal', 'fat', 'saturates', 'carbohydrate', 
+                'carbohydrates', 'sugars', 'fibre', 'fiber', 'protein', 'salt',
+                'sodium', 'calcium', 'iron', 'vitamin'
+            ]
+            
+            lines = all_text.split('\n')
+            
+            for i, line in enumerate(lines):
+                line_lower = line.lower().strip()
+                
+                for keyword in nutrition_keywords:
+                    if keyword in line_lower:
+                        # Look for the value in the same line or next line
+                        value = self._extract_value_from_line(line)
+                        if not value and i + 1 < len(lines):
+                            value = self._extract_value_from_line(lines[i + 1])
+                        
+                        if value:
+                            clean_name = self._clean_nutrient_name(line.strip())
+                            nutritional_data[clean_name] = value
+                            break
+        
+        except Exception as e:
+            logger.error(f"❌ Error extracting nutrition from divs: {str(e)}")
+        
+        return nutritional_data
+
+    def _extract_nutrition_alternative(self, soup) -> dict:
+        """
+        Alternative method to extract nutritional data when main method fails.
+        
+        Args:
+            soup: BeautifulSoup object of the entire page
+            
+        Returns:
+            dict: Nutritional data dictionary
+        """
+        nutritional_data = {}
+        
+        try:
+            # Look for any elements containing nutritional keywords
+            nutrition_patterns = [
+                r'energy[:\s]*(\d+\.?\d*)\s*(kj|kcal)',
+                r'fat[:\s]*(\d+\.?\d*)\s*g',
+                r'protein[:\s]*(\d+\.?\d*)\s*g',
+                r'carbohydrate[:\s]*(\d+\.?\d*)\s*g',
+                r'sugar[s]?[:\s]*(\d+\.?\d*)\s*g',
+                r'fibre?[:\s]*(\d+\.?\d*)\s*g',
+                r'salt[:\s]*(\d+\.?\d*)\s*g',
+                r'saturates?[:\s]*(\d+\.?\d*)\s*g'
+            ]
+            
+            page_text = soup.get_text().lower()
+            
+            for pattern in nutrition_patterns:
+                matches = re.findall(pattern, page_text, re.IGNORECASE)
+                if matches:
+                    for match in matches:
+                        if isinstance(match, tuple):
+                            value = match[0]
+                            unit = match[1] if len(match) > 1 else 'g'
+                        else:
+                            value = match
+                            unit = 'g'
+                        
+                        # Determine nutrient name from pattern
+                        nutrient_name = pattern.split('[')[0].replace('r\'', '').replace('\\', '')
+                        nutritional_data[nutrient_name.title()] = f"{value}{unit}"
+        
+        except Exception as e:
+            logger.error(f"❌ Error in alternative nutrition extraction: {str(e)}")
+        
+        return nutritional_data
+
+    def _clean_nutrient_name(self, name: str) -> str:
+        """
+        Clean and standardize nutrient name.
+        
+        Args:
+            name: Raw nutrient name
+            
+        Returns:
+            str: Cleaned nutrient name
+        """
+        if not name:
+            return ""
+        
+        # Remove extra whitespace and normalize
+        clean_name = name.strip()
+        
+        # Standard mappings based on ASDA format
+        mappings = {
+            'energy kj': 'Energy (kJ)',
+            'energy kcal': 'Energy (kcal)',
+            'of which saturates': 'Saturates',
+            'of which sugars': 'Sugars',
+            'carbohydrate': 'Carbohydrate',
+            'carbohydrates': 'Carbohydrate'
+        }
+        
+        clean_lower = clean_name.lower()
+        for key, value in mappings.items():
+            if key in clean_lower:
+                return value
+        
+        # Capitalize first letter
+        return clean_name.title()
+
+    def _clean_nutrient_value(self, value: str) -> str:
+        """
+        Clean and standardize nutrient value.
+        
+        Args:
+            value: Raw nutrient value
+            
+        Returns:
+            str: Cleaned nutrient value
+        """
+        if not value:
+            return ""
+        
+        # Remove extra whitespace
+        clean_value = value.strip()
+        
+        # Remove any parenthetical notes like "(overbaked)"
+        clean_value = re.sub(r'\([^)]*\)', '', clean_value).strip()
+        
+        return clean_value
+
+    def _extract_value_from_line(self, line: str) -> str:
+        """
+        Extract numerical value from a line of text.
+        
+        Args:
+            line: Line of text potentially containing a nutritional value
+            
+        Returns:
+            str: Extracted value or empty string
+        """
+        # Look for patterns like "132", "1.9g", "<0.5g", etc.
+        value_patterns = [
+            r'(\d+\.?\d*)\s*g',
+            r'(\d+\.?\d*)\s*mg',
+            r'(\d+\.?\d*)\s*kj',
+            r'(\d+\.?\d*)\s*kcal',
+            r'<(\d+\.?\d*)',
+            r'>(\d+\.?\d*)',
+            r'(\d+\.?\d*)$'  # Just a number at the end
+        ]
+        
+        for pattern in value_patterns:
+            match = re.search(pattern, line.lower())
+            if match:
+                return match.group(0)  # Return the full match including unit
+        
+        return ""
 
     def _clean_nutritional_data(self, data: dict) -> dict:
         """
