@@ -287,7 +287,7 @@ class Command(BaseCommand):
     
     def _process_products(self, scraper, products, options):
         """
-        Process products to extract nutritional information.
+        Process products to extract nutritional information with enhanced database handling.
         
         Args:
             scraper: SeleniumAsdaScraper instance
@@ -308,6 +308,7 @@ class Command(BaseCommand):
                     f"🛍️ Processing {idx}/{len(products)}: {product.name[:50]}...\n"
                     f"📂 Category: {product.category.name}\n"
                     f"🔗 URL: {product.product_url[:60]}...\n"
+                    f"🆔 ASDA ID: {product.asda_id}\n"
                     f"{'='*80}"
                 )
                 
@@ -318,8 +319,16 @@ class Command(BaseCommand):
                     
                     self.stdout.write(
                         self.style.WARNING(
-                            "⏭️ Product already has nutritional info, skipping"
+                            f"⏭️ Product already has {len(product.nutritional_info)} nutritional values, skipping"
                         )
+                    )
+                    skipped_count += 1
+                    continue
+                
+                # Validate product has a URL
+                if not product.product_url:
+                    self.stdout.write(
+                        self.style.WARNING("⚠️ Product has no URL, skipping")
                     )
                     skipped_count += 1
                     continue
@@ -339,17 +348,25 @@ class Command(BaseCommand):
                     for key, value in nutritional_data.items():
                         self.stdout.write(f"  • {key}: {value}")
                     
-                    # Save to database (unless dry run)
+                    # Save to database with enhanced error handling
                     if not dry_run:
-                        product.nutritional_info = nutritional_data
-                        product.save()
-                        scraper.session.products_updated += 1
-                        scraper.session.save()
-                        self.stdout.write("💾 Saved to database")
+                        save_success = self._save_nutritional_data_to_product(
+                            product, nutritional_data, scraper
+                        )
+                        
+                        if save_success:
+                            self.stdout.write(
+                                self.style.SUCCESS("💾 Successfully saved to database")
+                            )
+                            success_count += 1
+                        else:
+                            self.stdout.write(
+                                self.style.ERROR("❌ Failed to save to database")
+                            )
+                            error_count += 1
                     else:
                         self.stdout.write("🔍 DRY RUN - not saved to database")
-                    
-                    success_count += 1
+                        success_count += 1
                     
                 else:
                     self.stdout.write(
@@ -374,6 +391,10 @@ class Command(BaseCommand):
                 )
                 error_count += 1
                 
+                # Log the full error for debugging
+                import traceback
+                logger.error(f"Error processing product {product.asda_id}: {traceback.format_exc()}")
+                
                 # Continue with next product after error
                 continue
         
@@ -388,3 +409,51 @@ class Command(BaseCommand):
             f"📈 Success rate: {(success_count/(success_count+error_count)*100):.1f}%\n"
             f"{'='*80}"
         )
+
+
+    def _save_nutritional_data_to_product(self, product, nutritional_data, scraper):
+        """
+        Save nutritional data to a specific product with enhanced error handling.
+        
+        Args:
+            product: AsdaProduct instance
+            nutritional_data: Dictionary of nutritional information
+            scraper: SeleniumAsdaScraper instance
+            
+        Returns:
+            bool: True if save was successful
+        """
+        try:
+            from django.db import transaction
+            
+            # Use database transaction to ensure data integrity
+            with transaction.atomic():
+                # Add metadata to nutritional data
+                enhanced_nutritional_data = {
+                    'nutrition': nutritional_data,
+                    'extracted_at': timezone.now().isoformat(),
+                    'source_url': product.product_url,
+                    'extraction_method': 'selenium_scraper_v2',
+                    'data_count': len(nutritional_data)
+                }
+                
+                # Update the product
+                product.nutritional_info = enhanced_nutritional_data
+                product.updated_at = timezone.now()
+                product.save(update_fields=['nutritional_info', 'updated_at'])
+                
+                # Update scraper session
+                scraper.session.products_updated += 1
+                scraper.session.save()
+                
+                # Log the successful save
+                logger.info(
+                    f"✅ Saved nutritional data for product {product.asda_id} "
+                    f"({product.name[:50]}) - {len(nutritional_data)} values"
+                )
+                
+                return True
+                
+        except Exception as e:
+            logger.error(f"❌ Database error saving nutritional data for {product.asda_id}: {str(e)}")
+            return False

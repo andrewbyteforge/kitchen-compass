@@ -1669,3 +1669,105 @@ class EnhancedProxyModel(models.Model):
         
         if self.username and not self.password:
             raise ValidationError("Password is required when username is provided")
+        
+
+    def has_nutritional_info(self):
+        """
+        Check if product has nutritional information.
+        
+        Returns:
+            bool: True if product has nutritional data
+        """
+        return (
+            self.nutritional_info and 
+            isinstance(self.nutritional_info, dict) and 
+            len(self.nutritional_info.get('nutrition', {})) > 0
+        )
+
+    def get_nutritional_info(self):
+        """
+        Get nutritional information in a clean format.
+        
+        Returns:
+            dict: Nutritional information or empty dict
+        """
+        if self.has_nutritional_info():
+            return self.nutritional_info.get('nutrition', {})
+        return {}
+
+    def get_nutritional_value(self, nutrient):
+        """
+        Get a specific nutritional value.
+        
+        Args:
+            nutrient: Nutrient name (e.g., 'Energy (kJ)', 'Protein', 'Fat')
+            
+        Returns:
+            str: Nutritional value or None if not found
+        """
+        nutrition_data = self.get_nutritional_info()
+        return nutrition_data.get(nutrient)
+
+    def get_energy_kj(self):
+        """Get energy in kJ."""
+        return self.get_nutritional_value('Energy (kJ)')
+
+    def get_energy_kcal(self):
+        """Get energy in kcal.""" 
+        return self.get_nutritional_value('Energy (kcal)')
+
+    def get_protein(self):
+        """Get protein content."""
+        return self.get_nutritional_value('Protein')
+
+    def get_fat(self):
+        """Get fat content."""
+        return self.get_nutritional_value('Fat')
+
+    def get_carbohydrate(self):
+        """Get carbohydrate content."""
+        return self.get_nutritional_value('Carbohydrate')
+
+    def get_salt(self):
+        """Get salt content."""
+        return self.get_nutritional_value('Salt')
+
+    def get_nutritional_extraction_date(self):
+        """
+        Get when nutritional data was extracted.
+        
+        Returns:
+            datetime: Extraction timestamp or None
+        """
+        if self.has_nutritional_info():
+            extracted_at = self.nutritional_info.get('extracted_at')
+            if extracted_at:
+                from django.utils import timezone
+                return timezone.datetime.fromisoformat(extracted_at.replace('Z', '+00:00'))
+        return None
+
+    def get_nutritional_data_summary(self):
+        """
+        Get a summary of available nutritional data.
+        
+        Returns:
+            dict: Summary information
+        """
+        if self.has_nutritional_info():
+            nutrition_data = self.get_nutritional_info()
+            return {
+                'has_data': True,
+                'nutrient_count': len(nutrition_data),
+                'nutrients': list(nutrition_data.keys()),
+                'extracted_at': self.get_nutritional_extraction_date(),
+                'source_url': self.nutritional_info.get('source_url'),
+                'extraction_method': self.nutritional_info.get('extraction_method')
+            }
+        return {
+            'has_data': False,
+            'nutrient_count': 0,
+            'nutrients': [],
+            'extracted_at': None,
+            'source_url': None,
+            'extraction_method': None
+        }
