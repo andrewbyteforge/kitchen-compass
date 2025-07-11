@@ -1513,17 +1513,18 @@ class SeleniumAsdaScraper:
         from selenium.common.exceptions import TimeoutException, NoSuchElementException
         from bs4 import BeautifulSoup
         
-        # Import nutrition config
+        # Import nutrition config - Use absolute import instead of relative
         try:
-            from .nutrition_config import (
+            from asda_scraper.nutrition_config import (
                 NUTRITION_SELECTORS, 
                 NUTRITION_FIELD_MAPPINGS,
                 NUTRITION_VALUE_PATTERNS,
                 EXCLUSION_KEYWORDS,
                 NUTRITION_EXTRACTION_CONFIG
             )
-        except ImportError:
-            logger.error("Failed to import nutrition_config")
+        except ImportError as e:
+            logger.error(f"Failed to import nutrition_config: {str(e)}")
+            logger.error("Make sure nutrition_config.py exists in the asda_scraper directory")
             return None
         
         nutritional_data = {}
@@ -1539,9 +1540,15 @@ class SeleniumAsdaScraper:
                     EC.presence_of_element_located((By.TAG_NAME, "body"))
                 )
                 
-                # Handle any popups
-                from .selenium_scraper import PopupHandler
-                popup_handler = PopupHandler(self.driver)
+                # Handle any popups - Import PopupHandler correctly
+                try:
+                    from asda_scraper.selenium_scraper import PopupHandler
+                except ImportError:
+                    # If circular import, use local reference
+                    popup_handler = PopupHandler(self.driver)
+                else:
+                    popup_handler = PopupHandler(self.driver)
+                
                 popup_handler.handle_popups()
                 
                 # Small delay to ensure page is fully loaded
@@ -1550,6 +1557,11 @@ class SeleniumAsdaScraper:
             # Get page source and parse with BeautifulSoup
             page_source = self.driver.page_source
             soup = BeautifulSoup(page_source, 'html.parser')
+            
+            # Log page title for debugging
+            page_title = soup.find('title')
+            if page_title:
+                logger.debug(f"Page title: {page_title.text}")
             
             # Try to find nutritional tables using various selectors
             nutrition_table = None
@@ -1592,6 +1604,8 @@ class SeleniumAsdaScraper:
             
             if not nutrition_table:
                 logger.warning(f"No nutritional information section found on {product_url}")
+                # Log some page structure for debugging
+                logger.debug(f"Available headers: {[h.text for h in soup.find_all(['h2', 'h3', 'h4'])[:10]]}")
                 return None
             
             # Extract nutritional values from the found section
@@ -1606,11 +1620,17 @@ class SeleniumAsdaScraper:
                 # If no specific rows, try to find all text elements
                 rows = nutrition_table.find_all(['tr', 'div', 'li', 'p'])
             
+            logger.debug(f"Found {len(rows)} potential nutritional data rows")
+            
             # Process each row
             for row in rows:
                 try:
                     # Get text content
                     row_text = row.get_text(strip=True)
+                    
+                    # Skip empty rows
+                    if not row_text:
+                        continue
                     
                     # Skip if contains exclusion keywords
                     if any(keyword.lower() in row_text.lower() for keyword in EXCLUSION_KEYWORDS):
@@ -1671,44 +1691,22 @@ class SeleniumAsdaScraper:
                     logger.debug(f"Error processing row: {str(e)}")
                     continue
             
-            # Validate extracted data
+            # Log the results
             if nutritional_data:
-                # Check if we have minimum required fields
-                required_found = any(
-                    field in nutritional_data 
-                    for field in ['Energy (kJ)', 'Energy (kcal)', 'Calories']
-                )
-                
-                if required_found:
-                    logger.info(
-                        f"Successfully extracted {len(nutritional_data)} nutritional values "
-                        f"from {product_url}"
-                    )
-                    return nutritional_data
-                else:
-                    logger.warning(
-                        f"Extracted {len(nutritional_data)} values but missing required "
-                        f"energy fields from {product_url}"
-                    )
-                    # Return data anyway as some products might not have energy values
-                    return nutritional_data if len(nutritional_data) > 2 else None
+                logger.info(f"Successfully extracted {len(nutritional_data)} nutritional values from {product_url}")
+                logger.debug(f"Nutritional data: {nutritional_data}")
             else:
-                logger.warning(f"No nutritional values could be extracted from {product_url}")
-                return None
-                
+                logger.warning(f"No nutritional values extracted from {product_url}")
+            
+            return nutritional_data
+            
         except TimeoutException:
             logger.error(f"Timeout while loading product page: {product_url}")
             return None
         except Exception as e:
             logger.error(f"Error extracting nutritional info from {product_url}: {str(e)}")
+            logger.exception("Full traceback:")
             return None
-        
-        finally:
-            # Log extraction attempt for debugging
-            if NUTRITION_EXTRACTION_CONFIG.get('log_extraction_details'):
-                logger.debug(f"Extraction attempt completed for {product_url}")
-                logger.debug(f"Data found: {nutritional_data}")
-
 
 
 
