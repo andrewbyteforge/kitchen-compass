@@ -16,7 +16,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from bs4 import BeautifulSoup
 from django.db.models import F
-
 from asda_scraper.models import AsdaCategory, AsdaProduct, CrawlSession
 from .models import ProductData
 from .popup_handler import PopupHandler
@@ -35,7 +34,7 @@ class ProductExtractor:
     
     def __init__(self, driver: webdriver.Chrome, session: CrawlSession):
         """
-        Initialize product extractor.
+        Initialize product extractor with conditional nutrition support.
         
         Args:
             driver: Selenium WebDriver instance
@@ -45,6 +44,16 @@ class ProductExtractor:
         self.session = session
         self.base_url = "https://groceries.asda.com"
         self._parent_scraper = None  # Reference to parent scraper
+        self._nutrition_extractor = None  # Will be initialized if needed
+        
+        # Log initialization mode
+        if session.crawl_type == 'BOTH':
+            logger.info("🔬 ProductExtractor initialized for BOTH mode (products + nutrition)")
+        else:
+            logger.info("⚡ ProductExtractor initialized for PRODUCT mode (fast, no nutrition)")
+        
+        logger.info(f"📊 Crawl type: {session.crawl_type}")
+        logger.info(f"🎯 Session ID: {session.pk}")
     
     def extract_products_from_category(self, category: AsdaCategory) -> int:
         """
@@ -322,9 +331,12 @@ class ProductExtractor:
         img_element = container.select_one('img.asda-img')
         return img_element.get('src', '') if img_element else ''
     
+    # Replace the _save_product_data method in asda_scraper/scrapers/product_extractor.py
+    # Starting around line 240
+
     def _save_product_data(self, product_data: ProductData, category: AsdaCategory) -> bool:
         """
-        OPTIMIZED: Save product data to database WITHOUT nutrition extraction.
+        Save product data to database WITH CONDITIONAL nutrition extraction.
         
         Args:
             product_data: ProductData instance
@@ -370,8 +382,8 @@ class ProductExtractor:
                 
                 # Update all fields
                 for field in ['name', 'price', 'was_price', 'unit', 'description', 
-                             'image_url', 'product_url', 'in_stock', 'special_offer',
-                             'rating', 'review_count', 'price_per_unit']:
+                            'image_url', 'product_url', 'in_stock', 'special_offer',
+                            'rating', 'review_count', 'price_per_unit']:
                     value = getattr(product_data, field)
                     if value is not None:
                         setattr(product, field, value)
@@ -381,8 +393,23 @@ class ProductExtractor:
                 self.session.products_updated += 1
                 logger.info(f"Updated: {product.name} in {category.name}")
             
-            # ✅ NUTRITION EXTRACTION REMOVED FOR SPEED
-            # Nutrition data will be handled by separate NutritionCrawler
+            # 🔥 NEW: CONDITIONAL NUTRITION EXTRACTION FOR "BOTH" CRAWL TYPE
+            should_extract_nutrition = (
+                self.session.crawl_type == 'BOTH' and 
+                product.product_url and 
+                not self._has_recent_nutrition(product)
+            )
+            
+            if should_extract_nutrition:
+                logger.info(f"🔬 Extracting nutrition for: {product.name[:50]}...")
+                nutrition_success = self._extract_and_save_nutrition(product)
+                
+                if nutrition_success:
+                    self.session.products_with_nutrition += 1
+                    logger.info(f"✅ Nutrition extracted for: {product.name[:50]}")
+                else:
+                    self.session.nutrition_errors += 1
+                    logger.warning(f"❌ No nutrition data for: {product.name[:50]}")
             
             self.session.save()
             
@@ -395,7 +422,86 @@ class ProductExtractor:
         except Exception as e:
             logger.error(f"Error saving product {product_data.name}: {e}")
             return False
-    
+
+    def _has_recent_nutrition(self, product) -> bool:
+        """
+        Check if product has recent nutritional information.
+        
+        Args:
+            product: AsdaProduct instance
+            
+        Returns:
+            bool: True if has recent nutrition data
+        """
+        if not product.nutritional_info:
+            return False
+        
+        if not isinstance(product.nutritional_info, dict):
+            return False
+        
+        if not product.nutritional_info:
+            return False
+        
+        # Check if updated recently (within 7 days for BOTH crawl type)
+        from django.utils import timezone
+        seven_days_ago = timezone.now() - timezone.timedelta(days=7)
+        return product.updated_at and product.updated_at > seven_days_ago
+
+    def _extract_and_save_nutrition(self, product) -> bool:
+        """
+        Extract and save nutrition data for a single product.
+        
+        Args:
+            product: AsdaProduct instance
+            
+        Returns:
+            bool: True if nutrition data was successfully extracted and saved
+        """
+        try:
+            # Initialize nutrition extractor if not already available
+            if not hasattr(self, '_nutrition_extractor') or self._nutrition_extractor is None:
+                from .nutrition_extractor import NutritionExtractor
+                self._nutrition_extractor = NutritionExtractor(self.driver)
+                logger.info("🔬 Initialized nutrition extractor for BOTH crawl type")
+            
+            # Extract nutrition data
+            start_time = time.time()
+            nutrition_data = self._nutrition_extractor.extract_from_url(product.product_url)
+            extract_time = time.time() - start_time
+            
+            if nutrition_data and len(nutrition_data) > 0:
+                # Create enhanced nutrition data with metadata
+                from django.utils import timezone
+                enhanced_data = {
+                    'nutrition': nutrition_data,
+                    'extracted_at': timezone.now().isoformat(),
+                    'extraction_method': 'both_crawl_type',
+                    'data_count': len(nutrition_data),
+                    'extract_time': round(extract_time, 2)
+                }
+                
+                # Save to product
+                product.nutritional_info = enhanced_data
+                product.save(update_fields=['nutritional_info'])
+                
+                logger.info(f"💾 Saved {len(nutrition_data)} nutrition values (took {extract_time:.1f}s)")
+                return True
+            else:
+                logger.debug(f"⚠️ No nutrition data found (took {extract_time:.1f}s)")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error extracting nutrition for {product.name}: {e}")
+            return False
+
+    # Add this import at the top of the file if not already present
+    import time
+
+
+
+
+
+
     def _navigate_to_next_page(self) -> bool:
         """
         Navigate to the next page of products if pagination exists.
