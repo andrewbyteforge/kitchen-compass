@@ -650,7 +650,7 @@ class AsdaLinkCrawler:
             
             # Handle popups
             logger.info(f"[CHECK] Checking for popups...")
-            from .selenium_scraper import PopupHandler
+            from .scrapers.popup_handler import PopupHandler
             popup_handler = PopupHandler(self.driver)
             popup_handler.handle_popups()
             
@@ -731,8 +731,7 @@ class AsdaLinkCrawler:
 
     def _process_category_page(self, link_info, current_depth):
         """
-        Process a category/department page.
-        
+        Process a category page and extract products.
         Enhanced to ensure subcategory links are properly discovered and crawled.
         
         Args:
@@ -747,10 +746,11 @@ class AsdaLinkCrawler:
             logger.info(f"📂 Processing category page at depth {current_depth}: {url}")
             
             # Try to create/update category if it has a category code
+            category = None
             category_code = link_info.get('category_code')
             if category_code:
                 category_name = link_info.get('text', 'Unknown Category')
-                self._ensure_category_exists(category_code, category_name)
+                category = self._ensure_category_exists(category_code, category_name)
                 logger.info(f"✅ Created/updated category: {category_name} ({category_code})")
             
             # Discover links on this category page
@@ -765,13 +765,23 @@ class AsdaLinkCrawler:
                 if links:
                     logger.info(f"  - {link_type}: {len(links)} links")
             
-            # Process products on this page (if depth allows)
-            if current_depth < 3:  # Only extract products at reasonable depth
+            # Process products on this page (if depth allows and category exists)
+            products_found = 0
+            if current_depth < 3 and category:  # Only extract products at reasonable depth and if we have a category
                 logger.info(f"🛒 Extracting products from category page...")
-                products_found = self.scraper._extract_products_from_current_page_by_url(url)
+                
+                # Use the correct method name and pass the category object
+                if hasattr(self.scraper, 'product_extractor') and self.scraper.product_extractor:
+                    products_found = self.scraper.product_extractor._extract_products_from_current_page(category)
+                else:
+                    logger.warning("Product extractor not available")
+                    
                 logger.info(f"📦 Found {products_found} products on category page")
             else:
-                logger.info(f"⏭️ Skipping product extraction (depth {current_depth} >= 3)")
+                if current_depth >= 3:
+                    logger.info(f"⏭️ Skipping product extraction (depth {current_depth} >= 3)")
+                if not category:
+                    logger.info(f"⏭️ Skipping product extraction (no category object)")
             
             # Recursively crawl discovered links if depth allows
             if current_depth < 2:  # Limit recursion depth
@@ -780,29 +790,9 @@ class AsdaLinkCrawler:
                 # Prioritize subcategories first
                 subcategory_links = page_links.get('subcategories', [])
                 if subcategory_links:
-                    logger.info(f"🎯 Processing {len(subcategory_links)} subcategory links first...")
-                    for subcat_link in subcategory_links:
-                        logger.info(f"  ➡️ Following subcategory: {subcat_link['text']} - {subcat_link['url']}")
-                        self._crawl_single_link(subcat_link, current_depth + 1)
-                else:
-                    logger.warning(f"⚠️ No subcategory links found to follow on this category page")
-                
-                # Then process other category links
-                category_links = page_links.get('categories', [])
-                if category_links and current_depth < 1:
-                    logger.info(f"📂 Processing {len(category_links)} category links...")
-                    for cat_link in category_links[:5]:  # Limit to prevent too much recursion
-                        self._crawl_single_link(cat_link, current_depth + 1)
-                
-                # Process pagination if products were found
-                pagination_links = page_links.get('pagination', [])
-                if pagination_links and products_found > 0:
-                    logger.info(f"📄 Processing pagination links...")
-                    for page_link in pagination_links[:3]:  # Limit pagination depth
-                        if 'next' in page_link.get('text', '').lower():
-                            self._crawl_single_link(page_link, current_depth)  # Same depth for pagination
-            else:
-                logger.info(f"⏹️ Stopping recursion (depth {current_depth} >= 2)")
+                    logger.info(f"🗂️ Processing {len(subcategory_links)} subcategory links...")
+                    for subcategory_link in subcategory_links[:5]:  # Limit to prevent too much recursion
+                        self._crawl_single_link(subcategory_link, current_depth + 1)
             
             return True
             

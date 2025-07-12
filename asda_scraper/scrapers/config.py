@@ -316,6 +316,103 @@ DELAY_CONFIG = {
     'max_progressive_delay': 60.0     # NEW: Maximum progressive delay
 }
 
+# Add this code to the end of your asda_scraper/scrapers/config.py file
+# (Add it right before the validate_category_mapping function)
+
+# Fast Delay Configuration for Development/Testing
+FAST_DELAY_CONFIG = {
+    'between_categories': 5.0,        # Reduced from 60 to 5 seconds
+    'between_subcategories': 0.8,     # New: Fast subcategory navigation  
+    'between_pages': 0.5,             # Reduced from 3 to 0.5 seconds
+    'after_product_extraction': 0.3,  # Reduced from 2 to 0.3 seconds
+    'after_popup_handling': 0.2,      # Reduced from 1 to 0.2 seconds
+    'page_load_wait': 1.5,           # Reduced from 3 to 1.5 seconds
+    'element_wait': 5.0,             # Reduced from 10 to 5 seconds
+    'between_requests': 0.3,          # New: Fast general requests
+    'error_backoff_multiplier': 1.5,  # Reduced from 2.0
+    'max_error_delay': 10.0,          # Reduced from 30 to 10 seconds
+    'random_delay_min': 0.1,          # Reduced random component
+    'random_delay_max': 0.3,          # Reduced random component
+    'progressive_delay_factor': 1.2,   # Reduced from 1.5
+    'max_progressive_delay': 15.0      # Reduced from 60 to 15 seconds
+}
+
+# Enhanced DelayManager Configuration
+DELAY_MANAGER_CONFIG = {
+    'use_fast_delays': False,  # Set to True for development/testing
+    'adaptive_delays': True,   # Adjust delays based on response times
+    'respect_rate_limits': True,
+    'max_adaptive_delay': 10.0,
+    'min_adaptive_delay': 0.1
+}
+
+def use_fast_delays():
+    """
+    Switch to fast delays for development/testing.
+    
+    This reduces all delays significantly for faster crawling during development.
+    WARNING: Use with caution in production as it may trigger rate limiting.
+    """
+    global DELAY_CONFIG
+    logger.info("Switching to FAST delay configuration for development/testing")
+    DELAY_CONFIG.update(FAST_DELAY_CONFIG)
+    logger.info("Fast delays activated - crawling will be much faster but less polite")
+    
+def use_normal_delays():
+    """
+    Switch back to normal delays for production.
+    
+    This restores the original, more conservative delay settings.
+    """
+    global DELAY_CONFIG
+    logger.info("Switching to NORMAL delay configuration for production")
+    DELAY_CONFIG = {
+        'between_categories': 60.0,
+        'between_subcategories': 3.0,  # Add missing subcategory delay
+        'between_pages': 3.0,
+        'after_product_extraction': 2.0,
+        'after_popup_handling': 1.0,
+        'page_load_wait': 3.0,
+        'element_wait': 10.0,
+        'between_requests': 2.0,  # Add missing general request delay
+        'error_backoff_multiplier': 2.0,
+        'max_error_delay': 30.0,
+        'random_delay_min': 0.5,
+        'random_delay_max': 2.0,
+        'progressive_delay_factor': 1.5,
+        'max_progressive_delay': 60.0
+    }
+    logger.info("Normal delays restored - crawling will be more polite but slower")
+
+def get_delay_setting(delay_type: str, default: float = 2.0) -> float:
+    """
+    Get delay setting with fallback to default.
+    
+    Args:
+        delay_type: Type of delay to get
+        default: Default delay if not found
+        
+    Returns:
+        float: Delay in seconds
+    """
+    return DELAY_CONFIG.get(delay_type, default)
+
+# Auto-enable fast delays for development if DEBUG is True
+# Add this at the very end of the file (after all the functions)
+def auto_configure_delays():
+    """
+    Automatically configure delays based on environment.
+    """
+    try:
+        from django.conf import settings
+        if getattr(settings, 'DEBUG', False):
+            # We're in development mode - use faster delays
+            use_fast_delays()
+            logger.info("DEBUG mode detected - automatically enabled fast delays")
+    except ImportError:
+        # Django not available, use normal delays
+        logger.info("Django not available - using normal delays")
+
 # Logging Configuration
 LOGGING_CONFIG = {
     'version': 1,
