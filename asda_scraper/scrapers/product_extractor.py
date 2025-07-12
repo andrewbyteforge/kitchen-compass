@@ -1,5 +1,5 @@
 """
-Optimized Product extraction functionality for ASDA scraper - PRODUCT/PRICE ONLY.
+Optimized Product extraction functionality for ASDA scraper with BOTH support.
 
 File: asda_scraper/scrapers/product_extractor.py
 """
@@ -7,6 +7,7 @@ File: asda_scraper/scrapers/product_extractor.py
 import logging
 import time
 import re
+import signal
 from typing import Dict, List, Optional
 from urllib.parse import urljoin
 from selenium import webdriver
@@ -16,6 +17,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from bs4 import BeautifulSoup
 from django.db.models import F
+from django.utils import timezone
+
 from asda_scraper.models import AsdaCategory, AsdaProduct, CrawlSession
 from .models import ProductData
 from .popup_handler import PopupHandler
@@ -26,15 +29,15 @@ logger = logging.getLogger(__name__)
 
 class ProductExtractor:
     """
-    OPTIMIZED: Extracts ONLY product data and pricing from ASDA category pages.
+    Product extractor that supports both PRODUCT and BOTH crawl types.
     
-    This version SKIPS nutritional information extraction for maximum speed and reliability.
-    Use the separate NutritionCrawler for nutritional data.
+    - PRODUCT mode: Fast product and price extraction only
+    - BOTH mode: Products + conditional nutrition extraction
     """
     
     def __init__(self, driver: webdriver.Chrome, session: CrawlSession):
         """
-        Initialize product extractor with conditional nutrition support.
+        Initialize product extractor with crawl type awareness.
         
         Args:
             driver: Selenium WebDriver instance
@@ -44,11 +47,12 @@ class ProductExtractor:
         self.session = session
         self.base_url = "https://groceries.asda.com"
         self._parent_scraper = None  # Reference to parent scraper
-        self._nutrition_extractor = None  # Will be initialized if needed
+        self._nutrition_extractor = None  # Will be initialized if needed for BOTH mode
         
         # Log initialization mode
         if session.crawl_type == 'BOTH':
             logger.info("🔬 ProductExtractor initialized for BOTH mode (products + nutrition)")
+            logger.info("⚠️ Nutrition extraction will add delays - use separate crawler for best speed")
         else:
             logger.info("⚡ ProductExtractor initialized for PRODUCT mode (fast, no nutrition)")
         
@@ -331,15 +335,9 @@ class ProductExtractor:
         img_element = container.select_one('img.asda-img')
         return img_element.get('src', '') if img_element else ''
     
-    # Replace the _save_product_data method in asda_scraper/scrapers/product_extractor.py
-    # Starting around line 240
-
-    # Replace the _save_product_data method in asda_scraper/scrapers/product_extractor.py
-    # Revert to FAST mode - no nutrition extraction
-
     def _save_product_data(self, product_data: ProductData, category: AsdaCategory) -> bool:
         """
-        FAST MODE: Save product data to database WITHOUT nutrition extraction.
+        Save product data to database with CONDITIONAL nutrition extraction.
         
         Args:
             product_data: ProductData instance
@@ -385,8 +383,8 @@ class ProductExtractor:
                 
                 # Update all fields
                 for field in ['name', 'price', 'was_price', 'unit', 'description', 
-                            'image_url', 'product_url', 'in_stock', 'special_offer',
-                            'rating', 'review_count', 'price_per_unit']:
+                             'image_url', 'product_url', 'in_stock', 'special_offer',
+                             'rating', 'review_count', 'price_per_unit']:
                     value = getattr(product_data, field)
                     if value is not None:
                         setattr(product, field, value)
@@ -396,8 +394,21 @@ class ProductExtractor:
                 self.session.products_updated += 1
                 logger.info(f"🔄 Updated: {product.name[:50]} - £{product.price}")
             
-            # ⚡ FAST MODE: NO NUTRITION EXTRACTION
-            # Use separate nutrition crawler: python manage.py crawl_nutrition
+            # 🔥 CONDITIONAL NUTRITION EXTRACTION FOR "BOTH" CRAWL TYPE
+            if (self.session.crawl_type == 'BOTH' and 
+                product.product_url and 
+                not self._has_recent_nutrition(product) and
+                self._should_extract_nutrition(product)):
+                
+                logger.info(f"🔬 Extracting nutrition for: {product.name[:50]}...")
+                nutrition_success = self._extract_and_save_nutrition_fast(product)
+                
+                if nutrition_success:
+                    self.session.products_with_nutrition += 1
+                    logger.info(f"✅ Nutrition added for: {product.name[:50]}")
+                else:
+                    self.session.nutrition_errors += 1
+                    logger.debug(f"⚠️ No nutrition data for: {product.name[:50]}")
             
             self.session.save()
             
@@ -410,25 +421,33 @@ class ProductExtractor:
         except Exception as e:
             logger.error(f"Error saving product {product_data.name}: {e}")
             return False
-
-# Also update the __init__ method to be simpler
-def __init__(self, driver: webdriver.Chrome, session: CrawlSession):
-    """
-    Initialize product extractor for FAST product-only extraction.
     
-    Args:
-        driver: Selenium WebDriver instance
-        session: Current crawl session
-    """
-    self.driver = driver
-    self.session = session
-    self.base_url = "https://groceries.asda.com"
-    self._parent_scraper = None  # Reference to parent scraper
+    def _should_extract_nutrition(self, product) -> bool:
+        """
+        Check if we should attempt nutrition extraction for this product.
+        
+        Args:
+            product: AsdaProduct instance
+            
+        Returns:
+            bool: True if should extract nutrition
+        """
+        # Skip fresh produce (unlikely to have nutrition labels)
+        fresh_keywords = ['fruit', 'vegetable', 'fresh', 'flower', 'plant']
+        category_name = product.category.name.lower()
+        
+        if any(keyword in category_name for keyword in fresh_keywords):
+            logger.debug(f"Skipping nutrition for fresh produce: {product.name[:30]}")
+            return False
+        
+        # Focus on processed foods that likely have nutrition labels
+        processed_keywords = ['bakery', 'bread', 'chilled', 'frozen', 'cupboard', 'snack']
+        if any(keyword in category_name for keyword in processed_keywords):
+            return True
+        
+        # Default to trying extraction
+        return True
     
-    logger.info("⚡ ProductExtractor initialized for FAST MODE (products only)")
-    logger.info(f"🎯 Session ID: {session.pk}")
-    logger.info("💡 Use 'python manage.py crawl_nutrition' for nutrition data")
-
     def _has_recent_nutrition(self, product) -> bool:
         """
         Check if product has recent nutritional information.
@@ -449,13 +468,12 @@ def __init__(self, driver: webdriver.Chrome, session: CrawlSession):
             return False
         
         # Check if updated recently (within 7 days for BOTH crawl type)
-        from django.utils import timezone
         seven_days_ago = timezone.now() - timezone.timedelta(days=7)
         return product.updated_at and product.updated_at > seven_days_ago
-
-    def _extract_and_save_nutrition(self, product) -> bool:
+    
+    def _extract_and_save_nutrition_fast(self, product) -> bool:
         """
-        Extract and save nutrition data for a single product.
+        FAST nutrition extraction with timeout for BOTH crawl type.
         
         Args:
             product: AsdaProduct instance
@@ -468,20 +486,52 @@ def __init__(self, driver: webdriver.Chrome, session: CrawlSession):
             if not hasattr(self, '_nutrition_extractor') or self._nutrition_extractor is None:
                 from .nutrition_extractor import NutritionExtractor
                 self._nutrition_extractor = NutritionExtractor(self.driver)
-                logger.info("🔬 Initialized nutrition extractor for BOTH crawl type")
+                # Disable debug mode for speed
+                self._nutrition_extractor.debug_mode = False
+                logger.info("🔬 Initialized FAST nutrition extractor for BOTH crawl type")
             
-            # Extract nutrition data
+            # Custom timeout exception for Windows compatibility
+            class TimeoutError(Exception):
+                pass
+            
+            def timeout_handler(signum, frame):
+                raise TimeoutError("Nutrition extraction timeout")
+            
+            # Extract nutrition data with 10-second timeout
             start_time = time.time()
-            nutrition_data = self._nutrition_extractor.extract_from_url(product.product_url)
+            nutrition_data = None
+            
+            try:
+                # Only use signal on Unix-like systems
+                if hasattr(signal, 'SIGALRM'):
+                    signal.signal(signal.SIGALRM, timeout_handler)
+                    signal.alarm(10)  # 10-second timeout
+                
+                nutrition_data = self._nutrition_extractor.extract_from_url(product.product_url)
+                
+                if hasattr(signal, 'SIGALRM'):
+                    signal.alarm(0)  # Cancel alarm
+                    
+            except TimeoutError:
+                logger.debug(f"⏰ Nutrition extraction timeout for: {product.name[:30]}")
+                return False
+            except Exception as e:
+                logger.debug(f"⚠️ Nutrition extraction error for {product.name[:30]}: {e}")
+                return False
+            
             extract_time = time.time() - start_time
+            
+            # Timeout check for Windows (fallback)
+            if extract_time > 15:  # 15 seconds max
+                logger.debug(f"⏰ Nutrition extraction took too long ({extract_time:.1f}s) for: {product.name[:30]}")
+                return False
             
             if nutrition_data and len(nutrition_data) > 0:
                 # Create enhanced nutrition data with metadata
-                from django.utils import timezone
                 enhanced_data = {
                     'nutrition': nutrition_data,
                     'extracted_at': timezone.now().isoformat(),
-                    'extraction_method': 'both_crawl_type',
+                    'extraction_method': 'both_crawl_fast',
                     'data_count': len(nutrition_data),
                     'extract_time': round(extract_time, 2)
                 }
@@ -490,7 +540,7 @@ def __init__(self, driver: webdriver.Chrome, session: CrawlSession):
                 product.nutritional_info = enhanced_data
                 product.save(update_fields=['nutritional_info'])
                 
-                logger.info(f"💾 Saved {len(nutrition_data)} nutrition values (took {extract_time:.1f}s)")
+                logger.debug(f"💾 Saved {len(nutrition_data)} nutrition values (took {extract_time:.1f}s)")
                 return True
             else:
                 logger.debug(f"⚠️ No nutrition data found (took {extract_time:.1f}s)")
@@ -499,15 +549,7 @@ def __init__(self, driver: webdriver.Chrome, session: CrawlSession):
         except Exception as e:
             logger.error(f"❌ Error extracting nutrition for {product.name}: {e}")
             return False
-
-    # Add this import at the top of the file if not already present
-    import time
-
-
-
-
-
-
+    
     def _navigate_to_next_page(self) -> bool:
         """
         Navigate to the next page of products if pagination exists.
