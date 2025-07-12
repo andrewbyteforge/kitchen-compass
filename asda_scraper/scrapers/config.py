@@ -1,23 +1,52 @@
 """
-Configuration settings for ASDA scraper.
+Configuration settings for ASDA scraper with intelligent speed optimizations.
+
+This module provides all configuration settings for the ASDA web scraper,
+including category mappings, delay management, selenium settings, and automatic
+speed optimization based on environment detection.
 
 File: asda_scraper/scrapers/config.py
 """
 
 import logging
+import os
+from typing import Dict, List, Any, Optional
+from pathlib import Path
 
+# Initialize logger
 logger = logging.getLogger(__name__)
 
-# ASDA Category mappings with real category codes - COMPREHENSIVE UPDATE
+# =============================================================================
+# SPEED MODE CONFIGURATION - Automatically detects environment
+# =============================================================================
+
+# Speed mode detection
+DEVELOPMENT_MODE_DETECTED = False
+try:
+    from django.conf import settings
+    DEVELOPMENT_MODE_DETECTED = getattr(settings, 'DEBUG', True)
+    logger.info(f"Django detected - DEBUG mode: {DEVELOPMENT_MODE_DETECTED}")
+except ImportError:
+    # No Django available, assume development for faster defaults
+    DEVELOPMENT_MODE_DETECTED = True
+    logger.info("No Django detected - defaulting to development mode for speed")
+
+# =============================================================================
+# ASDA CATEGORY MAPPINGS - Comprehensive and Organized
+# =============================================================================
+
 ASDA_CATEGORY_MAPPINGS = {
-    # Primary Food Categories
+    # =========================================================================
+    # PRIORITY 1 - ESSENTIAL FOOD CATEGORIES (Primary targets)
+    # =========================================================================
     '1215686352935': {
         'name': 'Fruit, Veg & Flowers',
         'slug': 'fruit-veg-flowers',
         'priority': 1,
         'keywords': ['fruit', 'vegetable', 'veg', 'salad', 'herbs'],
         'subcategory_expected': True,
-        'max_pages': 8
+        'max_pages': 8,
+        'estimated_products': 400
     },
     '1215135760597': {
         'name': 'Meat, Poultry & Fish',
@@ -25,17 +54,57 @@ ASDA_CATEGORY_MAPPINGS = {
         'priority': 1,
         'keywords': ['chicken', 'beef', 'pork', 'lamb', 'fish', 'salmon'],
         'subcategory_expected': True,
-        'max_pages': 10
+        'max_pages': 10,
+        'estimated_products': 500
+    },
+    '1215660378320': {
+        'name': 'Chilled Food',
+        'slug': 'chilled-food',
+        'priority': 1,
+        'keywords': ['milk', 'cheese', 'yogurt', 'butter', 'cream'],
+        'subcategory_expected': True,
+        'max_pages': 12,
+        'estimated_products': 600
+    },
+    '1215338621416': {
+        'name': 'Frozen Food',
+        'slug': 'frozen-food',
+        'priority': 1,
+        'keywords': ['frozen', 'ice cream', 'frozen vegetables'],
+        'subcategory_expected': True,
+        'max_pages': 8,
+        'estimated_products': 400
+    },
+    '1215337189632': {
+        'name': 'Food Cupboard',
+        'slug': 'food-cupboard',
+        'priority': 1,
+        'keywords': ['pasta', 'rice', 'sauce', 'tin', 'jar'],
+        'subcategory_expected': True,
+        'max_pages': 15,
+        'estimated_products': 750
+    },
+    '1215686355606': {
+        'name': 'Dietary & Lifestyle',
+        'slug': 'dietary-lifestyle',
+        'priority': 1,
+        'keywords': ['gluten free', 'vegan', 'organic', 'free from'],
+        'subcategory_expected': True,
+        'max_pages': 8,
+        'estimated_products': 400
     },
     
-    # BAKERY SECTION - Main and Essential Subcategories
+    # =========================================================================
+    # BAKERY SECTION - Complete hierarchy
+    # =========================================================================
     '1215686354843': {
         'name': 'Bakery',
         'slug': 'bakery',
         'priority': 1,
         'keywords': ['bread', 'roll', 'cake', 'pastry', 'croissant'],
         'subcategory_expected': True,
-        'max_pages': 6
+        'max_pages': 6,
+        'estimated_products': 300
     },
     # Essential Bread Categories
     '1215686354871': {
@@ -44,7 +113,8 @@ ASDA_CATEGORY_MAPPINGS = {
         'priority': 2,
         'keywords': ['bread', 'loaf'],
         'subcategory_expected': False,
-        'max_pages': 4
+        'max_pages': 4,
+        'estimated_products': 100
     },
     '1215686354865': {
         'name': 'Bread & Rolls',
@@ -52,7 +122,8 @@ ASDA_CATEGORY_MAPPINGS = {
         'priority': 2,
         'keywords': ['bread', 'roll'],
         'subcategory_expected': False,
-        'max_pages': 4
+        'max_pages': 4,
+        'estimated_products': 120
     },
     '1215686354872': {
         'name': 'Bread Rolls',
@@ -60,17 +131,8 @@ ASDA_CATEGORY_MAPPINGS = {
         'priority': 3,
         'keywords': ['roll', 'bun'],
         'subcategory_expected': False,
-        'max_pages': 3
-    },
-    # Bagels and similar
-    '1215686354876': {
-        'name': 'Bagels',
-        'slug': 'bakery',
-        'priority': 3,  # Lower priority since it's getting wrong results
-        'keywords': ['bagel', 'breakfast', 'bread'],
-        'subcategory_expected': False,
-        'max_pages': 2,
-        'skip_validation': True  # Skip this category for now
+        'max_pages': 3,
+        'estimated_products': 80
     },
     '1215675037025': {
         'name': 'Baguettes',
@@ -78,7 +140,8 @@ ASDA_CATEGORY_MAPPINGS = {
         'priority': 3,
         'keywords': ['baguette', 'french bread'],
         'subcategory_expected': False,
-        'max_pages': 2
+        'max_pages': 2,
+        'estimated_products': 40
     },
     # Essential Cake Categories
     '1215686354851': {
@@ -87,7 +150,8 @@ ASDA_CATEGORY_MAPPINGS = {
         'priority': 2,
         'keywords': ['cake', 'sponge'],
         'subcategory_expected': False,
-        'max_pages': 5
+        'max_pages': 5,
+        'estimated_products': 150
     },
     '1215686354898': {
         'name': 'Loaf Cakes',
@@ -95,7 +159,8 @@ ASDA_CATEGORY_MAPPINGS = {
         'priority': 3,
         'keywords': ['cake', 'loaf cake'],
         'subcategory_expected': False,
-        'max_pages': 3
+        'max_pages': 3,
+        'estimated_products': 80
     },
     # Specialty Bread
     '1215686354878': {
@@ -104,7 +169,8 @@ ASDA_CATEGORY_MAPPINGS = {
         'priority': 3,
         'keywords': ['naan', 'indian bread'],
         'subcategory_expected': False,
-        'max_pages': 2
+        'max_pages': 2,
+        'estimated_products': 30
     },
     '1215686354879': {
         'name': 'Pitta Bread & Flatbread',
@@ -112,7 +178,8 @@ ASDA_CATEGORY_MAPPINGS = {
         'priority': 3,
         'keywords': ['pitta', 'flatbread'],
         'subcategory_expected': False,
-        'max_pages': 2
+        'max_pages': 2,
+        'estimated_products': 40
     },
     '1215686354875': {
         'name': 'Wraps',
@@ -120,47 +187,32 @@ ASDA_CATEGORY_MAPPINGS = {
         'priority': 3,
         'keywords': ['wrap', 'tortilla'],
         'subcategory_expected': False,
-        'max_pages': 3
+        'max_pages': 3,
+        'estimated_products': 60
     },
-    '1215660378320': {
-        'name': 'Chilled Food',
-        'slug': 'chilled-food',
-        'priority': 1,
-        'keywords': ['milk', 'cheese', 'yogurt', 'butter', 'cream'],
-        'subcategory_expected': True,
-        'max_pages': 12
+    # Problematic category - skip for now
+    '1215686354876': {
+        'name': 'Bagels',
+        'slug': 'bakery',
+        'priority': 3,
+        'keywords': ['bagel', 'breakfast', 'bread'],
+        'subcategory_expected': False,
+        'max_pages': 2,
+        'skip_validation': True,  # Skip this category for now
+        'estimated_products': 30
     },
-    '1215338621416': {
-        'name': 'Frozen Food',
-        'slug': 'frozen-food',
-        'priority': 1,
-        'keywords': ['frozen', 'ice cream', 'frozen vegetables'],
-        'subcategory_expected': True,
-        'max_pages': 8
-    },
-    '1215337189632': {
-        'name': 'Food Cupboard',
-        'slug': 'food-cupboard',
-        'priority': 1,
-        'keywords': ['pasta', 'rice', 'sauce', 'tin', 'jar'],
-        'subcategory_expected': True,
-        'max_pages': 15
-    },
+    
+    # =========================================================================
+    # PRIORITY 2 - SECONDARY CATEGORIES
+    # =========================================================================
     '1215686356579': {
         'name': 'Sweets, Treats & Snacks',
         'slug': 'sweets-treats-snacks',
         'priority': 2,
         'keywords': ['chocolate', 'sweet', 'snack', 'crisp'],
         'subcategory_expected': True,
-        'max_pages': 10
-    },
-    '1215686355606': {
-        'name': 'Dietary & Lifestyle',
-        'slug': 'dietary-lifestyle',
-        'priority': 1,
-        'keywords': ['gluten free', 'vegan', 'organic', 'free from'],
-        'subcategory_expected': True,
-        'max_pages': 8
+        'max_pages': 10,
+        'estimated_products': 500
     },
     '1215135760614': {
         'name': 'Drinks',
@@ -168,15 +220,8 @@ ASDA_CATEGORY_MAPPINGS = {
         'priority': 2,
         'keywords': ['water', 'juice', 'soft drink', 'tea', 'coffee'],
         'subcategory_expected': True,
-        'max_pages': 10
-    },
-    '1215685911554': {
-        'name': 'Beer, Wine & Spirits',
-        'slug': 'beer-wine-spirits',
-        'priority': 3,
-        'keywords': ['beer', 'wine', 'spirits', 'alcohol'],
-        'subcategory_expected': True,
-        'max_pages': 12
+        'max_pages': 10,
+        'estimated_products': 500
     },
     '1215686351451': {
         'name': 'World Food',
@@ -184,11 +229,94 @@ ASDA_CATEGORY_MAPPINGS = {
         'priority': 2,
         'keywords': ['asian', 'indian', 'mexican', 'italian', 'chinese'],
         'subcategory_expected': True,
-        'max_pages': 8
+        'max_pages': 8,
+        'estimated_products': 400
+    },
+    
+    # =========================================================================
+    # PRIORITY 3 - OPTIONAL CATEGORIES
+    # =========================================================================
+    '1215685911554': {
+        'name': 'Beer, Wine & Spirits',
+        'slug': 'beer-wine-spirits',
+        'priority': 3,
+        'keywords': ['beer', 'wine', 'spirits', 'alcohol'],
+        'subcategory_expected': True,
+        'max_pages': 12,
+        'estimated_products': 600
     }
 }
 
-# Enhanced Selenium WebDriver Configuration
+# =============================================================================
+# INTELLIGENT DELAY CONFIGURATION - Auto-optimizes based on environment
+# =============================================================================
+
+# Production delays (conservative, respectful)
+PRODUCTION_DELAY_CONFIG = {
+    'between_categories': 60.0,       # 1 minute between categories
+    'between_subcategories': 3.0,     # 3 seconds between subcategories
+    'between_pages': 3.0,             # 3 seconds between pages
+    'after_product_extraction': 2.0,  # 2 seconds after extracting products
+    'after_popup_handling': 1.0,      # 1 second after handling popups
+    'page_load_wait': 3.0,           # 3 seconds for page to load
+    'element_wait': 10.0,            # 10 seconds to wait for elements
+    'between_requests': 2.0,          # 2 seconds between general requests
+    'error_backoff_multiplier': 2.0,  # Multiply delay by this on errors
+    'max_error_delay': 30.0,          # Maximum delay for error backoff
+    'random_delay_min': 0.5,          # Minimum random delay
+    'random_delay_max': 2.0,          # Maximum random delay
+    'progressive_delay_factor': 1.5,   # Progressive delay factor
+    'max_progressive_delay': 60.0      # Maximum progressive delay
+}
+
+# Development delays (fast, for testing)
+DEVELOPMENT_DELAY_CONFIG = {
+    'between_categories': 2.0,        # 2 seconds between categories (97% faster)
+    'between_subcategories': 0.5,     # 0.5 seconds between subcategories
+    'between_pages': 0.3,             # 0.3 seconds between pages (90% faster)
+    'after_product_extraction': 0.2,  # 0.2 seconds after extracting
+    'after_popup_handling': 0.1,      # 0.1 seconds after popup handling
+    'page_load_wait': 1.0,           # 1 second for page load (67% faster)
+    'element_wait': 3.0,             # 3 seconds to wait for elements (70% faster)
+    'between_requests': 0.2,          # 0.2 seconds between requests
+    'error_backoff_multiplier': 1.2,  # Minimal backoff multiplier
+    'max_error_delay': 5.0,           # 5 seconds max error delay (83% faster)
+    'random_delay_min': 0.05,         # Minimal random delay
+    'random_delay_max': 0.15,         # Minimal random delay
+    'progressive_delay_factor': 1.1,   # Minimal progressive factor
+    'max_progressive_delay': 8.0       # 8 seconds max progressive delay
+}
+
+# Ultra-fast delays (for testing only - may trigger rate limiting)
+ULTRA_FAST_DELAY_CONFIG = {
+    'between_categories': 0.5,        # 0.5 seconds between categories
+    'between_subcategories': 0.2,     # 0.2 seconds between subcategories
+    'between_pages': 0.1,             # 0.1 seconds between pages
+    'after_product_extraction': 0.05, # 0.05 seconds after extracting
+    'after_popup_handling': 0.05,     # 0.05 seconds after popup handling
+    'page_load_wait': 0.5,           # 0.5 seconds for page load
+    'element_wait': 1.0,             # 1 second to wait for elements
+    'between_requests': 0.1,          # 0.1 seconds between requests
+    'error_backoff_multiplier': 1.1,  # Minimal backoff multiplier
+    'max_error_delay': 2.0,           # 2 seconds max error delay
+    'random_delay_min': 0.01,         # Minimal random delay
+    'random_delay_max': 0.05,         # Minimal random delay
+    'progressive_delay_factor': 1.05,  # Minimal progressive factor
+    'max_progressive_delay': 3.0       # 3 seconds max progressive delay
+}
+
+# Set initial delay configuration based on environment
+if DEVELOPMENT_MODE_DETECTED:
+    DELAY_CONFIG = DEVELOPMENT_DELAY_CONFIG.copy()
+    logger.info("🚀 DEVELOPMENT MODE: Fast delays activated automatically")
+else:
+    DELAY_CONFIG = PRODUCTION_DELAY_CONFIG.copy()
+    logger.info("🐌 PRODUCTION MODE: Conservative delays activated")
+
+# =============================================================================
+# SELENIUM WEBDRIVER CONFIGURATION - Optimized
+# =============================================================================
+
 SELENIUM_CONFIG = {
     'user_agents': [
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -196,9 +324,10 @@ SELENIUM_CONFIG = {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0',
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     ],
-    'default_timeout': 15,
-    'page_load_timeout': 30,
-    'implicit_wait': 5,
+    # Optimized timeouts based on mode
+    'default_timeout': 8 if DEVELOPMENT_MODE_DETECTED else 15,
+    'page_load_timeout': 15 if DEVELOPMENT_MODE_DETECTED else 30,
+    'implicit_wait': 2 if DEVELOPMENT_MODE_DETECTED else 5,
     'window_sizes': ['1920,1080', '1366,768', '1536,864'],
     'viewport_randomization': True,
     'disable_blink_features': 'AutomationControlled',
@@ -212,17 +341,22 @@ SELENIUM_CONFIG = {
     }
 }
 
-# Enhanced General Scraper Settings
+# =============================================================================
+# SCRAPER SETTINGS - Performance optimized
+# =============================================================================
+
 SCRAPER_SETTINGS = {
     'max_pages_per_category': 10,
-    'max_retries': 5,
-    'retry_delay': 3.0,
+    # Optimized retry settings based on mode
+    'max_retries': 3 if DEVELOPMENT_MODE_DETECTED else 5,
+    'retry_delay': 1.0 if DEVELOPMENT_MODE_DETECTED else 3.0,
     'exponential_backoff': True,
-    'request_timeout': 30,
-    'connection_timeout': 10,
-    'scroll_pause_time': 2.0,
-    'popup_check_delay': 2.0,
-    'max_popup_attempts': 3,
+    # Optimized timeout settings
+    'request_timeout': 15 if DEVELOPMENT_MODE_DETECTED else 30,
+    'connection_timeout': 5 if DEVELOPMENT_MODE_DETECTED else 10,
+    'scroll_pause_time': 0.5 if DEVELOPMENT_MODE_DETECTED else 2.0,
+    'popup_check_delay': 0.5 if DEVELOPMENT_MODE_DETECTED else 2.0,
+    'max_popup_attempts': 2 if DEVELOPMENT_MODE_DETECTED else 3,
     'rate_limit_indicators': [
         'rate limit',
         'too many requests',
@@ -230,17 +364,20 @@ SCRAPER_SETTINGS = {
         'temporarily unavailable',
         'access denied'
     ],
-    'session_rotation_interval': 100,
-    'max_consecutive_errors': 10,
+    'session_rotation_interval': 200 if DEVELOPMENT_MODE_DETECTED else 100,
+    'max_consecutive_errors': 15 if DEVELOPMENT_MODE_DETECTED else 10,
     'enable_javascript': True,
     'enable_cookies': True,
     'cookie_persistence': True,
-    'category_validation_enabled': True,  # NEW: Enable category validation
-    'require_active_categories': True,    # NEW: Require categories to be active
-    'skip_invalid_categories': True       # NEW: Skip categories that return 404/errors
+    'category_validation_enabled': True,
+    'require_active_categories': True,
+    'skip_invalid_categories': True
 }
 
-# Enhanced Product Extraction Configuration
+# =============================================================================
+# PRODUCT EXTRACTION CONFIGURATION
+# =============================================================================
+
 PRODUCT_EXTRACTION_CONFIG = {
     'selectors': {
         # Updated selectors for current ASDA website structure
@@ -300,120 +437,10 @@ PRODUCT_EXTRACTION_CONFIG = {
     }
 }
 
-# Delay Configuration
-DELAY_CONFIG = {
-    'between_categories': 60.0,      # 60 seconds between main categories
-    'between_pages': 3.0,            # 3 seconds between pages
-    'after_product_extraction': 2.0, # 2 seconds after extracting products
-    'after_popup_handling': 1.0,     # 1 second after handling popups
-    'page_load_wait': 3.0,          # 3 seconds for page to load
-    'element_wait': 10.0,           # 10 seconds to wait for elements
-    'error_backoff_multiplier': 2.0, # Multiply delay by this on errors
-    'max_error_delay': 30.0,         # Maximum delay for error backoff
-    'random_delay_min': 0.5,         # NEW: Minimum random delay
-    'random_delay_max': 2.0,         # NEW: Maximum random delay
-    'progressive_delay_factor': 1.5,  # NEW: Progressive delay factor
-    'max_progressive_delay': 60.0     # NEW: Maximum progressive delay
-}
+# =============================================================================
+# LOGGING CONFIGURATION
+# =============================================================================
 
-# Add this code to the end of your asda_scraper/scrapers/config.py file
-# (Add it right before the validate_category_mapping function)
-
-# Fast Delay Configuration for Development/Testing
-FAST_DELAY_CONFIG = {
-    'between_categories': 5.0,        # Reduced from 60 to 5 seconds
-    'between_subcategories': 0.8,     # New: Fast subcategory navigation  
-    'between_pages': 0.5,             # Reduced from 3 to 0.5 seconds
-    'after_product_extraction': 0.3,  # Reduced from 2 to 0.3 seconds
-    'after_popup_handling': 0.2,      # Reduced from 1 to 0.2 seconds
-    'page_load_wait': 1.5,           # Reduced from 3 to 1.5 seconds
-    'element_wait': 5.0,             # Reduced from 10 to 5 seconds
-    'between_requests': 0.3,          # New: Fast general requests
-    'error_backoff_multiplier': 1.5,  # Reduced from 2.0
-    'max_error_delay': 10.0,          # Reduced from 30 to 10 seconds
-    'random_delay_min': 0.1,          # Reduced random component
-    'random_delay_max': 0.3,          # Reduced random component
-    'progressive_delay_factor': 1.2,   # Reduced from 1.5
-    'max_progressive_delay': 15.0      # Reduced from 60 to 15 seconds
-}
-
-# Enhanced DelayManager Configuration
-DELAY_MANAGER_CONFIG = {
-    'use_fast_delays': False,  # Set to True for development/testing
-    'adaptive_delays': True,   # Adjust delays based on response times
-    'respect_rate_limits': True,
-    'max_adaptive_delay': 10.0,
-    'min_adaptive_delay': 0.1
-}
-
-def use_fast_delays():
-    """
-    Switch to fast delays for development/testing.
-    
-    This reduces all delays significantly for faster crawling during development.
-    WARNING: Use with caution in production as it may trigger rate limiting.
-    """
-    global DELAY_CONFIG
-    logger.info("Switching to FAST delay configuration for development/testing")
-    DELAY_CONFIG.update(FAST_DELAY_CONFIG)
-    logger.info("Fast delays activated - crawling will be much faster but less polite")
-    
-def use_normal_delays():
-    """
-    Switch back to normal delays for production.
-    
-    This restores the original, more conservative delay settings.
-    """
-    global DELAY_CONFIG
-    logger.info("Switching to NORMAL delay configuration for production")
-    DELAY_CONFIG = {
-        'between_categories': 60.0,
-        'between_subcategories': 3.0,  # Add missing subcategory delay
-        'between_pages': 3.0,
-        'after_product_extraction': 2.0,
-        'after_popup_handling': 1.0,
-        'page_load_wait': 3.0,
-        'element_wait': 10.0,
-        'between_requests': 2.0,  # Add missing general request delay
-        'error_backoff_multiplier': 2.0,
-        'max_error_delay': 30.0,
-        'random_delay_min': 0.5,
-        'random_delay_max': 2.0,
-        'progressive_delay_factor': 1.5,
-        'max_progressive_delay': 60.0
-    }
-    logger.info("Normal delays restored - crawling will be more polite but slower")
-
-def get_delay_setting(delay_type: str, default: float = 2.0) -> float:
-    """
-    Get delay setting with fallback to default.
-    
-    Args:
-        delay_type: Type of delay to get
-        default: Default delay if not found
-        
-    Returns:
-        float: Delay in seconds
-    """
-    return DELAY_CONFIG.get(delay_type, default)
-
-# Auto-enable fast delays for development if DEBUG is True
-# Add this at the very end of the file (after all the functions)
-def auto_configure_delays():
-    """
-    Automatically configure delays based on environment.
-    """
-    try:
-        from django.conf import settings
-        if getattr(settings, 'DEBUG', False):
-            # We're in development mode - use faster delays
-            use_fast_delays()
-            logger.info("DEBUG mode detected - automatically enabled fast delays")
-    except ImportError:
-        # Django not available, use normal delays
-        logger.info("Django not available - using normal delays")
-
-# Logging Configuration
 LOGGING_CONFIG = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -453,6 +480,151 @@ LOGGING_CONFIG = {
     }
 }
 
+# =============================================================================
+# DYNAMIC SPEED CONTROL FUNCTIONS
+# =============================================================================
+
+def switch_to_production_mode():
+    """
+    Switch to production mode with conservative delays.
+    
+    Use this when deploying to production or when you want to be
+    respectful to the target website.
+    """
+    global DELAY_CONFIG, SELENIUM_CONFIG, SCRAPER_SETTINGS
+    
+    logger.info("🐌 SWITCHING TO PRODUCTION MODE")
+    DELAY_CONFIG.update(PRODUCTION_DELAY_CONFIG)
+    
+    # Update timeouts for production
+    SELENIUM_CONFIG.update({
+        'default_timeout': 15,
+        'page_load_timeout': 30,
+        'implicit_wait': 5
+    })
+    
+    SCRAPER_SETTINGS.update({
+        'max_retries': 5,
+        'retry_delay': 3.0,
+        'request_timeout': 30,
+        'connection_timeout': 10,
+        'scroll_pause_time': 2.0,
+        'popup_check_delay': 2.0,
+        'max_popup_attempts': 3,
+        'session_rotation_interval': 100,
+        'max_consecutive_errors': 10
+    })
+    
+    logger.info("✅ Production mode activated - conservative settings")
+    _log_speed_summary()
+
+def switch_to_development_mode():
+    """
+    Switch to development mode with fast delays.
+    
+    Use this for development, testing, or when you need faster crawling.
+    """
+    global DELAY_CONFIG, SELENIUM_CONFIG, SCRAPER_SETTINGS
+    
+    logger.info("🚀 SWITCHING TO DEVELOPMENT MODE")
+    DELAY_CONFIG.update(DEVELOPMENT_DELAY_CONFIG)
+    
+    # Update timeouts for development
+    SELENIUM_CONFIG.update({
+        'default_timeout': 8,
+        'page_load_timeout': 15,
+        'implicit_wait': 2
+    })
+    
+    SCRAPER_SETTINGS.update({
+        'max_retries': 3,
+        'retry_delay': 1.0,
+        'request_timeout': 15,
+        'connection_timeout': 5,
+        'scroll_pause_time': 0.5,
+        'popup_check_delay': 0.5,
+        'max_popup_attempts': 2,
+        'session_rotation_interval': 200,
+        'max_consecutive_errors': 15
+    })
+    
+    logger.info("✅ Development mode activated - fast settings")
+    _log_speed_summary()
+
+def switch_to_ultra_fast_mode():
+    """
+    Switch to ultra-fast mode for testing only.
+    
+    WARNING: This may trigger rate limiting! Use only for testing
+    with a small number of categories.
+    """
+    global DELAY_CONFIG
+    
+    logger.warning("⚡ SWITCHING TO ULTRA-FAST MODE")
+    logger.warning("⚠️  WARNING: This may trigger rate limiting!")
+    
+    DELAY_CONFIG.update(ULTRA_FAST_DELAY_CONFIG)
+    
+    logger.warning("✅ Ultra-fast mode activated - maximum speed!")
+    _log_speed_summary()
+
+def get_delay_setting(delay_type: str, default: float = 2.0) -> float:
+    """
+    Get delay setting with fallback to default.
+    
+    Args:
+        delay_type: Type of delay from DELAY_CONFIG
+        default: Default delay if not found
+        
+    Returns:
+        float: Delay in seconds
+    """
+    return DELAY_CONFIG.get(delay_type, default)
+
+def _log_speed_summary():
+    """
+    Log a summary of current speed settings.
+    """
+    category_delay = DELAY_CONFIG['between_categories']
+    page_delay = DELAY_CONFIG['between_pages']
+    element_wait = DELAY_CONFIG['element_wait']
+    
+    logger.info("=== CURRENT SPEED SETTINGS ===")
+    logger.info(f"Between categories: {category_delay}s")
+    logger.info(f"Between pages: {page_delay}s") 
+    logger.info(f"Element wait: {element_wait}s")
+    
+    # Estimate time for 10 categories with 5 pages each
+    estimated_time = (category_delay * 10) + (page_delay * 50) + (element_wait * 50)
+    logger.info(f"Estimated time for 10 categories: {estimated_time/60:.1f} minutes")
+    
+    if category_delay > 10:
+        logger.warning("⚠️  Slow mode active - consider switching to development mode for faster crawling")
+    else:
+        logger.info("✅ Fast mode active")
+
+def verify_speed_optimization():
+    """
+    Verify that speed optimizations are working correctly.
+    """
+    logger.info("=== SPEED OPTIMIZATION VERIFICATION ===")
+    
+    mode = "DEVELOPMENT" if DEVELOPMENT_MODE_DETECTED else "PRODUCTION"
+    logger.info(f"Environment mode: {mode}")
+    
+    _log_speed_summary()
+    
+    # Check if delays are reasonable
+    if DELAY_CONFIG['between_categories'] > 30:
+        logger.warning("⚠️  Category delays are very high - consider using switch_to_development_mode()")
+    elif DELAY_CONFIG['between_categories'] > 10:
+        logger.warning("⚠️  Category delays are high - this will be slow")
+    else:
+        logger.info("✅ Category delays are optimized for speed")
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
 
 def validate_category_mapping(url_code: str) -> bool:
     """
@@ -470,7 +642,6 @@ def validate_category_mapping(url_code: str) -> bool:
         logger.error(f"Error validating category mapping for {url_code}: {e}")
         return False
 
-
 def get_category_info(url_code: str) -> dict:
     """
     Get category information for a given URL code.
@@ -486,7 +657,6 @@ def get_category_info(url_code: str) -> dict:
     except Exception as e:
         logger.error(f"Error getting category info for {url_code}: {e}")
         return {}
-
 
 def get_selector_fallbacks(selector_type: str) -> list:
     """
@@ -504,3 +674,71 @@ def get_selector_fallbacks(selector_type: str) -> list:
     except Exception as e:
         logger.error(f"Error getting selector fallbacks for {selector_type}: {e}")
         return []
+
+def get_priority_categories(max_priority: int = 2) -> Dict[str, dict]:
+    """
+    Get categories up to a certain priority level.
+    
+    Args:
+        max_priority: Maximum priority level to include (1=highest, 3=lowest)
+        
+    Returns:
+        dict: Filtered category mappings
+    """
+    return {
+        code: info for code, info in ASDA_CATEGORY_MAPPINGS.items()
+        if info.get('priority', 3) <= max_priority
+    }
+
+def estimate_crawl_time(categories: Optional[Dict[str, dict]] = None) -> float:
+    """
+    Estimate total crawl time based on current delay settings.
+    
+    Args:
+        categories: Category mappings to estimate for (default: all priority 1-2)
+        
+    Returns:
+        float: Estimated time in minutes
+    """
+    if categories is None:
+        categories = get_priority_categories(max_priority=2)
+    
+    total_time = 0
+    category_delay = DELAY_CONFIG['between_categories']
+    page_delay = DELAY_CONFIG['between_pages']
+    
+    for code, info in categories.items():
+        max_pages = info.get('max_pages', 5)
+        total_time += category_delay  # Time between categories
+        total_time += (page_delay * max_pages)  # Time for pages
+    
+    return total_time / 60  # Convert to minutes
+
+# =============================================================================
+# AUTO-INITIALIZATION
+# =============================================================================
+
+# Log initial configuration
+logger.info("=== ASDA SCRAPER CONFIG INITIALIZED ===")
+logger.info(f"Environment: {'DEVELOPMENT' if DEVELOPMENT_MODE_DETECTED else 'PRODUCTION'}")
+logger.info(f"Total categories configured: {len(ASDA_CATEGORY_MAPPINGS)}")
+logger.info(f"Priority 1 categories: {len(get_priority_categories(1))}")
+logger.info(f"Priority 1-2 categories: {len(get_priority_categories(2))}")
+
+# Verify speed settings on import
+verify_speed_optimization()
+
+# Estimate crawl time
+estimated_time = estimate_crawl_time()
+logger.info(f"Estimated crawl time for priority 1-2 categories: {estimated_time:.1f} minutes")
+
+logger.info("=== CONFIG READY ===")
+
+# =============================================================================
+# LEGACY COMPATIBILITY
+# =============================================================================
+
+# Keep old function names for backward compatibility
+use_fast_delays = switch_to_development_mode
+use_normal_delays = switch_to_production_mode
+auto_configure_delays = verify_speed_optimization

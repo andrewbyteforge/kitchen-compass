@@ -729,6 +729,9 @@ class AsdaLinkCrawler:
 
 
 
+    # In asda_scraper/asda_link_crawler.py
+    # Find the _process_category_page method and replace it with this:
+
     def _process_category_page(self, link_info, current_depth):
         """
         Process a category page and extract products.
@@ -770,13 +773,21 @@ class AsdaLinkCrawler:
             if current_depth < 3 and category:  # Only extract products at reasonable depth and if we have a category
                 logger.info(f"🛒 Extracting products from category page...")
                 
-                # Use the correct method name and pass the category object
-                if hasattr(self.scraper, 'product_extractor') and self.scraper.product_extractor:
-                    products_found = self.scraper.product_extractor._extract_products_from_current_page(category)
+                # FIXED: Access the product extractor correctly
+                # The scraper object should be the main SeleniumAsdaScraper, not just the product_extractor
+                if hasattr(self, 'main_scraper') and self.main_scraper and hasattr(self.main_scraper, 'product_extractor'):
+                    products_found = self.main_scraper.product_extractor._extract_products_from_current_page(category)
+                    logger.info(f"📦 Found {products_found} products using main_scraper.product_extractor")
+                elif hasattr(self, 'scraper') and hasattr(self.scraper, '_extract_products_from_current_page'):
+                    # If scraper is the product_extractor directly
+                    products_found = self.scraper._extract_products_from_current_page(category)
+                    logger.info(f"📦 Found {products_found} products using direct scraper access")
                 else:
-                    logger.warning("Product extractor not available")
+                    logger.warning("Product extractor not available - no product extraction performed")
+                    logger.debug(f"Available attributes: {[attr for attr in dir(self) if not attr.startswith('_')]}")
+                    if hasattr(self, 'scraper'):
+                        logger.debug(f"Scraper attributes: {[attr for attr in dir(self.scraper) if not attr.startswith('_')]}")
                     
-                logger.info(f"📦 Found {products_found} products on category page")
             else:
                 if current_depth >= 3:
                     logger.info(f"⏭️ Skipping product extraction (depth {current_depth} >= 3)")
@@ -801,7 +812,6 @@ class AsdaLinkCrawler:
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
-
 
 
 

@@ -132,14 +132,18 @@ class SeleniumAsdaScraper:
             link_crawler = None
             try:
                 from asda_scraper.asda_link_crawler import AsdaLinkCrawler
-                link_crawler
-
                 link_crawler = AsdaLinkCrawler(self)
-                link_crawler.scraper = self.product_extractor
+                # FIXED: Set proper references to both the main scraper and product extractor
+                link_crawler.main_scraper = self  # Reference to the main SeleniumAsdaScraper
+                link_crawler.scraper = self.product_extractor  # Keep for backward compatibility
                 link_crawler.delay_manager = self.delay_manager
                 logger.info("Link crawler initialized - Will discover and follow subcategory links")
+                logger.info("✅ Product extractor properly linked for product extraction")
             except ImportError:
                 logger.warning("Link crawler not available")
+            except Exception as e:
+                logger.error(f"Error initializing link crawler: {e}")
+                link_crawler = None
             
             logger.info("="*80)
             logger.info("STARTING CATEGORY CRAWLING")
