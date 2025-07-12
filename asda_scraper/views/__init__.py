@@ -10,8 +10,8 @@ File: asda_scraper/views/__init__.py
 # Import all views to maintain backward compatibility
 from .dashboard import scraper_dashboard, get_proxy_status_summary
 from .crawl_operations import (
-    start_crawl, 
-    stop_crawl, 
+    start_crawl,
+    stop_crawl,
     crawl_status,
     run_selenium_scraper_with_error_handling
 )

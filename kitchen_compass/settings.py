@@ -70,8 +70,8 @@ INSTALLED_APPS = [
     # Local apps
     "auth_hub",
     "recipe_hub",
-    'meal_planner',
-    'asda_scraper',
+    'meal_planner',    
+    'asda_scraper.apps.AsdaScraperConfig',
 ]
 
 MIDDLEWARE = [
@@ -197,12 +197,12 @@ LOGGING = {
     "disable_existing_loggers": False,
     "formatters": {
         "verbose": {
-            "format": "[{levelname}] {asctime} [{name}] {message}", 
-            "style": "{", 
+            "format": "[{levelname}] {asctime} [{name}] {message}",
+            "style": "{",
             "datefmt": "%Y-%m-%d %H:%M:%S"
         },
         "simple": {
-            "format": "{levelname} {message}", 
+            "format": "{levelname} {message}",
             "style": "{"
         },
     },
@@ -217,72 +217,74 @@ LOGGING = {
     "handlers": {
         "console": {
             "level": "DEBUG",
-            "filters": ["require_debug_true"], 
-            "class": "logging.StreamHandler", 
+            "filters": ["require_debug_true"],
+            "class": "logging.StreamHandler",
             "formatter": "verbose",
-            "stream": "ext://sys.stdout"  # Add explicit stream
+            "stream": "ext://sys.stdout"
         },
         "file": {
-            "level": "INFO", 
-            "class": "logging.handlers.RotatingFileHandler", 
-            "filename": str(LOGS_DIR / "kitchen_compass.log"), 
-            "maxBytes": 5*1024*1024, 
-            "backupCount": 5, 
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(LOGS_DIR / "kitchen_compass.log"),
+            "maxBytes": 5 * 1024 * 1024,
+            "backupCount": 5,
             "formatter": "verbose",
-            "encoding": "utf-8"  # Add UTF-8 encoding
+            "encoding": "utf-8",
+            "delay": True
         },
         "error_file": {
-            "level": "ERROR", 
-            "class": "logging.handlers.RotatingFileHandler", 
-            "filename": str(LOGS_DIR / "errors.log"), 
-            "maxBytes": 5*1024*1024, 
-            "backupCount": 5, 
+            "level": "ERROR",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(LOGS_DIR / "errors.log"),
+            "maxBytes": 5 * 1024 * 1024,
+            "backupCount": 5,
             "formatter": "verbose",
-            "encoding": "utf-8"  # Add UTF-8 encoding
+            "encoding": "utf-8"
         },
         "security_file": {
-            "level": "INFO", 
-            "class": "logging.handlers.RotatingFileHandler", 
-            "filename": str(LOGS_DIR / "security.log"), 
-            "maxBytes": 5*1024*1024, 
-            "backupCount": 5, 
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(LOGS_DIR / "security.log"),
+            "maxBytes": 5 * 1024 * 1024,
+            "backupCount": 5,
             "formatter": "verbose",
-            "encoding": "utf-8"  # Add UTF-8 encoding
+            "encoding": "utf-8"
         },
         "scraper_file": {
             "level": "DEBUG",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": str(LOGS_DIR / "asda_scraper.log"),
-            "maxBytes": 10*1024*1024,  # 10MB
+            "maxBytes": 10 * 1024 * 1024,
             "backupCount": 5,
             "formatter": "verbose",
-            "encoding": "utf-8"  # Add UTF-8 encoding
-        },
-    },
+            "encoding": "utf-8",
+            "delay": True
+        }
+    },  # ← end of handlers
     "loggers": {
         "django": {
-            "handlers": ["console", "file"], 
-            "level": "INFO", 
+            "handlers": ["console", "file"],
+            "level": "INFO",
             "propagate": True
         },
         "django.request": {
-            "handlers": ["error_file"], 
-            "level": "ERROR", 
+            "handlers": ["error_file"],
+            "level": "ERROR",
             "propagate": False
         },
         "django.security": {
-            "handlers": ["security_file"], 
-            "level": "INFO", 
+            "handlers": ["security_file"],
+            "level": "INFO",
             "propagate": False
         },
         "auth_hub": {
-            "handlers": ["console", "file"], 
-            "level": "DEBUG", 
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
             "propagate": False
         },
         "kitchen_compass": {
-            "handlers": ["console", "file"], 
-            "level": "DEBUG", 
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
             "propagate": False
         },
         "asda_scraper": {
@@ -305,7 +307,6 @@ LOGGING = {
             "level": "DEBUG",
             "propagate": False
         },
-        # Reduce noise from selenium and urllib3
         "selenium": {
             "handlers": ["console"],
             "level": "WARNING",
@@ -322,6 +323,7 @@ LOGGING = {
         "level": "INFO"
     }
 }
+
 # Cache configuration
 CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache","LOCATION": "unique-snowflake"}}
 

@@ -297,7 +297,8 @@ class ScraperLogger:
         main_handler = logging.handlers.RotatingFileHandler(
             LOGS_DIR / 'asda_scraper.log',
             maxBytes=50*1024*1024,  # 50MB
-            backupCount=10
+            backupCount=10,
+            delay=True
         )
         main_handler.setLevel(logging.DEBUG)
         main_handler.setFormatter(StructuredFormatter())
@@ -307,7 +308,8 @@ class ScraperLogger:
         error_handler = logging.handlers.RotatingFileHandler(
             LOGS_DIR / 'errors' / 'errors.log',
             maxBytes=20*1024*1024,  # 20MB
-            backupCount=5
+            backupCount=5,
+            delay=True
         )
         error_handler.setLevel(logging.ERROR)
         error_handler.setFormatter(StructuredFormatter())
@@ -318,7 +320,8 @@ class ScraperLogger:
         performance_handler = logging.handlers.RotatingFileHandler(
             LOGS_DIR / 'performance' / 'performance.log',
             maxBytes=20*1024*1024,  # 20MB
-            backupCount=5
+            backupCount=5,
+            delay=True
         )
         performance_handler.setFormatter(StructuredFormatter())
         self.performance_logger.addHandler(performance_handler)
@@ -557,7 +560,6 @@ class SafeUnicodeFormatter(logging.Formatter):
         '↪️': '[FORWARD]',
         '🔃': '[RELOAD]',
         '🔄': '[SYNC]',
-        # Additional emojis that were missing
         '✅': '[DONE]',
         '☑️': '[CHECKED]',
         '✔️': '[CHECK]',
@@ -643,9 +645,10 @@ def setup_asda_logging():
     
     # File handler with UTF-8 encoding
     file_handler = logging.handlers.RotatingFileHandler(
-        logs_dir / 'asda_scraper.log',
+        LOGS_DIR / 'asda_scraper.log',
         maxBytes=10*1024*1024,  # 10MB
         backupCount=5,
+        delay=True,
         encoding='utf-8'  # Ensure file handler uses UTF-8
     )
     file_handler.setLevel(logging.DEBUG)

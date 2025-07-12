@@ -18,6 +18,7 @@ from .popup_handler import PopupHandler
 from .delay_manager import DelayManager
 from .models import ScrapingResult
 from .exceptions import ScraperException, DriverSetupException
+from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -274,15 +275,15 @@ class SeleniumAsdaScraper:
             # Don't re-raise - cleanup should always complete
 
 
-    def create_selenium_scraper(crawl_session: CrawlSession, headless: bool = False):
-        """
-        Factory function to create a Selenium scraper instance.
+def create_selenium_scraper(crawl_session: CrawlSession, headless: bool = False) -> SeleniumAsdaScraper:
+    """
+    Factory function to create a Selenium scraper instance.
+    
+    Args:
+        crawl_session: CrawlSession instance
+        headless: Whether to run browser in headless mode
         
-        Args:
-            crawl_session: CrawlSession instance
-            headless: Whether to run browser in headless mode
-            
-        Returns:
-            SeleniumAsdaScraper: Configured scraper instance
-        """
-        return SeleniumAsdaScraper(crawl_session, headless)
+    Returns:
+        SeleniumAsdaScraper: Configured scraper instance
+    """
+    return SeleniumAsdaScraper(crawl_session, headless)
