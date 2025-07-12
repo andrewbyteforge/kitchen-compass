@@ -1,5 +1,5 @@
 """
-Django Management Command for ASDA Scraper
+Django Management Command for ASDA Scraper - FIXED VERSION
 
 This command provides a CLI interface for running the refactored ASDA scraper
 with various configuration options and comprehensive error handling.
@@ -15,12 +15,10 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 
 from asda_scraper.models import CrawlSession, AsdaCategory, AsdaProduct
-from asda_scraper.selenium_scraper import (
-    create_selenium_scraper, 
-    ScrapingResult, 
-    ScraperException, 
-    DriverSetupException
-)
+# CORRECT IMPORTS - Use the scrapers package properly
+from asda_scraper.scrapers import SeleniumAsdaScraper, create_selenium_scraper, ScrapingResult, ScraperException, DriverSetupException
+
+logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
@@ -45,269 +43,233 @@ class Command(BaseCommand):
         Args:
             parser: ArgumentParser instance
         """
-        # Basic scraper settings
-        parser.add_argument(
-            '--headless',
-            action='store_true',
-            default=False,
-            help='Run browser in headless mode (no visible window)'
-        )
-        
+        # Core settings
         parser.add_argument(
             '--max-categories',
             type=int,
             default=10,
-            help='Maximum number of categories to scrape'
+            help='Maximum number of categories to crawl (default: 10)'
         )
         
         parser.add_argument(
             '--category-priority',
             type=int,
             default=2,
-            choices=[1, 2, 3, 4, 5],
-            help='Category priority level (1=core food, 2=+household, 3=+specialty)'
+            help='Maximum priority level to include (1=highest, 3=lowest, default: 2)'
         )
         
         parser.add_argument(
             '--max-products',
             type=int,
             default=100,
-            help='Maximum products per category'
+            help='Maximum products per category (default: 100)'
         )
         
         parser.add_argument(
             '--delay',
             type=float,
             default=2.0,
-            help='Delay between requests in seconds'
+            help='Delay between requests in seconds (default: 2.0)'
         )
         
-        # User and session options
+        # Browser settings
         parser.add_argument(
-            '--user',
-            type=str,
-            default='admin',
-            help='Username to associate with the crawl session'
+            '--headless',
+            action='store_true',
+            default=False,
+            help='Run browser in headless mode'
         )
         
+        parser.add_argument(
+            '--no-headless',
+            action='store_true',
+            help='Force browser to run with GUI (opposite of --headless)'
+        )
+        
+        # Operation modes
+        parser.add_argument(
+            '--dry-run',
+            action='store_true',
+            help='Run without saving data (for testing)'
+        )
+        
+        parser.add_argument(
+            '--categories-only',
+            action='store_true',
+            help='Only discover/validate categories, skip products'
+        )
+        
+        # Session management
         parser.add_argument(
             '--session-name',
             type=str,
             help='Optional name for the crawl session'
         )
         
-        # Output and logging options
+        parser.add_argument(
+            '--user',
+            type=str,
+            help='Username to associate with the session (default: first superuser)'
+        )
+        
+        # Debug options
         parser.add_argument(
             '--verbose',
             action='store_true',
-            default=False,
-            help='Enable verbose logging output'
+            help='Enable verbose output'
         )
         
         parser.add_argument(
-            '--dry-run',
+            '--status-only',
             action='store_true',
-            default=False,
-            help='Perform a dry run without actually saving data'
-        )
-        
-        parser.add_argument(
-            '--categories-only',
-            action='store_true',
-            default=False,
-            help='Only discover categories, do not scrape products'
-        )
-        
-        # System options
-        parser.add_argument(
-            '--cleanup-stuck',
-            action='store_true',
-            default=False,
-            help='Clean up stuck sessions before starting'
-        )
-        
-        parser.add_argument(
-            '--force',
-            action='store_true',
-            default=False,
-            help='Force start even if another session is running'
+            help='Only show current system status, don\'t start crawl'
         )
     
     def handle(self, *args, **options):
         """
-        Main command handler.
+        Execute the command.
         
         Args:
             *args: Positional arguments
             **options: Keyword arguments from command line
         """
         try:
-            # Setup logging
-            self._setup_logging(options['verbose'])
+            # Configure logging level
+            if options['verbose']:
+                logging.getLogger('asda_scraper').setLevel(logging.DEBUG)
             
-            # Display startup banner
-            self._display_banner()
+            # Handle --no-headless option
+            if options['no_headless']:
+                options['headless'] = False
             
-            # Validate options
-            self._validate_options(options)
+            # Show status only if requested
+            if options['status_only']:
+                self._show_system_status()
+                return
             
-            # Clean up stuck sessions if requested
-            if options['cleanup_stuck']:
-                self._cleanup_stuck_sessions()
-            
-            # Check for existing sessions
-            if not options['force']:
-                self._check_existing_sessions()
+            # Show startup banner
+            self._show_startup_banner(options)
             
             # Get or create user
-            user = self._get_user(options['user'])
+            user = self._get_user(options)
             
             # Create crawl session
-            session = self._create_crawl_session(user, options)
+            session = self._create_session(user, options)
             
-            # Run the scraper
+            # Run scraper
             result = self._run_scraper(session, options)
             
             # Display results
             self._display_results(session, result)
             
+        except KeyboardInterrupt:
+            self.stdout.write(
+                self.style.WARNING('\nCrawl interrupted by user.')
+            )
         except CommandError:
             raise
         except Exception as e:
-            error_msg = f"Command failed with unexpected error: {str(e)}"
-            self.logger.error(error_msg)
-            raise CommandError(error_msg)
+            self.logger.error(f"Unexpected error in command: {str(e)}")
+            raise CommandError(f"Command failed: {str(e)}")
     
-    def _setup_logging(self, verbose: bool):
+    def _show_startup_banner(self, options: dict):
         """
-        Setup logging configuration.
+        Show startup banner with key information.
         
         Args:
-            verbose: Whether to enable verbose logging
+            options: Command options
         """
-        level = logging.DEBUG if verbose else logging.INFO
+        banner_lines = [
+            "=" * 60,
+            "ASDA Product Scraper",
+            "=" * 60,
+            f"Mode: {'DRY RUN' if options['dry_run'] else 'LIVE'}",
+            f"Categories: {options['categories_only'] and 'Discovery Only' or 'Full Crawl'}",
+            f"Browser: {'Headless' if options['headless'] else 'Visible'}",
+            f"Max Categories: {options['max_categories']}",
+            f"Priority Level: {options['category_priority']}",
+            "=" * 60
+        ]
         
-        # Configure root logger
-        logging.basicConfig(
-            level=level,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        
-        # Suppress some noisy loggers
-        logging.getLogger('selenium').setLevel(logging.WARNING)
-        logging.getLogger('urllib3').setLevel(logging.WARNING)
+        for line in banner_lines:
+            self.stdout.write(self.style.SUCCESS(line))
     
-    def _display_banner(self):
-        """Display startup banner."""
-        banner = """
-╔══════════════════════════════════════════════════╗
-║              ASDA Product Scraper                ║
-║                                                  ║
-║  A production-ready scraper for ASDA grocery    ║
-║  data with comprehensive error handling and      ║
-║  progress tracking.                              ║
-╚══════════════════════════════════════════════════╝
-        """
-        self.stdout.write(self.style.SUCCESS(banner))
-    
-    def _validate_options(self, options: dict):
-        """
-        Validate command line options.
-        
-        Args:
-            options: Dictionary of command options
-            
-        Raises:
-            CommandError: If options are invalid
-        """
-        if options['max_categories'] <= 0:
-            raise CommandError("max-categories must be greater than 0")
-        
-        if options['max_products'] <= 0:
-            raise CommandError("max-products must be greater than 0")
-        
-        if options['delay'] < 0:
-            raise CommandError("delay cannot be negative")
-        
-        if options['category_priority'] not in [1, 2, 3, 4, 5]:
-            raise CommandError("category-priority must be between 1 and 5")
-    
-    def _cleanup_stuck_sessions(self):
-        """Clean up sessions that appear to be stuck."""
+    def _show_system_status(self):
+        """Show current system status."""
         try:
-            stuck_sessions = CrawlSession.objects.filter(
-                status__in=['PENDING', 'RUNNING'],
-                start_time__lt=timezone.now() - timezone.timedelta(hours=2)
-            )
+            # Get current statistics
+            total_categories = AsdaCategory.objects.count()
+            active_categories = AsdaCategory.objects.filter(is_active=True).count()
+            total_products = AsdaProduct.objects.count()
+            recent_sessions = CrawlSession.objects.filter(
+                start_time__gte=timezone.now() - timezone.timedelta(days=7)
+            ).count()
             
-            count = stuck_sessions.count()
-            if count > 0:
-                stuck_sessions.update(
-                    status='FAILED',
-                    error_message='Session cleaned up by management command',
-                    end_time=timezone.now()
-                )
-                self.stdout.write(
-                    self.style.WARNING(f"Cleaned up {count} stuck sessions")
-                )
-            else:
-                self.stdout.write("No stuck sessions found")
+            # Check for active sessions
+            active_session = CrawlSession.objects.filter(
+                status__in=['PENDING', 'RUNNING']
+            ).first()
+            
+            status_lines = [
+                "=" * 50,
+                "SYSTEM STATUS",
+                "=" * 50,
+                f"Categories: {active_categories}/{total_categories} active",
+                f"Products: {total_products:,} total",
+                f"Recent Sessions: {recent_sessions} (last 7 days)",
+                f"Active Session: {active_session.pk if active_session else 'None'}",
+                "=" * 50
+            ]
+            
+            for line in status_lines:
+                self.stdout.write(line)
                 
         except Exception as e:
-            self.logger.warning(f"Error cleaning up stuck sessions: {e}")
-    
-    def _check_existing_sessions(self):
-        """
-        Check for existing running sessions.
-        
-        Raises:
-            CommandError: If a session is already running
-        """
-        existing_session = CrawlSession.objects.filter(
-            status__in=['PENDING', 'RUNNING']
-        ).first()
-        
-        if existing_session:
-            raise CommandError(
-                f"Crawl session {existing_session.pk} is already running. "
-                f"Use --force to override or stop the existing session first."
+            self.stdout.write(
+                self.style.ERROR(f"Error getting system status: {str(e)}")
             )
     
-    def _get_user(self, username: str) -> User:
+    def _get_user(self, options: dict) -> User:
         """
-        Get or create user for the crawl session.
+        Get user for the session.
         
         Args:
-            username: Username to find or create
+            options: Command options
             
         Returns:
-            User: Django user object
+            User: Django user instance
             
         Raises:
             CommandError: If user cannot be found or created
         """
         try:
-            # Try to get existing user
-            try:
-                user = User.objects.get(username=username)
-                self.stdout.write(f"Using existing user: {username}")
-                return user
-            except User.DoesNotExist:
-                # Create new user
-                user = User.objects.create_user(
-                    username=username,
-                    email=f"{username}@example.com"
-                )
-                self.stdout.write(
-                    self.style.WARNING(f"Created new user: {username}")
-                )
-                return user
-                
+            if options['user']:
+                user = User.objects.get(username=options['user'])
+                self.stdout.write(f"Using user: {user.username}")
+            else:
+                # Get first superuser
+                user = User.objects.filter(is_superuser=True).first()
+                if not user:
+                    # Create a default admin user
+                    user = User.objects.create_superuser(
+                        username='asda_scraper_admin',
+                        email='admin@asdascaper.local',
+                        password='admin123'
+                    )
+                    self.stdout.write(
+                        self.style.WARNING(f"Created default admin user: {user.username}")
+                    )
+                else:
+                    self.stdout.write(f"Using superuser: {user.username}")
+            
+            return user
+            
+        except User.DoesNotExist:
+            raise CommandError(f"User '{options['user']}' not found")
         except Exception as e:
-            raise CommandError(f"Failed to get/create user {username}: {str(e)}")
+            raise CommandError(f"Error getting user: {str(e)}")
     
-    def _create_crawl_session(self, user: User, options: dict) -> CrawlSession:
+    def _create_session(self, user: User, options: dict) -> CrawlSession:
         """
         Create a new crawl session.
         
@@ -443,88 +405,62 @@ class Command(BaseCommand):
             session: CrawlSession object
             result: ScrapingResult object
         """
-        # Refresh session from database
+        # Refresh session from database to get final counts
         session.refresh_from_db()
         
-        # Create results summary
-        results_lines = [
-            "",
-            "╔══════════════════════════════════════════════════╗",
-            "║                 Scraping Results                ║",
-            "╚══════════════════════════════════════════════════╝",
-            "",
-            f"Session ID: {session.pk}",
-            f"Status: {session.status}",
-            f"Duration: {result.duration:.2f} seconds" if result.duration else "Duration: N/A",
-            "",
-            "Product Statistics:",
-            f"  Products Found: {result.products_found}",
-            f"  Products Saved: {result.products_saved}",
-            f"  Products Updated: {session.products_updated}",
-            "",
-            "Category Statistics:",
-            f"  Categories Processed: {result.categories_processed}",
-            f"  Categories Crawled: {session.categories_crawled}",
-            "",
-        ]
-        
-        # Add performance metrics
-        if result.duration and result.duration > 0:
-            products_per_minute = (result.products_found / result.duration) * 60
-            categories_per_minute = (result.categories_processed / result.duration) * 60
-            
-            results_lines.extend([
-                "Performance Metrics:",
-                f"  Products per minute: {products_per_minute:.1f}",
-                f"  Categories per minute: {categories_per_minute:.1f}",
-                "",
-            ])
-        
-        # Add error information
-        if result.errors:
-            results_lines.extend([
-                f"Errors Encountered: {len(result.errors)}",
-                "  (Check logs for detailed error information)",
-                "",
-            ])
-        else:
-            results_lines.extend([
-                "✅ No errors encountered",
-                "",
-            ])
-        
-        # Add database statistics
-        total_products = AsdaProduct.objects.count()
-        total_categories = AsdaCategory.objects.filter(is_active=True).count()
-        
-        results_lines.extend([
-            "Database Statistics:",
-            f"  Total Products: {total_products}",
-            f"  Active Categories: {total_categories}",
-            "",
-        ])
+        # Calculate rates
+        duration_minutes = result.duration / 60 if result.duration > 0 else 0.1
+        products_per_minute = session.products_found / duration_minutes if duration_minutes > 0 else 0
+        categories_per_minute = session.categories_crawled / duration_minutes if duration_minutes > 0 else 0
         
         # Display results
-        for line in results_lines:
-            if line.startswith("✅"):
-                self.stdout.write(self.style.SUCCESS(line))
-            elif "Errors Encountered:" in line and result.errors:
-                self.stdout.write(self.style.ERROR(line))
-            elif line.startswith("╔") or line.startswith("╚") or line.startswith("║"):
-                self.stdout.write(self.style.SUCCESS(line))
-            else:
-                self.stdout.write(line)
+        result_lines = [
+            "",
+            "=" * 60,
+            "SCRAPING RESULTS",
+            "=" * 60,
+            f"Session ID: {session.pk}",
+            f"Status: {session.status}",
+            f"Duration: {result.duration:.1f} seconds ({duration_minutes:.1f} minutes)",
+            "",
+            "CATEGORIES:",
+            f"  Processed: {session.categories_crawled}",
+            f"  Rate: {categories_per_minute:.1f} categories/minute",
+            "",
+            "PRODUCTS:",
+            f"  Found: {session.products_found}",
+            f"  Updated: {session.products_updated}",
+            f"  Rate: {products_per_minute:.1f} products/minute",
+            "",
+            "ERRORS:",
+            f"  Count: {len(result.errors) if hasattr(result, 'errors') else 0}",
+        ]
+        
+        # Add error details if present
+        if hasattr(result, 'errors') and result.errors:
+            result_lines.extend([
+                "",
+                "ERROR DETAILS:",
+            ])
+            for i, error in enumerate(result.errors[:5], 1):
+                result_lines.append(f"  {i}. {error}")
+            if len(result.errors) > 5:
+                result_lines.append(f"  ... and {len(result.errors) - 5} more errors")
+        
+        result_lines.append("=" * 60)
+        
+        # Color code based on success
+        style = self.style.SUCCESS if session.status == 'COMPLETED' else self.style.ERROR
+        
+        for line in result_lines:
+            self.stdout.write(style(line))
         
         # Final status message
         if session.status == 'COMPLETED':
             self.stdout.write(
-                self.style.SUCCESS("🎉 Scraping completed successfully!")
-            )
-        elif session.status == 'FAILED':
-            self.stdout.write(
-                self.style.ERROR("❌ Scraping failed - check logs for details")
+                self.style.SUCCESS(f"\n✓ Scraping completed successfully!")
             )
         else:
             self.stdout.write(
-                self.style.WARNING(f"⚠️ Scraping ended with status: {session.status}")
+                self.style.ERROR(f"\n✗ Scraping failed. Check logs for details.")
             )
