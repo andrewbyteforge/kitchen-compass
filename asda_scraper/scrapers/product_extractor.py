@@ -334,9 +334,12 @@ class ProductExtractor:
     # Replace the _save_product_data method in asda_scraper/scrapers/product_extractor.py
     # Starting around line 240
 
+    # Replace the _save_product_data method in asda_scraper/scrapers/product_extractor.py
+    # Revert to FAST mode - no nutrition extraction
+
     def _save_product_data(self, product_data: ProductData, category: AsdaCategory) -> bool:
         """
-        Save product data to database WITH CONDITIONAL nutrition extraction.
+        FAST MODE: Save product data to database WITHOUT nutrition extraction.
         
         Args:
             product_data: ProductData instance
@@ -371,14 +374,14 @@ class ProductExtractor:
             
             if created:
                 self.session.products_found += 1
-                logger.info(f"Created: {product.name} in {category.name}")
+                logger.info(f"✅ Created: {product.name[:50]} - £{product.price}")
             else:
                 # Update existing product - CHECK FOR PRICE CHANGES
                 price_changed = False
                 if product.price != product_data.price:
                     old_price = product.price
                     price_changed = True
-                    logger.info(f"Price change for {product.name}: £{old_price} → £{product_data.price}")
+                    logger.info(f"💰 Price change: {product.name[:40]} £{old_price} → £{product_data.price}")
                 
                 # Update all fields
                 for field in ['name', 'price', 'was_price', 'unit', 'description', 
@@ -391,25 +394,10 @@ class ProductExtractor:
                 product.category = category
                 product.save()
                 self.session.products_updated += 1
-                logger.info(f"Updated: {product.name} in {category.name}")
+                logger.info(f"🔄 Updated: {product.name[:50]} - £{product.price}")
             
-            # 🔥 NEW: CONDITIONAL NUTRITION EXTRACTION FOR "BOTH" CRAWL TYPE
-            should_extract_nutrition = (
-                self.session.crawl_type == 'BOTH' and 
-                product.product_url and 
-                not self._has_recent_nutrition(product)
-            )
-            
-            if should_extract_nutrition:
-                logger.info(f"🔬 Extracting nutrition for: {product.name[:50]}...")
-                nutrition_success = self._extract_and_save_nutrition(product)
-                
-                if nutrition_success:
-                    self.session.products_with_nutrition += 1
-                    logger.info(f"✅ Nutrition extracted for: {product.name[:50]}")
-                else:
-                    self.session.nutrition_errors += 1
-                    logger.warning(f"❌ No nutrition data for: {product.name[:50]}")
+            # ⚡ FAST MODE: NO NUTRITION EXTRACTION
+            # Use separate nutrition crawler: python manage.py crawl_nutrition
             
             self.session.save()
             
@@ -422,6 +410,24 @@ class ProductExtractor:
         except Exception as e:
             logger.error(f"Error saving product {product_data.name}: {e}")
             return False
+
+# Also update the __init__ method to be simpler
+def __init__(self, driver: webdriver.Chrome, session: CrawlSession):
+    """
+    Initialize product extractor for FAST product-only extraction.
+    
+    Args:
+        driver: Selenium WebDriver instance
+        session: Current crawl session
+    """
+    self.driver = driver
+    self.session = session
+    self.base_url = "https://groceries.asda.com"
+    self._parent_scraper = None  # Reference to parent scraper
+    
+    logger.info("⚡ ProductExtractor initialized for FAST MODE (products only)")
+    logger.info(f"🎯 Session ID: {session.pk}")
+    logger.info("💡 Use 'python manage.py crawl_nutrition' for nutrition data")
 
     def _has_recent_nutrition(self, product) -> bool:
         """

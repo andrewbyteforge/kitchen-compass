@@ -31,7 +31,7 @@ class Command(BaseCommand):
     
     def add_arguments(self, parser):
         """
-        Add command arguments.
+        Add command arguments with enhanced options.
         
         Args:
             parser: ArgumentParser instance
@@ -39,8 +39,8 @@ class Command(BaseCommand):
         parser.add_argument(
             '--max-products',
             type=int,
-            default=50,
-            help='Maximum number of products to process (default: 50)',
+            default=100,  # Increased default
+            help='Maximum number of products to process (default: 100)',
         )
         parser.add_argument(
             '--category',
@@ -50,8 +50,8 @@ class Command(BaseCommand):
         parser.add_argument(
             '--delay',
             type=float,
-            default=3.0,
-            help='Delay between products in seconds (default: 3.0)',
+            default=1.0,  # Reduced default delay
+            help='Delay between products in seconds (default: 1.0)',
         )
         parser.add_argument(
             '--headless',
@@ -75,7 +75,115 @@ class Command(BaseCommand):
             default=15,
             help='Page load timeout in seconds (default: 15)',
         )
-    
+        parser.add_argument(
+            '--batch-size',
+            type=int,
+            default=50,
+            help='Process products in batches (default: 50)',
+        )
+        parser.add_argument(
+            '--priority-categories',
+            action='store_true',
+            help='Only process products from priority categories (priority 1-2)',
+        )
+        parser.add_argument(
+            '--exclude-fresh',
+            action='store_true',
+            default=True,
+            help='Exclude fresh produce (unlikely to have nutrition labels)',
+        )
+
+    # Also update the _get_products_to_process method for better filtering
+    def _get_products_to_process(self, options: dict):
+        """
+        Get products that need nutritional information with enhanced filtering.
+        
+        Args:
+            options: Command options
+            
+        Returns:
+            QuerySet: Products to process
+        """
+        try:
+            # Base query - products with URLs but no nutrition data
+            query = AsdaProduct.objects.filter(
+                product_url__isnull=False,
+                product_url__gt=''
+            ).exclude(
+                product_url=''
+            )
+            
+            # Exclude fresh produce if requested (they rarely have nutrition labels)
+            if options.get('exclude_fresh', True):
+                fresh_keywords = ['fruit', 'vegetable', 'fresh', 'produce', 'flower', 'plant']
+                for keyword in fresh_keywords:
+                    query = query.exclude(category__name__icontains=keyword)
+                self.stdout.write("🥬 Excluding fresh produce categories")
+            
+            # Filter by priority categories if requested
+            if options.get('priority_categories'):
+                priority_categories = AsdaCategory.objects.filter(
+                    url_code__in=[
+                        '1215686354843',  # Bakery
+                        '1215337189632',  # Food Cupboard  
+                        '1215660378320',  # Chilled Food
+                        '1215338621416',  # Frozen Food
+                        '1215686356579',  # Sweets, Treats & Snacks
+                    ]
+                )
+                query = query.filter(category__in=priority_categories)
+                self.stdout.write("🎯 Filtering to priority categories only")
+            
+            # Filter by category if specified
+            if options['category']:
+                query = query.filter(category__name__icontains=options['category'])
+                self.stdout.write(f"📂 Filtering to category: {options['category']}")
+            
+            # Skip products with recent nutrition data unless force recrawl
+            if not options['force_recrawl']:
+                # Only get products without nutrition or with old nutrition
+                seven_days_ago = timezone.now() - timezone.timedelta(days=7)
+                query = query.filter(
+                    Q(nutritional_info__isnull=True) | 
+                    Q(nutritional_info__exact={}) |
+                    Q(updated_at__lt=seven_days_ago)
+                )
+                self.stdout.write("🔄 Skipping products with recent nutrition data")
+            
+            # Prioritize products likely to have nutrition info
+            # Order by: processed foods first, then by newest products
+            query = query.order_by(
+                'category__name',  # Group by category  
+                '-created_at'      # Newer products first
+            )
+            
+            # Limit results
+            max_products = options['max_products']
+            products = list(query[:max_products])
+            
+            self.stdout.write(f"📦 Selected {len(products)} products for nutrition crawling:")
+            
+            # Show category breakdown
+            from collections import Counter
+            category_counts = Counter(p.category.name for p in products)
+            for category, count in category_counts.most_common():
+                self.stdout.write(f"  • {category}: {count} products")
+            
+            # Show some examples
+            if products:
+                self.stdout.write(f"\n📋 Sample products:")
+                for p in products[:5]:
+                    self.stdout.write(f"  • {p.name[:50]}... ({p.category.name})")
+            
+            return products
+            
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f"Error getting products: {e}"))
+            return []
+
+
+
+
     def handle(self, *args, **options):
         """
         Execute the nutrition crawling command.

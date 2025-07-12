@@ -222,9 +222,12 @@ def crawl_status(request):
         }, status=500)
 
 
+# Update the parse_crawl_settings function in asda_scraper/views/crawl_operations.py
+# Around line 150
+
 def parse_crawl_settings(request) -> Dict[str, Any]:
     """
-    Parse crawl settings from request including crawl type.
+    Parse crawl settings from request with simplified options.
     
     Args:
         request: Django HttpRequest object
@@ -232,17 +235,17 @@ def parse_crawl_settings(request) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: Parsed crawl settings
     """
-    # Default settings
+    # Default settings - FAST MODE
     settings = {
-        'crawl_type': 'PRODUCT',
+        'crawl_type': 'PRODUCT',  # Always PRODUCT for fast crawling
         'max_categories': 10,
         'category_priority': 2,
         'max_products_per_category': 100,
-        'delay_between_requests': 2.0,
+        'delay_between_requests': 1.0,  # Reduced default delay
         'use_selenium': True,
         'headless': False,
         'respect_robots_txt': True,
-        'crawl_nutrition': False,
+        'crawl_nutrition': False,  # Always False - use separate crawler
     }
     
     try:
@@ -252,12 +255,19 @@ def parse_crawl_settings(request) -> Dict[str, Any]:
         else:
             data = request.POST
         
-        # Handle crawl type
+        # Handle crawl type - but always set to PRODUCT for speed
         if 'crawl_type' in data:
             crawl_type = data['crawl_type']
-            if crawl_type in ['PRODUCT', 'NUTRITION', 'BOTH']:
-                settings['crawl_type'] = crawl_type
-                settings['crawl_nutrition'] = crawl_type in ['NUTRITION', 'BOTH']
+            if crawl_type == 'NUTRITION':
+                # Don't allow NUTRITION from main crawler
+                settings['crawl_type'] = 'PRODUCT'
+                logger.info("NUTRITION crawl type changed to PRODUCT - use separate nutrition crawler")
+            elif crawl_type == 'BOTH':
+                # Don't allow BOTH from main crawler
+                settings['crawl_type'] = 'PRODUCT'
+                logger.info("BOTH crawl type changed to PRODUCT - use separate nutrition crawler")
+            else:
+                settings['crawl_type'] = 'PRODUCT'
         
         # Update settings with user input
         for key in ['max_categories', 'category_priority', 'max_products_per_category']:
@@ -282,6 +292,9 @@ def parse_crawl_settings(request) -> Dict[str, Any]:
         logger.warning(f"Error parsing crawl settings: {e}")
     
     return settings
+
+
+
 
 
 def validate_crawl_settings(settings: Dict[str, Any]) -> list:
