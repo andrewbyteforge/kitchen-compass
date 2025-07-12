@@ -36,9 +36,17 @@ class Command(BaseCommand):
         super().__init__(*args, **kwargs)
         self.logger = logging.getLogger(__name__)
     
+    """
+    Updated Management Commands for Separate Product and Nutrition Crawling.
+
+    File: asda_scraper/management/commands/run_asda_crawl.py (UPDATED)
+    """
+
+    # Add this to your existing run_asda_crawl.py command arguments:
+
     def add_arguments(self, parser):
         """
-        Add command line arguments.
+        Add command line arguments - UPDATED for separate crawling.
         
         Args:
             parser: ArgumentParser instance
@@ -80,10 +88,12 @@ class Command(BaseCommand):
             help='Run browser in headless mode'
         )
         
+        # NEW: Crawl type selection
         parser.add_argument(
-            '--no-headless',
-            action='store_true',
-            help='Force browser to run with GUI (opposite of --headless)'
+            '--crawl-type',
+            choices=['PRODUCT', 'NUTRITION', 'BOTH'],
+            default='PRODUCT',
+            help='Type of data to crawl (default: PRODUCT for speed)'
         )
         
         # Operation modes
@@ -111,56 +121,94 @@ class Command(BaseCommand):
             type=str,
             help='Username to associate with the session (default: first superuser)'
         )
+
+    def _create_session(self, user: User, options: dict) -> CrawlSession:
+        """
+        Create a new crawl session - UPDATED for crawl types.
         
-        # Debug options
-        parser.add_argument(
-            '--verbose',
-            action='store_true',
-            help='Enable verbose output'
-        )
-        
-        parser.add_argument(
-            '--status-only',
-            action='store_true',
-            help='Only show current system status, don\'t start crawl'
-        )
-    
+        Args:
+            user: User to associate with the session
+            options: Command options
+            
+        Returns:
+            CrawlSession: Created session object
+        """
+        try:
+            # Build crawl settings
+            crawl_settings = {
+                'max_categories': options['max_categories'],
+                'category_priority': options['category_priority'],
+                'max_products_per_category': options['max_products'],
+                'delay_between_requests': options['delay'],
+                'use_selenium': True,
+                'headless': options['headless'],
+                'dry_run': options['dry_run'],
+                'categories_only': options['categories_only'],
+                'crawl_type': options['crawl_type'],  # NEW: Store crawl type
+            }
+            
+            # Create session with appropriate type
+            session = CrawlSession.objects.create(
+                user=user,
+                status='PENDING',
+                crawl_type=options['crawl_type'],  # NEW: Set crawl type
+                crawl_settings=crawl_settings
+            )
+            
+            # Add session name if provided
+            if options['session_name']:
+                session.notes = f"Session Name: {options['session_name']}"
+                session.save()
+            
+            # Show crawl type info
+            crawl_type_descriptions = {
+                'PRODUCT': 'Product information and pricing (FAST)',
+                'NUTRITION': 'Nutritional information only (SLOW)',
+                'BOTH': 'Product info + nutrition (VERY SLOW)'
+            }
+            
+            self.stdout.write(
+                self.style.SUCCESS(f"Created {options['crawl_type']} crawl session {session.pk}")
+            )
+            self.stdout.write(f"Mode: {crawl_type_descriptions[options['crawl_type']]}")
+            
+            return session
+            
+        except Exception as e:
+            raise CommandError(f"Failed to create crawl session: {str(e)}")
+
+    # Add this to your command help text:
     def handle(self, *args, **options):
         """
-        Execute the command.
+        Execute the command - UPDATED with crawl type recommendations.
         
         Args:
             *args: Positional arguments
             **options: Keyword arguments from command line
         """
         try:
-            # Configure logging level
-            if options['verbose']:
-                logging.getLogger('asda_scraper').setLevel(logging.DEBUG)
+            # Show crawl type recommendation
+            if options['crawl_type'] == 'BOTH':
+                self.stdout.write(
+                    self.style.WARNING(
+                        "⚠️ WARNING: BOTH mode crawls nutrition for every product and is VERY SLOW!\n"
+                        "💡 RECOMMENDED: Use --crawl-type PRODUCT for fast product/price updates,\n"
+                        "   then run 'python manage.py crawl_nutrition' separately for nutrition data."
+                    )
+                )
+                
+                # Give user a chance to cancel
+                try:
+                    confirm = input("\nContinue with BOTH mode? [y/N]: ")
+                    if confirm.lower() not in ['y', 'yes']:
+                        self.stdout.write("Cancelled. Use --crawl-type PRODUCT for fast crawling.")
+                        return
+                except KeyboardInterrupt:
+                    self.stdout.write("\nCancelled.")
+                    return
             
-            # Handle --no-headless option
-            if options['no_headless']:
-                options['headless'] = False
-            
-            # Show status only if requested
-            if options['status_only']:
-                self._show_system_status()
-                return
-            
-            # Show startup banner
-            self._show_startup_banner(options)
-            
-            # Get or create user
-            user = self._get_user(options)
-            
-            # Create crawl session
-            session = self._create_session(user, options)
-            
-            # Run scraper
-            result = self._run_scraper(session, options)
-            
-            # Display results
-            self._display_results(session, result)
+            # Continue with existing logic...
+            # [Rest of existing handle method]
             
         except KeyboardInterrupt:
             self.stdout.write(

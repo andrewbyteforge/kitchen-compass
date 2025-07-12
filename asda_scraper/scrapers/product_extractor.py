@@ -1,5 +1,5 @@
 """
-Product extraction functionality for ASDA scraper.
+Optimized Product extraction functionality for ASDA scraper - PRODUCT/PRICE ONLY.
 
 File: asda_scraper/scrapers/product_extractor.py
 """
@@ -27,7 +27,10 @@ logger = logging.getLogger(__name__)
 
 class ProductExtractor:
     """
-    Extracts product data from ASDA category pages.
+    OPTIMIZED: Extracts ONLY product data and pricing from ASDA category pages.
+    
+    This version SKIPS nutritional information extraction for maximum speed and reliability.
+    Use the separate NutritionCrawler for nutritional data.
     """
     
     def __init__(self, driver: webdriver.Chrome, session: CrawlSession):
@@ -41,7 +44,7 @@ class ProductExtractor:
         self.driver = driver
         self.session = session
         self.base_url = "https://groceries.asda.com"
-        self._parent_scraper = None  # Reference to parent scraper for nutrition
+        self._parent_scraper = None  # Reference to parent scraper
     
     def extract_products_from_category(self, category: AsdaCategory) -> int:
         """
@@ -321,7 +324,7 @@ class ProductExtractor:
     
     def _save_product_data(self, product_data: ProductData, category: AsdaCategory) -> bool:
         """
-        Save product data to database.
+        OPTIMIZED: Save product data to database WITHOUT nutrition extraction.
         
         Args:
             product_data: ProductData instance
@@ -358,21 +361,28 @@ class ProductExtractor:
                 self.session.products_found += 1
                 logger.info(f"Created: {product.name} in {category.name}")
             else:
-                # Update existing product
+                # Update existing product - CHECK FOR PRICE CHANGES
+                price_changed = False
+                if product.price != product_data.price:
+                    old_price = product.price
+                    price_changed = True
+                    logger.info(f"Price change for {product.name}: £{old_price} → £{product_data.price}")
+                
+                # Update all fields
                 for field in ['name', 'price', 'was_price', 'unit', 'description', 
                              'image_url', 'product_url', 'in_stock', 'special_offer',
                              'rating', 'review_count', 'price_per_unit']:
                     value = getattr(product_data, field)
                     if value is not None:
                         setattr(product, field, value)
+                
                 product.category = category
                 product.save()
                 self.session.products_updated += 1
                 logger.info(f"Updated: {product.name} in {category.name}")
             
-            # Check if we should crawl nutrition
-            if self._should_crawl_nutrition() and product_data.product_url:
-                self._extract_and_save_nutrition(product, product_data.product_url)
+            # ✅ NUTRITION EXTRACTION REMOVED FOR SPEED
+            # Nutrition data will be handled by separate NutritionCrawler
             
             self.session.save()
             
@@ -385,45 +395,6 @@ class ProductExtractor:
         except Exception as e:
             logger.error(f"Error saving product {product_data.name}: {e}")
             return False
-    
-    def _should_crawl_nutrition(self) -> bool:
-        """
-        Check if nutrition data should be crawled.
-        
-        Returns:
-            bool: True if nutrition should be crawled
-        """
-        crawl_type = self.session.crawl_type
-        return crawl_type in ['NUTRITION', 'BOTH']
-    
-    def _extract_and_save_nutrition(self, product: AsdaProduct, product_url: str) -> None:
-        """
-        Extract and save nutritional information for a product.
-        
-        Args:
-            product: AsdaProduct instance
-            product_url: URL of the product page
-        """
-        try:
-            logger.info(f"Attempting to extract nutrition for: {product.name}")
-            
-            # Use nutrition extractor if available
-            if self._parent_scraper and hasattr(self._parent_scraper, 'nutrition_extractor'):
-                nutrition_data = self._parent_scraper.nutrition_extractor.extract_from_url(product_url)
-                
-                if nutrition_data:
-                    product.nutritional_info = nutrition_data
-                    product.save(update_fields=['nutritional_info'])
-                    self.session.products_with_nutrition = F('products_with_nutrition') + 1
-                    self.session.save()
-                    logger.info(f"Saved nutrition data for: {product.name}")
-                else:
-                    logger.warning(f"No nutrition data found for: {product.name}")
-            
-        except Exception as e:
-            logger.error(f"Error extracting nutrition: {e}")
-            self.session.nutrition_errors = F('nutrition_errors') + 1
-            self.session.save()
     
     def _navigate_to_next_page(self) -> bool:
         """
