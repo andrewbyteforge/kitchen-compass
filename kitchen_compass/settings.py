@@ -71,7 +71,7 @@ INSTALLED_APPS = [
     "auth_hub",
     "recipe_hub",
     'meal_planner',    
-    'asda_scraper.apps.AsdaScraperConfig',
+    
 ]
 
 MIDDLEWARE = [

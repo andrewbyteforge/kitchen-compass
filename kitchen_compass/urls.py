@@ -15,7 +15,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     
     # ASDA Scraper app
-    path('scraper/', include('asda_scraper.urls')),
+    
     
     # Auth Hub app
     path('auth/', include('auth_hub.urls', namespace='auth_hub')),
