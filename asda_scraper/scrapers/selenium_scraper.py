@@ -94,10 +94,10 @@ class SeleniumAsdaScraper:
             logger.error(f"Crawl failed: {e}")
             self.session.mark_failed(str(e))
             return ScrapingResult(
-                success=False,
-                error_message=str(e),
-                products_found=0,
-                categories_crawled=0
+                products_found=self.session.products_found,
+                products_saved=self.session.products_found,
+                categories_processed=0,
+                errors=[]
             )
         finally:
             if self.driver:
@@ -121,9 +121,9 @@ class SeleniumAsdaScraper:
                 logger.info("No products found that need nutrition data")
                 self.session.mark_completed()
                 return ScrapingResult(
-                    success=True,
                     products_found=0,
-                    categories_crawled=0
+                    products_saved=0,
+                    categories_processed=0
                 )
             
             logger.info(f"Found {total_products} products needing nutrition data")
@@ -177,10 +177,10 @@ class SeleniumAsdaScraper:
             self.session.mark_completed()
             
             return ScrapingResult(
-                success=True,
                 products_found=success_count,
-                categories_crawled=0,
-                message=f"Nutrition extraction complete: {success_count} successful, {error_count} errors"
+                products_saved=success_count,
+                categories_processed=0,
+                errors=[f"Nutrition extraction complete: {success_count} successful, {error_count} errors"]
             )
             
         except Exception as e:
@@ -231,9 +231,9 @@ class SeleniumAsdaScraper:
             self.session.mark_completed()
             
             return ScrapingResult(
-                success=True,
                 products_found=total_products,
-                categories_crawled=self.session.categories_crawled
+                products_saved=total_products,
+                categories_processed=self.session.categories_crawled
             )
             
         except Exception as e:
@@ -304,6 +304,7 @@ class SeleniumAsdaScraper:
         query = query.filter(
             Q(nutritional_info__isnull=True) | 
             Q(nutritional_info__exact={}) |
+            Q(nutritional_info={}) |
             Q(updated_at__lt=three_days_ago)
         )
         
@@ -409,6 +410,10 @@ class SeleniumAsdaScraper:
                 self.driver.quit()
             except Exception as e:
                 logger.error(f"Error closing driver: {e}")
+    
+    def _cleanup(self):
+        """Alias for cleanup method for compatibility."""
+        self.cleanup()
 
 
 def create_selenium_scraper(crawl_session: CrawlSession, headless: bool = True) -> SeleniumAsdaScraper:

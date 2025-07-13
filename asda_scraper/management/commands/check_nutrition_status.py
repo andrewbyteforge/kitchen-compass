@@ -1,203 +1,130 @@
 """
-Django Management Command for checking nutrition crawl status.
+Management command to check nutrition status of products in the database.
 
-This command checks which AsdaProduct items require nutritional data
-crawling based on the freshness threshold and reports summary statistics
-and optional detailed listings.
+File: asda_scraper/management/commands/check_nutrition_status.py
 """
 
-import logging
-from datetime import timedelta
-from django.core.management.base import BaseCommand, CommandError
-from django.db import DatabaseError
-from django.db.models import Q, Count, F
+import json
+from django.core.management.base import BaseCommand
+from django.db.models import Q, Count
 from django.utils import timezone
-from asda_scraper.models import AsdaProduct, AsdaCategory
 
-logger = logging.getLogger(__name__)
+from asda_scraper.models import AsdaProduct, AsdaCategory
 
 
 class Command(BaseCommand):
-    """
-    Management command to check nutritional data crawl status.
-
-    Reports products needing crawling based on the specified threshold in
-    days, provides a category breakdown, and optionally lists sample products.
-    """
-    help = 'Check which products need nutritional data crawling.'
-
-    def add_arguments(self, parser):
-        """
-        Add command-line arguments for filtering and output details.
-
-        Args:
-            parser (ArgumentParser): The parser to which arguments are added.
-        """
-        parser.add_argument(
-            '--category',
-            type=str,
-            help='Check specific category name (case-insensitive partial match).'
-        )
-        parser.add_argument(
-            '--show-details',
-            action='store_true',
-            help='Show detailed information for sample products needing crawl.'
-        )
-        parser.add_argument(
-            '--days',
-            type=int,
-            default=3,
-            help='Number of days to consider data "fresh" (default: 3).'
-        )
-
+    """Check the nutrition status of products in the database."""
+    
+    help = 'Check nutrition status of products and show what needs crawling'
+    
     def handle(self, *args, **options):
-        """
-        Execute the nutrition crawl status check.
-
-        Returns:
-            int: Exit code, 0 on success, non-zero on error.
-        """
-        days = options.get('days')
-        if days is None or days < 0:
-            raise CommandError(f"Invalid --days value: {days!r}")
-
-        cutoff_date = timezone.now() - timedelta(days=days)
-        self.stdout.write(self.style.SUCCESS(
-            "📊 NUTRITIONAL DATA CRAWL STATUS CHECK"
-        ))
-        self.stdout.write(
-            f"\n⏰ Checking for products not updated since: "
-            f"{cutoff_date.strftime('%Y-%m-%d %H:%M')}"
-        )
-
-        try:
-            products = AsdaProduct.objects.all()
-            if options.get('category'):
-                cat = options['category']
-                products = products.filter(category__name__icontains=cat)
-                self.stdout.write(f"📂 Filtering to category: {cat}")
-
-            total = products.count()
-            with_nut = products.exclude(
-                Q(nutritional_info__isnull=True) |
-                Q(nutritional_info__exact={})
-            ).count()
-
-            needs = products.filter(
-                Q(updated_at__isnull=True) |
-                Q(updated_at__lt=cutoff_date) |
-                Q(nutritional_info__isnull=True) |
-                Q(nutritional_info__exact={})
-            ).exclude(
-                Q(product_url='') | Q(product_url__isnull=True)
-            )
-            needs_count = needs.count()
-
-            recent = products.filter(
-                updated_at__gte=cutoff_date
-            ).exclude(
-                Q(nutritional_info__isnull=True) |
-                Q(nutritional_info__exact={})
-            ).count()
-
-            coverage = (with_nut / total * 100) if total > 0 else 0.0
-
-            self.stdout.write("\n" + "=" * 60)
-            self.stdout.write(f"📦 Total products: {total}")
-            self.stdout.write(f"✅ With nutritional data: {with_nut}")
-            self.stdout.write(f"🕐 Recently updated (last {days} days): {recent}")
-            self.stdout.write(f"🔄 Need crawling: {needs_count}")
-            self.stdout.write(f"📈 Coverage: {coverage:.1f}%")
-            self.stdout.write("=" * 60 + "\n")
-
-            # Breakdown and details
-            self._show_category_breakdown(cutoff_date)
-            if options.get('show_details') and needs_count > 0:
-                self._show_product_details(needs[:20])
-
-        except DatabaseError as db_err:
-            logger.exception("Database error during nutrition status check")
-            self.stderr.write(self.style.ERROR(
-                f"Database error: {db_err}"
-            ))
-            return 1
-        except Exception as exc:
-            logger.exception("Unexpected error in nutrition status check")
-            self.stderr.write(self.style.ERROR(
-                f"Error: {exc}"
-            ))
-            return 1
-
-        return 0
-
-    def _show_category_breakdown(self, cutoff_date):
-        """
-        Show breakdown of nutritional crawl status by category.
-
-        Args:
-            cutoff_date (datetime): Cutoff date for stale data calculation.
-        """
-        self.stdout.write("📂 BREAKDOWN BY CATEGORY:")
-        self.stdout.write("-" * 60)
-        try:
-            cats = AsdaCategory.objects.annotate(
-                total_products=Count('products'),
-                products_with_nutrition=Count(
-                    'products',
-                    filter=~Q(products__nutritional_info__exact={})
-                ),
-                products_needing_crawl=Count(
-                    'products',
-                    filter=(
-                        Q(products__updated_at__isnull=True) |
-                        Q(products__updated_at__lt=cutoff_date) |
-                        Q(products__nutritional_info__isnull=True) |
-                        Q(products__nutritional_info__exact={})
-                    ) & ~Q(products__product_url='')
-                )
-            ).filter(total_products__gt=0).order_by('-products_needing_crawl')
-
-            for cat in cats[:10]:
-                cov = (cat.products_with_nutrition / cat.total_products * 100)
-                self.stdout.write(
-                    f"\n{cat.name}: Total={cat.total_products} | "
-                    f"WithNut={cat.products_with_nutrition} | "
-                    f"NeedCrawl={cat.products_needing_crawl} | "
-                    f"Coverage={cov:.1f}%"
-                )
-        except DatabaseError as db_err:
-            logger.error("DB error in _show_category_breakdown", exc_info=db_err)
-            self.stderr.write(self.style.ERROR(
-                "Could not retrieve category breakdown."
-            ))
-
-    def _show_product_details(self, products):
-        """
-        Display sample products that require nutritional data crawl.
-
-        Args:
-            products (QuerySet): Up to 20 AsdaProduct instances to display.
-        """
-        self.stdout.write("\n\n📋 SAMPLE PRODUCTS NEEDING CRAWL:")
-        self.stdout.write("-" * 60)
-        try:
-            for prod in products:
-                if prod.updated_at:
-                    diff = timezone.now() - prod.updated_at
-                    last = f"{diff.days} days ago"
+        """Execute the command."""
+        self.stdout.write(self.style.SUCCESS('='*70))
+        self.stdout.write(self.style.SUCCESS('NUTRITION STATUS CHECK'))
+        self.stdout.write(self.style.SUCCESS('='*70))
+        
+        # Total products
+        total_products = AsdaProduct.objects.count()
+        self.stdout.write(f"\nTotal products in database: {total_products}")
+        
+        # Products with URLs
+        with_urls = AsdaProduct.objects.filter(
+            product_url__isnull=False,
+            product_url__gt=''
+        ).exclude(product_url='').count()
+        self.stdout.write(f"Products with URLs: {with_urls}")
+        
+        # Products with nutrition info
+        with_nutrition = AsdaProduct.objects.filter(
+            nutritional_info__isnull=False
+        ).exclude(
+            Q(nutritional_info__exact={}) | Q(nutritional_info={})
+        ).count()
+        self.stdout.write(f"Products with nutrition info: {with_nutrition}")
+        
+        # Check actual nutrition content
+        products_with_real_nutrition = 0
+        products_with_empty_nutrition = 0
+        products_with_partial_nutrition = 0
+        
+        for product in AsdaProduct.objects.filter(nutritional_info__isnull=False):
+            if isinstance(product.nutritional_info, dict):
+                nutrition_data = product.nutritional_info.get('nutrition', {})
+                if nutrition_data:
+                    nutrient_count = len(nutrition_data)
+                    if nutrient_count >= 5:
+                        products_with_real_nutrition += 1
+                    elif nutrient_count > 0:
+                        products_with_partial_nutrition += 1
                 else:
-                    last = "Never"
-
-                self.stdout.write(
-                    f"\n• {prod.name[:50]}...\n"
-                    f"  Category: {prod.category.name}\n"
-                    f"  ASDA ID: {prod.asda_id}\n"
-                    f"  Last updated: {last}\n"
-                    f"  Has nutrition: "
-                    f"{'Yes' if prod.has_nutritional_info() else 'No'}"
-                )
-        except Exception as exc:
-            logger.error("Error in _show_product_details", exc_info=exc)
-            self.stderr.write(self.style.ERROR(
-                "Could not display product details."
-            ))
+                    products_with_empty_nutrition += 1
+        
+        self.stdout.write(f"\nNutrition data quality:")
+        self.stdout.write(f"  - Full nutrition (5+ nutrients): {products_with_real_nutrition}")
+        self.stdout.write(f"  - Partial nutrition (1-4 nutrients): {products_with_partial_nutrition}")
+        self.stdout.write(f"  - Empty nutrition data: {products_with_empty_nutrition}")
+        
+        # Products that need nutrition crawling
+        three_days_ago = timezone.now() - timezone.timedelta(days=3)
+        
+        needs_nutrition = AsdaProduct.objects.filter(
+            product_url__isnull=False,
+            product_url__gt=''
+        ).exclude(
+            product_url=''
+        ).filter(
+            Q(nutritional_info__isnull=True) | 
+            Q(nutritional_info__exact={}) |
+            Q(nutritional_info={}) |
+            Q(updated_at__lt=three_days_ago)
+        )
+        
+        # Exclude products with good nutrition data
+        products_needing_nutrition = []
+        for product in needs_nutrition:
+            if isinstance(product.nutritional_info, dict):
+                nutrition_data = product.nutritional_info.get('nutrition', {})
+                if nutrition_data and len(nutrition_data) >= 5:
+                    continue  # Skip products with good nutrition
+            products_needing_nutrition.append(product)
+        
+        self.stdout.write(f"\nProducts needing nutrition crawl: {len(products_needing_nutrition)}")
+        
+        # Show breakdown by category
+        category_counts = {}
+        for product in products_needing_nutrition[:1000]:  # Limit to first 1000
+            cat_name = product.category.name
+            if cat_name not in category_counts:
+                category_counts[cat_name] = 0
+            category_counts[cat_name] += 1
+        
+        self.stdout.write("\nTop categories needing nutrition:")
+        for category, count in sorted(category_counts.items(), key=lambda x: x[1], reverse=True)[:10]:
+            self.stdout.write(f"  - {category}: {count} products")
+        
+        # Show some example products
+        self.stdout.write("\nExample products needing nutrition:")
+        for product in products_needing_nutrition[:5]:
+            self.stdout.write(f"  - {product.name[:60]}...")
+            self.stdout.write(f"    Category: {product.category.name}")
+            self.stdout.write(f"    URL: {product.product_url}")
+            self.stdout.write(f"    Current nutrition: {product.nutritional_info}")
+            self.stdout.write("")
+        
+        # Recommendations
+        self.stdout.write(self.style.SUCCESS("\nRECOMMENDATIONS:"))
+        
+        if len(products_needing_nutrition) > 0:
+            self.stdout.write("1. Run nutrition crawler from dashboard or command line:")
+            self.stdout.write("   python manage.py crawl_nutrition --max-products 50")
+            
+            # Find best category to crawl
+            if category_counts:
+                best_category = max(category_counts.items(), key=lambda x: x[1])[0]
+                self.stdout.write(f"\n2. Focus on '{best_category}' category for best results:")
+                self.stdout.write(f"   python manage.py crawl_nutrition --category \"{best_category}\" --max-products 20")
+        else:
+            self.stdout.write("All products with URLs already have nutrition data!")
+            self.stdout.write("Consider:")
+            self.stdout.write("1. Running a product crawl first to get more products")
+            self.stdout.write("2. Force recrawling with: python manage.py crawl_nutrition --force-recrawl")
