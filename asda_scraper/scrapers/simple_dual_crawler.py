@@ -17,7 +17,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from asda_scraper.models import AsdaProduct, CrawlSession
-from .webdriver_manager import WebDriverManager
+from .stealth_webdriver_manager import StealthWebDriverManager
 from .nutrition_extractor import NutritionExtractor
 from .enhanced_popup_handler import EnhancedPopupHandler
 
@@ -49,15 +49,15 @@ class SimpleDualCrawler:
             bool: True if setup successful
         """
         try:
-            logger.info("🔧 Setting up browsers using WebDriverManager...")
+            logger.info("🔧 Setting up browsers using StealthWebDriverManager...")
             
             # Setup Product Browser
-            product_manager = WebDriverManager(headless=False)  # Visible
-            self.drivers['product'] = product_manager.setup_driver()
+            product_manager = StealthWebDriverManager(headless=False)
+            self.drivers['product'] = product_manager.setup_stealth_driver()
             
             # Setup Nutrition Browser  
-            nutrition_manager = WebDriverManager(headless=False)  # Visible
-            self.drivers['nutrition'] = nutrition_manager.setup_driver()
+            nutrition_manager = StealthWebDriverManager(headless=False)
+            self.drivers['nutrition'] = nutrition_manager.setup_stealth_driver()
             
             # Position windows side by side
             self._position_browsers()

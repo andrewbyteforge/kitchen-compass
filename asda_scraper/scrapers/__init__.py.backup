@@ -1,4 +1,13 @@
 """
+Manual script to update the scrapers __init__.py file.
+
+Run this script: python update_init.py
+"""
+
+import os
+
+# Content for the new __init__.py
+new_init_content = '''"""
 ASDA Scrapers Package with Stealth Anti-Bot Detection
 
 File: asda_scraper/scrapers/__init__.py
@@ -40,15 +49,42 @@ def create_selenium_scraper(crawl_session, headless=False):
 # Backwards compatibility
 SeleniumAsdaScraper = StealthSeleniumAsdaScraper
 
-from .selenium_scraper import SeleniumAsdaScraper, create_selenium_scraper
-from .exceptions import ScraperException, DriverSetupException
-from .models import ScrapingResult, ProductData
-
 __all__ = [
-    'SeleniumAsdaScraper',
-    'create_selenium_scraper',
+    'StealthWebDriverManager',
+    'StealthSeleniumAsdaScraper', 
+    'EnhancedPopupHandler',
+    'ScrapingResult',
+    'ProductData', 
     'ScraperException',
     'DriverSetupException',
-    'ScrapingResult',
-    'ProductData',
+    'create_selenium_scraper',
+    'SeleniumAsdaScraper'  # Alias for compatibility
 ]
+'''
+
+# Write the file
+init_file_path = 'asda_scraper/scrapers/__init__.py'
+
+try:
+    # Create backup
+    if os.path.exists(init_file_path):
+        backup_path = init_file_path + '.backup'
+        with open(init_file_path, 'r') as f:
+            backup_content = f.read()
+        with open(backup_path, 'w') as f:
+            f.write(backup_content)
+        print(f"Backup created: {backup_path}")
+    
+    # Write new content
+    with open(init_file_path, 'w', encoding='utf-8') as f:
+        f.write(new_init_content)
+    
+    print(f"Successfully updated: {init_file_path}")
+    print("")
+    print("NEXT STEPS:")
+    print("1. Restart your Django development server")
+    print("2. Test the dashboard - it should now use stealth approach")
+    print("3. If there are issues, restore from backup: {}.backup".format(init_file_path))
+
+except Exception as e:
+    print(f"Error updating file: {e}")

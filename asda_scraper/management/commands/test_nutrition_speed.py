@@ -11,7 +11,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from asda_scraper.models import AsdaProduct
-from asda_scraper.scrapers.webdriver_manager import WebDriverManager
+from asda_scraper.scrapers.stealth_webdriver_manager import StealthWebDriverManager
 from asda_scraper.scrapers.nutrition_extractor import NutritionExtractor
 from asda_scraper.scrapers.enhanced_popup_handler import EnhancedPopupHandler
 
@@ -122,9 +122,27 @@ class Command(BaseCommand):
         show_details = options['show_details']
         
         # Get products with product URLs that need nutrition data
+        # Exclude fresh produce categories that rarely have nutrition data
+        exclude_categories = [
+            'fruit', 'veg', 'flowers', 'fresh', 'produce', 
+            'banana', 'apple', 'potato', 'onion', 'carrot'
+        ]
+        
         products = AsdaProduct.objects.filter(
             product_url__isnull=False
-        ).exclude(product_url='')[:max_products]
+        ).exclude(product_url='')
+        
+        # Try to filter out fresh produce
+        for exclude_term in exclude_categories:
+            products = products.exclude(category__name__icontains=exclude_term)
+        
+        # If no products after filtering, use all products
+        if not products.exists():
+            products = AsdaProduct.objects.filter(
+                product_url__isnull=False
+            ).exclude(product_url='')
+        
+        products = products[:max_products]
         
         total_products = len(products)
         
@@ -169,12 +187,14 @@ class Command(BaseCommand):
                 try:
                     self.stdout.write(f"🔬 [{i}/{total_products}] Testing: {product.name[:40]}")
                     
-                    # Handle popups before each extraction
-                    popup_handler.handle_all_popups(max_attempts=1, timeout=3.0)
-                    
-                    start_time = time.time()
-                    nutrition_data = extractor.extract_from_url(product.product_url)
-                    end_time = time.time()
+                    # Navigate to product with stealth
+                    if stealth_manager.navigate_like_human(driver, product.product_url):
+                        # Handle popups before each extraction
+                        popup_handler.handle_all_popups(max_attempts=1, timeout=3.0)
+                        
+                        start_time = time.time()
+                        nutrition_data = extractor.extract_from_url(product.product_url)
+                        end_time = time.time()
                     
                     extraction_time = end_time - start_time
                     stats['times'].append(extraction_time)
