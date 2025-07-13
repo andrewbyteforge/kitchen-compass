@@ -1289,6 +1289,7 @@ def mark_failed(self, error_message):
             self.error_log = f"[{timezone.now().isoformat()}] {error_message}"
     self.save(update_fields=['status', 'end_time', 'error_log'])
     logger.error(f"Crawl session {self.pk} failed: {error_message}")
+    
 
 def get_duration(self):
     """Get the duration of the crawl session."""
