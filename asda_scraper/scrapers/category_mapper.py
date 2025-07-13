@@ -84,7 +84,7 @@ class CategoryMapperCrawler(BaseScraper):
                 EC.element_to_be_clickable(
                     (By.ID, "onetrust-accept-btn-handler")
                 ),
-                timeout=5
+                time.sleep(5)
             )
             cookie_button.click()
             logger.info("Accepted cookie consent")

@@ -95,7 +95,7 @@ WSGI_APPLICATION = "kitchen_compass.wsgi.application"
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DATABASE_NAME', 'restaurant_app'),
+        'NAME': os.getenv('DATABASE_NAME', 'kitchencompass'),
         'USER': os.getenv('DATABASE_USER', 'postgres'),
         'PASSWORD': os.getenv('DATABASE_PASSWORD', 'admin'),
         'HOST': 'localhost',
