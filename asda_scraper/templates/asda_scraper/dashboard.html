@@ -1,0 +1,381 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}ASDA Scraper Dashboard - KitchenCompass{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <h1 class="h2 mb-4">
+                <i class="bi bi-robot"></i> ASDA Scraper Dashboard
+            </h1>
+
+            <!-- Statistics Cards -->
+            <div class="row mb-4">
+                <div class="col-md-3 mb-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h5 class="card-title">Total Products</h5>
+                            <h2 class="text-primary">{{ total_products|default:"0" }}</h2>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h5 class="card-title">With Nutrition</h5>
+                            <h2 class="text-success">{{ products_with_nutrition|default:"0" }}</h2>
+                            <small class="text-muted">
+                                {% if total_products > 0 %}
+                                    {{ products_with_nutrition|floatformat:0 }} / {{ total_products }} 
+                                    ({% widthratio products_with_nutrition total_products 100 %}%)
+                                {% else %}
+                                    0%
+                                {% endif %}
+                            </small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h5 class="card-title">Categories</h5>
+                            <h2 class="text-info">{{ total_categories|default:"0" }}</h2>
+                            <small class="text-muted">{{ active_categories|default:"0" }} active</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h5 class="card-title">On Offer</h5>
+                            <h2 class="text-warning">{{ products_on_offer|default:"0" }}</h2>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Crawler Controls -->
+            <div class="row mb-4">
+                <!-- Category Mapper -->
+                <div class="col-md-4 mb-3">
+                    <div class="card">
+                        <div class="card-header bg-primary text-white">
+                            <h5 class="mb-0">
+                                <i class="bi bi-diagram-3"></i> Category Mapper
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <p class="mb-3">
+                                Discovers and maps all product categories from ASDA website.
+                            </p>
+                            
+                            {% if last_category_crawl %}
+                                <p class="text-muted small">
+                                    Last crawl: {{ last_category_crawl|date:"Y-m-d H:i" }}
+                                </p>
+                            {% endif %}
+
+                            <div class="alert alert-info small">
+                                <i class="bi bi-info-circle"></i> 
+                                Queue: {{ category_queue_pending|default:"0" }} pending
+                            </div>
+
+                            <div id="category-crawler-status" class="mb-3">
+                                {% if category_crawler_running %}
+                                    <div class="alert alert-warning">
+                                        <i class="bi bi-arrow-repeat spin"></i> Crawler is running...
+                                        <div class="progress mt-2">
+                                            <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                                 role="progressbar" style="width: 0%"></div>
+                                        </div>
+                                    </div>
+                                {% endif %}
+                            </div>
+
+                            <div class="d-grid gap-2">
+                                {% if category_crawler_running %}
+                                    <form method="post" action="{% url 'asda_scraper:stop_category_crawler' %}">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-danger btn-block">
+                                            <i class="bi bi-stop-circle"></i> Stop Crawler
+                                        </button>
+                                    </form>
+                                {% else %}
+                                    <form method="post" action="{% url 'asda_scraper:start_category_crawler' %}">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-success btn-block">
+                                            <i class="bi bi-play-circle"></i> Start Crawler
+                                        </button>
+                                    </form>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Product List Crawler -->
+                <div class="col-md-4 mb-3">
+                    <div class="card">
+                        <div class="card-header bg-info text-white">
+                            <h5 class="mb-0">
+                                <i class="bi bi-box-seam"></i> Product List Crawler
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <p class="mb-3">
+                                Extracts product listings and prices from category pages.
+                            </p>
+                            
+                            {% if last_product_list_crawl %}
+                                <p class="text-muted small">
+                                    Last crawl: {{ last_product_list_crawl|date:"Y-m-d H:i" }}
+                                </p>
+                            {% endif %}
+
+                            <div class="alert alert-info small">
+                                <i class="bi bi-info-circle"></i> 
+                                Queue: {{ product_list_queue_pending|default:"0" }} categories pending
+                            </div>
+
+                            <div id="product-list-crawler-status" class="mb-3">
+                                {% if product_list_crawler_running %}
+                                    <div class="alert alert-warning">
+                                        <i class="bi bi-arrow-repeat spin"></i> Crawler is running...
+                                        <div class="progress mt-2">
+                                            <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                                 role="progressbar" style="width: 0%"></div>
+                                        </div>
+                                    </div>
+                                {% endif %}
+                            </div>
+
+                            <div class="d-grid gap-2">
+                                {% if product_list_crawler_running %}
+                                    <form method="post" action="{% url 'asda_scraper:stop_product_list_crawler' %}">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-danger btn-block">
+                                            <i class="bi bi-stop-circle"></i> Stop Crawler
+                                        </button>
+                                    </form>
+                                {% else %}
+                                    <form method="post" action="{% url 'asda_scraper:start_product_list_crawler' %}">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-success btn-block" 
+                                                {% if product_list_queue_pending == 0 %}disabled{% endif %}>
+                                            <i class="bi bi-play-circle"></i> Start Crawler
+                                        </button>
+                                    </form>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Product Detail Crawler -->
+                <div class="col-md-4 mb-3">
+                    <div class="card">
+                        <div class="card-header bg-success text-white">
+                            <h5 class="mb-0">
+                                <i class="bi bi-clipboard-data"></i> Product Detail Crawler
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <p class="mb-3">
+                                Extracts nutrition information from individual product pages.
+                            </p>
+                            
+                            {% if last_product_detail_crawl %}
+                                <p class="text-muted small">
+                                    Last crawl: {{ last_product_detail_crawl|date:"Y-m-d H:i" }}
+                                </p>
+                            {% endif %}
+
+                            <div class="alert alert-info small">
+                                <i class="bi bi-info-circle"></i> 
+                                Queue: {{ product_detail_queue_pending|default:"0" }} products pending
+                            </div>
+
+                            <div id="product-detail-crawler-status" class="mb-3">
+                                {% if product_detail_crawler_running %}
+                                    <div class="alert alert-warning">
+                                        <i class="bi bi-arrow-repeat spin"></i> Crawler is running...
+                                        <div class="progress mt-2">
+                                            <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                                 role="progressbar" style="width: 0%"></div>
+                                        </div>
+                                    </div>
+                                {% endif %}
+                            </div>
+
+                            <div class="d-grid gap-2">
+                                {% if product_detail_crawler_running %}
+                                    <form method="post" action="{% url 'asda_scraper:stop_product_detail_crawler' %}">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-danger btn-block">
+                                            <i class="bi bi-stop-circle"></i> Stop Crawler
+                                        </button>
+                                    </form>
+                                {% else %}
+                                    <form method="post" action="{% url 'asda_scraper:start_product_detail_crawler' %}">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-success btn-block"
+                                                {% if product_detail_queue_pending == 0 %}disabled{% endif %}>
+                                            <i class="bi bi-play-circle"></i> Start Crawler
+                                        </button>
+                                    </form>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Sessions -->
+            <div class="row">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">
+                                <i class="bi bi-clock-history"></i> Recent Crawl Sessions
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>Type</th>
+                                            <th>Status</th>
+                                            <th>Started</th>
+                                            <th>Duration</th>
+                                            <th>Processed</th>
+                                            <th>Failed</th>
+                                            <th>Success Rate</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for session in recent_sessions %}
+                                            <tr>
+                                                <td>
+                                                    {% if session.crawler_type == 'CATEGORY' %}
+                                                        <i class="bi bi-diagram-3 text-primary"></i>
+                                                    {% elif session.crawler_type == 'PRODUCT_LIST' %}
+                                                        <i class="bi bi-box-seam text-info"></i>
+                                                    {% else %}
+                                                        <i class="bi bi-clipboard-data text-success"></i>
+                                                    {% endif %}
+                                                    {{ session.get_crawler_type_display }}
+                                                </td>
+                                                <td>
+                                                    {% if session.status == 'RUNNING' %}
+                                                        <span class="badge bg-primary">{{ session.get_status_display }}</span>
+                                                    {% elif session.status == 'COMPLETED' %}
+                                                        <span class="badge bg-success">{{ session.get_status_display }}</span>
+                                                    {% elif session.status == 'FAILED' %}
+                                                        <span class="badge bg-danger">{{ session.get_status_display }}</span>
+                                                    {% else %}
+                                                        <span class="badge bg-warning">{{ session.get_status_display }}</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>{{ session.started_at|date:"Y-m-d H:i" }}</td>
+                                                <td>{{ session.duration|default:"-" }}</td>
+                                                <td>{{ session.processed_items }}</td>
+                                                <td>{{ session.failed_items }}</td>
+                                                <td>{{ session.success_rate|floatformat:1 }}%</td>
+                                            </tr>
+                                        {% empty %}
+                                            <tr>
+                                                <td colspan="7" class="text-center text-muted">
+                                                    No crawl sessions yet
+                                                </td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.spin {
+    animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.btn-block {
+    width: 100%;
+}
+</style>
+
+<script>
+// Update crawler status periodically
+function updateCrawlerStatus() {
+    fetch('{% url "asda_scraper:crawler_status" %}')
+        .then(response => response.json())
+        .then(data => {
+            // Update category crawler
+            if (data.category_crawler.running) {
+                const progress = (data.category_crawler.processed / data.category_crawler.total) * 100;
+                const progressBar = document.querySelector('#category-crawler-status .progress-bar');
+                if (progressBar) {
+                    progressBar.style.width = progress + '%';
+                }
+            }
+            
+            // Update product list crawler
+            if (data.product_list_crawler.running) {
+                const progress = (data.product_list_crawler.processed / data.product_list_crawler.total) * 100;
+                const progressBar = document.querySelector('#product-list-crawler-status .progress-bar');
+                if (progressBar) {
+                    progressBar.style.width = progress + '%';
+                }
+            }
+            
+            // Update product detail crawler
+            if (data.product_detail_crawler.running) {
+                const progress = (data.product_detail_crawler.processed / data.product_detail_crawler.total) * 100;
+                const progressBar = document.querySelector('#product-detail-crawler-status .progress-bar');
+                if (progressBar) {
+                    progressBar.style.width = progress + '%';
+                }
+            }
+            
+            // Update statistics
+            document.querySelector('.text-primary').textContent = data.stats.total_products;
+            document.querySelector('.text-success').textContent = data.stats.products_with_nutrition;
+            document.querySelector('.text-info').textContent = data.stats.total_categories;
+            
+            // Update queue counts
+            document.querySelectorAll('.alert-info').forEach((alert, index) => {
+                if (index === 0 && data.queue_stats.category_pending !== undefined) {
+                    alert.innerHTML = '<i class="bi bi-info-circle"></i> Queue: ' + 
+                        data.queue_stats.category_pending + ' pending';
+                } else if (index === 1 && data.queue_stats.product_list_pending !== undefined) {
+                    alert.innerHTML = '<i class="bi bi-info-circle"></i> Queue: ' + 
+                        data.queue_stats.product_list_pending + ' categories pending';
+                } else if (index === 2 && data.queue_stats.product_detail_pending !== undefined) {
+                    alert.innerHTML = '<i class="bi bi-info-circle"></i> Queue: ' + 
+                        data.queue_stats.product_detail_pending + ' products pending';
+                }
+            });
+        })
+        .catch(error => console.error('Error updating status:', error));
+}
+
+// Update every 5 seconds if any crawler is running
+{% if category_crawler_running or product_list_crawler_running or product_detail_crawler_running %}
+setInterval(updateCrawlerStatus, 5000);
+{% endif %}
+</script>
+{% endblock %}
