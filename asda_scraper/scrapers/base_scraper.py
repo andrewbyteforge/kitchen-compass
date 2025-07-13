@@ -277,11 +277,28 @@ class BaseScraper(ABC):
                 self.session.failed_items += failed
                 self.session.save(update_fields=[
                     'processed_items',
-                    'failed_items',
-                    'updated_at'
+                    'failed_items'
                 ])
             except Exception as e:
                 logger.error(f"Error updating session stats: {str(e)}")
+
+    def should_stop(self) -> bool:
+        """
+        Check if the crawler should stop processing.
+
+        Returns:
+            bool: True if crawler should stop, False otherwise
+        """
+        if not self.session:
+            return False
+
+        try:
+            # Refresh session from database to get latest status
+            self.session.refresh_from_db()
+            return self.session.status in ['STOPPED', 'FAILED']
+        except Exception as e:
+            logger.error(f"Error checking session status: {str(e)}")
+            return False
 
     def handle_error(
         self,

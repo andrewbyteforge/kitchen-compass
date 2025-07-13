@@ -83,7 +83,7 @@ class Command(BaseCommand):
             )
 
             # Show products without nutrition
-            if options['no_nutrition']:
+            if options.get('no_nutrition'):
                 no_nutrition_count = Product.objects.filter(
                     nutrition_scraped=False,
                     is_available=True
@@ -93,14 +93,23 @@ class Command(BaseCommand):
                 )
 
             # Create new crawl session
+            # For continuous processing, total_items is the full queue size
+            total_queue_items = CrawlQueue.objects.filter(
+                queue_type='PRODUCT_DETAIL',
+                status='PENDING'
+            ).count()
+            
+            limit = options.get('limit')
+            if limit is None:
+                total_items = total_queue_items
+            else:
+                total_items = min(total_queue_items, limit)
+                
             session = CrawlSession.objects.create(
                 crawler_type='PRODUCT_DETAIL',
                 status='RUNNING',
                 started_at=timezone.now(),
-                total_items=min(
-                    pending_count,
-                    options.get('limit', pending_count)
-                )
+                total_items=total_items
             )
 
             self.stdout.write(
@@ -111,6 +120,11 @@ class Command(BaseCommand):
 
             # Initialize and run crawler
             crawler = ProductDetailCrawler(session=session)
+            
+            # Apply limit if specified
+            if limit is not None:
+                crawler.limit = limit
+                
             crawler.run()
 
             # Report results
@@ -123,7 +137,7 @@ class Command(BaseCommand):
                     f"Processed: {session.processed_items}\n"
                     f"Failed: {session.failed_items}\n"
                     f"Success Rate: {session.success_rate:.1f}%\n"
-                    f"Nutrition Extracted: {crawler.nutrition_extracted}"
+                    f"Nutrition Extracted: {getattr(crawler, 'nutrition_extracted', 0)}"
                 )
             )
 
@@ -133,12 +147,13 @@ class Command(BaseCommand):
                 nutrition_scraped=True
             ).count()
 
-            self.stdout.write(
-                f"\nOverall Statistics:\n"
-                f"Total Products: {total_products}\n"
-                f"With Nutrition: {products_with_nutrition} "
-                f"({products_with_nutrition / total_products * 100:.1f}%)"
-            )
+            if total_products > 0:
+                self.stdout.write(
+                    f"\nOverall Statistics:\n"
+                    f"Total Products: {total_products}\n"
+                    f"With Nutrition: {products_with_nutrition} "
+                    f"({products_with_nutrition / total_products * 100:.1f}%)"
+                )
 
             # Show queue status
             remaining = CrawlQueue.objects.filter(

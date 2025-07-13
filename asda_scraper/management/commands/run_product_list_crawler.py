@@ -94,11 +94,7 @@ class Command(BaseCommand):
             )
 
             # Apply filters if specified
-            raw_limit = options.get('limit')
-            if raw_limit is None:
-                limit = pending_count
-            else:
-                limit = raw_limit
+            limit = options.get('limit')
             if options.get('category'):
                 # Filter by category name
                 category_name = options['category']
@@ -116,17 +112,26 @@ class Command(BaseCommand):
                     )
                     return
                 
-                limit = min(limit, filtered_count)
+                if limit is not None:
+                    limit = min(limit, filtered_count)
+                else:
+                    limit = filtered_count
+                    
                 self.stdout.write(
                     f"Processing {limit} categories matching '{category_name}'"
                 )
 
             # Create new crawl session
+            if limit is None:
+                total_items = pending_count
+            else:
+                total_items = min(pending_count, limit)
+                
             session = CrawlSession.objects.create(
                 crawler_type='PRODUCT_LIST',
                 status='RUNNING',
                 started_at=timezone.now(),
-                total_items=min(pending_count, limit)
+                total_items=total_items
             )
 
             self.stdout.write(

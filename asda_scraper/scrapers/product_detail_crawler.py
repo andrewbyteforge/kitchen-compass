@@ -19,6 +19,7 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from .base_scraper import BaseScraper
 from ..models import Product, NutritionInfo, CrawlQueue
 from .utils import handle_all_popups
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -38,48 +39,77 @@ class ProductDetailCrawler(BaseScraper):
         """Initialize the product detail crawler."""
         super().__init__(*args, **kwargs)
         self.nutrition_extracted: int = 0
+        self.batch_size: int = 10  # Configurable batch size
+        self.batch_delay: int = 2  # Delay between batches in seconds
 
     def scrape(self) -> None:
         """
         Main scraping method for product details.
 
-        Processes URLs from the PRODUCT_DETAIL queue.
+        Processes ALL URLs from the PRODUCT_DETAIL queue until empty.
         """
         try:
             logger.info("Starting product detail crawling")
+            batch_size = 10  # Process 10 at a time for better memory management
+            total_processed = 0
+            
+            while True:
+                # Get next batch of pending URLs from queue
+                queue_items = CrawlQueue.objects.filter(
+                    queue_type='PRODUCT_DETAIL',
+                    status='PENDING'
+                ).order_by('-priority', 'created_at')[:batch_size]
 
-            # Get pending URLs from queue
-            queue_items = CrawlQueue.objects.filter(
-                queue_type='PRODUCT_DETAIL',
-                status='PENDING'
-            ).order_by('-priority', 'created_at')[:5]  # Process 5 at a time
+                if not queue_items:
+                    logger.info("No more pending URLs in product detail queue")
+                    break
 
-            if not queue_items:
-                logger.info("No pending URLs in product detail queue")
-                return
+                logger.info(f"Processing batch of {len(queue_items)} products")
+                
+                for queue_item in queue_items:
+                    try:
+                        # Check if we should stop (for graceful shutdown)
+                        if self.session and self.session.status == 'STOPPED':
+                            logger.info("Crawler stopped by user")
+                            return
+                        
+                        # Mark as processing
+                        queue_item.status = 'PROCESSING'
+                        queue_item.save()
 
-            for queue_item in queue_items:
-                try:
-                    # Mark as processing
-                    queue_item.status = 'PROCESSING'
-                    queue_item.save()
+                        # Process the product
+                        self._process_product_page(queue_item)
 
-                    # Process the product
-                    self._process_product_page(queue_item)
+                        # Mark as completed
+                        queue_item.status = 'COMPLETED'
+                        queue_item.processed_at = timezone.now()
+                        queue_item.save()
+                        
+                        total_processed += 1
+                        
+                        # Log progress every 10 products
+                        if total_processed % 10 == 0:
+                            remaining = CrawlQueue.objects.filter(
+                                queue_type='PRODUCT_DETAIL',
+                                status='PENDING'
+                            ).count()
+                            logger.info(
+                                f"Progress: Processed {total_processed} products, "
+                                f"{remaining} remaining in queue"
+                            )
 
-                    # Mark as completed
-                    queue_item.status = 'COMPLETED'
-                    queue_item.processed_at = timezone.now()
-                    queue_item.save()
-
-                except Exception as e:
-                    logger.error(
-                        f"Error processing queue item {queue_item.id}: {str(e)}"
-                    )
-                    self._handle_queue_failure(queue_item, e)
+                    except Exception as e:
+                        logger.error(
+                            f"Error processing queue item {queue_item.id}: {str(e)}"
+                        )
+                        self._handle_queue_failure(queue_item, e)
+                        
+                # Small delay between batches to avoid overwhelming the server
+                time.sleep(2)
 
             logger.info(
                 f"Product detail crawling completed. "
+                f"Total processed: {total_processed}, "
                 f"Extracted nutrition for {self.nutrition_extracted} products"
             )
 
@@ -87,6 +117,15 @@ class ProductDetailCrawler(BaseScraper):
             logger.error(f"Fatal error in product detail crawling: {str(e)}")
             self.handle_error(e, {'stage': 'product_detail_crawling'})
             raise
+
+
+
+
+
+
+
+
+
 
     def _process_product_page(self, queue_item: CrawlQueue) -> None:
         """
@@ -219,19 +258,58 @@ class ProductDetailCrawler(BaseScraper):
             logger.warning(f"Error extracting product details: {str(e)}")
 
         return details
+    
+
+
+    def _parse_nutrition_value(self, value_text: str) -> Optional[Decimal]:
+        """
+        Parse nutrition value from text.
+
+        Args:
+            value_text: Text containing the value (e.g., "1.8g", "<0.5g", "131")
+
+        Returns:
+            Optional[Decimal]: Parsed value or None
+        """
+        try:
+            # Remove whitespace
+            value_text = value_text.strip()
+            
+            # Handle "less than" values (e.g., "<0.5g")
+            if value_text.startswith('<'):
+                # Extract the number after '<'
+                match = re.search(r'<(\d+\.?\d*)', value_text)
+                if match:
+                    # Return half of the "less than" value as approximation
+                    return Decimal(match.group(1)) / 2
+            
+            # Extract numeric value
+            match = re.search(r'(\d+\.?\d*)', value_text)
+            if match:
+                return Decimal(match.group(1))
+                
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Error parsing nutrition value '{value_text}': {str(e)}")
+            return None
+
+
+
+
 
     def _extract_nutrition_info(self) -> Optional[Dict[str, Any]]:
         """
-        Extract nutrition information from the product page.
+        Extract nutrition information from product page.
 
         Returns:
             Optional[Dict]: Nutrition data or None if not found
         """
         try:
-            # Click on product details/nutrition tab if needed
-            self._navigate_to_nutrition_section()
-
-            # Find nutrition container
+            # Wait a bit for page to fully load
+            time.sleep(2)
+            
+            # Find nutrition container using the actual class names from the HTML
             nutrition_container = self._find_nutrition_container()
 
             if not nutrition_container:
@@ -254,32 +332,42 @@ class ProductDetailCrawler(BaseScraper):
                 'raw_nutrition_text': nutrition_container.text
             }
 
-            # Parse nutrition table
+            # Find all nutrition rows
             nutrition_rows = nutrition_container.find_elements(
                 By.CSS_SELECTOR,
-                "tr, .nutrition-row"
+                ".pdp-description-reviews__nutrition-row--details"
             )
 
             for row in nutrition_rows:
                 try:
-                    # Extract nutrient name and value
-                    nutrient_name, value = self._parse_nutrition_row(row)
-
-                    if nutrient_name and value is not None:
-                        # Map to our database fields
-                        mapped_field = self._map_nutrient_name(nutrient_name)
-
-                        if mapped_field in nutrition_data:
-                            nutrition_data[mapped_field] = value
-                        else:
-                            # Store in other_nutrients
-                            nutrition_data['other_nutrients'][nutrient_name] = value
+                    # Get cells in the row
+                    cells = row.find_elements(
+                        By.CSS_SELECTOR,
+                        ".pdp-description-reviews__nutrition-cell"
+                    )
+                    
+                    if len(cells) >= 2:
+                        nutrient_name = cells[0].text.strip()
+                        value_text = cells[1].text.strip()
+                        
+                        # Parse the value
+                        value = self._parse_nutrition_value(value_text)
+                        
+                        if nutrient_name and value is not None:
+                            # Map to our database fields
+                            mapped_field = self._map_nutrient_name(nutrient_name)
+                            
+                            if mapped_field in nutrition_data:
+                                nutrition_data[mapped_field] = value
+                            else:
+                                # Store in other_nutrients
+                                nutrition_data['other_nutrients'][nutrient_name] = float(value)
 
                 except Exception as e:
                     logger.debug(f"Error parsing nutrition row: {str(e)}")
                     continue
 
-            # Extract serving information
+            # Extract serving information from header if present
             serving_info = self._extract_serving_info(nutrition_container)
             nutrition_data.update(serving_info)
 
@@ -288,6 +376,8 @@ class ProductDetailCrawler(BaseScraper):
         except Exception as e:
             logger.error(f"Error extracting nutrition info: {str(e)}")
             return None
+
+
 
     def _navigate_to_nutrition_section(self) -> None:
         """Navigate to the nutrition section of the product page."""
@@ -326,25 +416,54 @@ class ProductDetailCrawler(BaseScraper):
         Returns:
             Optional[WebElement]: Nutrition container or None
         """
+        # Selectors based on the actual HTML structure
         selectors = [
-            ".pdp-description-reviews__product-details-cntr",
-            "[data-testid='nutrition-table']",
-            ".nutrition-information",
-            ".product-nutrition",
-            "#nutrition-content"
+            ".pdp-description-reviews__nutrition-table-cntr",
+            "[data-auto-id='nutritionTable']",
+            "div:has(.pdp-description-reviews__nutrition-row)",
+            ".pdp-description-reviews__product-details-content",
         ]
 
         for selector in selectors:
             try:
-                container = self.driver.find_element(By.CSS_SELECTOR, selector)
+                # For :has selector, use XPath equivalent
+                if ":has(" in selector:
+                    # Convert :has selector to XPath
+                    container = self.driver.find_element(
+                        By.XPATH,
+                        "//div[.//div[contains(@class, 'pdp-description-reviews__nutrition-row')]]"
+                    )
+                else:
+                    container = self.driver.find_element(By.CSS_SELECTOR, selector)
+                
                 # Check if it contains nutrition keywords
                 text = container.text.lower()
-                if any(keyword in text for keyword in ['nutrition', 'energy', 'kcal', 'protein']):
+                if any(keyword in text for keyword in ['nutrition', 'energy', 'kcal', 'protein', 'typical values']):
+                    logger.debug(f"Found nutrition container with selector: {selector}")
                     return container
             except NoSuchElementException:
                 continue
 
+        # Try finding by text content
+        try:
+            # Look for "Nutritional Values" heading
+            heading = self.driver.find_element(
+                By.XPATH,
+                "//div[contains(text(), 'Nutritional Values')]"
+            )
+            # Get the parent container
+            container = heading.find_element(By.XPATH, "./..")
+            if container:
+                logger.debug("Found nutrition container via heading text")
+                return container
+        except NoSuchElementException:
+            pass
+
+        logger.warning("No nutrition container found")
         return None
+
+
+
 
     def _parse_nutrition_row(self, row_element) -> tuple[Optional[str], Optional[Decimal]]:
         """
@@ -379,6 +498,10 @@ class ProductDetailCrawler(BaseScraper):
             logger.debug(f"Error parsing nutrition row: {str(e)}")
             return None, None
 
+
+
+
+
     def _map_nutrient_name(self, nutrient_name: str) -> str:
         """
         Map nutrient names to database fields.
@@ -389,39 +512,37 @@ class ProductDetailCrawler(BaseScraper):
         Returns:
             str: Database field name
         """
+        # Clean the name first
+        clean_name = nutrient_name.lower().strip()
+        
+        # Remove "of which" prefix
+        clean_name = clean_name.replace('of which ', '')
+        
         nutrient_map = {
-            'energy': 'energy_kcal',
-            'calories': 'energy_kcal',
-            'kcal': 'energy_kcal',
-            'kilojoules': 'energy_kj',
-            'kj': 'energy_kj',
+            'energy kj': 'energy_kj',
+            'energy kcal': 'energy_kcal',
             'fat': 'fat',
-            'total fat': 'fat',
-            'saturated fat': 'saturated_fat',
             'saturates': 'saturated_fat',
+            'saturated fat': 'saturated_fat',
             'carbohydrate': 'carbohydrates',
             'carbohydrates': 'carbohydrates',
-            'carbs': 'carbohydrates',
-            'sugar': 'sugars',
             'sugars': 'sugars',
-            'fiber': 'fibre',
+            'sugar': 'sugars',
             'fibre': 'fibre',
-            'dietary fiber': 'fibre',
+            'fiber': 'fibre',
             'protein': 'protein',
-            'proteins': 'protein',
             'salt': 'salt',
-            'sodium': 'salt',  # Will need conversion
         }
 
-        # Clean and normalize the nutrient name
-        clean_name = nutrient_name.lower().strip()
-        clean_name = re.sub(r'\s+', ' ', clean_name)
+        return nutrient_map.get(clean_name, clean_name)
 
-        return nutrient_map.get(clean_name, nutrient_name)
+
+
+
 
     def _extract_serving_info(self, nutrition_container) -> Dict[str, Any]:
         """
-        Extract serving size information.
+        Extract serving size information from nutrition table header.
 
         Args:
             nutrition_container: Container element with nutrition info
@@ -435,30 +556,32 @@ class ProductDetailCrawler(BaseScraper):
         }
 
         try:
-            text = nutrition_container.text
-
-            # Look for serving size
-            serving_match = re.search(
-                r'serving size:?\s*(\d+\.?\d*\s*\w+)',
-                text,
-                re.IGNORECASE
+            # Look for header row with serving info
+            header_cells = nutrition_container.find_elements(
+                By.CSS_SELECTOR,
+                ".pdp-description-reviews__nutrition-cell--title"
             )
-            if serving_match:
-                serving_info['serving_size'] = serving_match.group(1)
-
-            # Look for servings per pack
-            servings_match = re.search(
-                r'servings per pack:?\s*(\d+\.?\d*)',
-                text,
-                re.IGNORECASE
-            )
-            if servings_match:
-                serving_info['servings_per_pack'] = Decimal(servings_match.group(1))
-
+            
+            for cell in header_cells:
+                text = cell.text.strip()
+                
+                # Extract serving size (e.g., "Per 100g", "(pan-fried) Per 100g")
+                serving_match = re.search(r'Per\s+(\d+\s*\w+)', text, re.IGNORECASE)
+                if serving_match:
+                    serving_info['serving_size'] = serving_match.group(1)
+                    logger.debug(f"Found serving size: {serving_info['serving_size']}")
+                    
         except Exception as e:
             logger.debug(f"Error extracting serving info: {str(e)}")
 
         return serving_info
+
+
+
+
+
+
+
 
     def _save_nutrition_info(
         self,

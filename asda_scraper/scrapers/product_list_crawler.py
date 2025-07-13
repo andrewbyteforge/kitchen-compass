@@ -17,6 +17,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from django.db import transaction
+from .category_utils import CategoryNavigator
 
 from .base_scraper import BaseScraper
 from ..models import Product, Category, CrawlQueue
@@ -96,6 +97,9 @@ class ProductListCrawler(BaseScraper):
             self.handle_error(e, {'stage': 'product_list_crawling'})
             raise
 
+
+
+    # Then update the _process_category_page method:
     def _process_category_page(self, queue_item: CrawlQueue) -> None:
         """
         Process a single category page and all its paginations.
@@ -117,6 +121,24 @@ class ProductListCrawler(BaseScraper):
 
             # Handle any popups that might appear
             handle_all_popups(self.driver, self.wait)
+            
+            # Initialize category navigator
+            navigator = CategoryNavigator(self.driver, self.wait)
+            
+            # Discover and save subcategories
+            subcategories = navigator.discover_subcategories()
+            if subcategories:
+                added = navigator.save_subcategories_to_queue(
+                    subcategories, 
+                    parent_category=self.current_category,
+                    priority=3  # Higher priority for subcategories
+                )
+                logger.info(f"Added {added} subcategories to queue")
+            
+            # Get category info for logging
+            category_info = navigator.get_category_info()
+            if category_info['product_count']:
+                logger.info(f"Category contains {category_info['product_count']} products")
 
             # Process all pages
             page_num = 1
@@ -128,6 +150,12 @@ class ProductListCrawler(BaseScraper):
 
                 if not products:
                     logger.info("No products found on page")
+                    # Check if this is a category hub page (only subcategories, no products)
+                    if page_num == 1 and subcategories:
+                        logger.info("This appears to be a category hub page with subcategories only")
+                        # Mark as completed since we've discovered subcategories
+                        self.update_session_stats(processed=1)
+                        return
                     break
 
                 # Save products
@@ -148,6 +176,9 @@ class ProductListCrawler(BaseScraper):
         except Exception as e:
             logger.error(f"Error processing category page: {str(e)}")
             raise
+
+
+
 
     def _extract_products_from_page(self) -> List[Dict[str, Any]]:
         """
