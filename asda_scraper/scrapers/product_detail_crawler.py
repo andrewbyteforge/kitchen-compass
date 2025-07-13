@@ -18,6 +18,7 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 from .base_scraper import BaseScraper
 from ..models import Product, NutritionInfo, CrawlQueue
+from .utils import handle_all_popups
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,9 @@ class ProductDetailCrawler(BaseScraper):
             # Navigate to product page
             if not self.get_page(url):
                 raise Exception(f"Failed to load product page: {url}")
+
+            # Handle any popups that might appear
+            handle_all_popups(self.driver, self.wait)
 
             # Check if product is still available
             if self._is_product_unavailable():

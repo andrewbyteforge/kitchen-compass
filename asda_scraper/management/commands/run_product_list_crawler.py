@@ -1,31 +1,36 @@
 """
-Django management command to run the product detail crawler.
+Django management command to run the product list crawler.
 
 Usage:
-    python manage.py run_product_detail_crawler [--limit N]
+    python manage.py run_product_list_crawler [--limit N]
 """
 
 import logging
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
-from asda_scraper.models import CrawlSession, CrawlQueue, Product
-from asda_scraper.scrapers import ProductDetailCrawler
+from asda_scraper.models import CrawlSession, CrawlQueue, Category
+from asda_scraper.scrapers import ProductListCrawler
 
 logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    """Management command to run the ASDA product detail crawler."""
+    """Management command to run the ASDA product list crawler."""
 
-    help = 'Run the ASDA product detail crawler to extract nutrition information'
+    help = 'Run the ASDA product list crawler to extract products from category pages'
 
     def add_arguments(self, parser):
-        """Add command line arguments."""
+        """
+        Add command line arguments.
+        
+        Args:
+            parser: ArgumentParser instance
+        """
         parser.add_argument(
             '--limit',
             type=int,
-            help='Limit number of products to process',
+            help='Limit number of categories to process',
         )
         parser.add_argument(
             '--force',
@@ -33,9 +38,9 @@ class Command(BaseCommand):
             help='Force run even if another crawler is active',
         )
         parser.add_argument(
-            '--no-nutrition',
-            action='store_true',
-            help='Only process products without nutrition data',
+            '--category',
+            type=str,
+            help='Process only specific category by name',
         )
 
     def handle(self, *args, **options):
@@ -47,60 +52,81 @@ class Command(BaseCommand):
             **options: Command options
         """
         try:
-            self.stdout.write("Starting ASDA Product Detail Crawler...")
-            logger.info("Product detail crawler command initiated")
+            self.stdout.write("Starting ASDA Product List Crawler...")
+            logger.info("Product list crawler command initiated")
 
             # Check if crawler is already running
             if not options['force']:
                 active_session = CrawlSession.objects.filter(
-                    crawler_type='PRODUCT_DETAIL',
+                    crawler_type='PRODUCT_LIST',
                     status='RUNNING'
                 ).exists()
 
                 if active_session:
                     raise CommandError(
-                        "Product detail crawler is already running. "
+                        "Product list crawler is already running. "
                         "Use --force to override."
                     )
 
             # Check queue status
             pending_count = CrawlQueue.objects.filter(
-                queue_type='PRODUCT_DETAIL',
+                queue_type='PRODUCT_LIST',
                 status='PENDING'
             ).count()
 
             if pending_count == 0:
                 self.stdout.write(
                     self.style.WARNING(
-                        "No pending URLs in product detail queue. "
-                        "Run product list crawler first."
+                        "No pending URLs in product list queue. "
+                        "Run category mapper first."
                     )
                 )
                 return
 
             self.stdout.write(
-                f"Found {pending_count} pending URLs in queue"
+                f"Found {pending_count} pending categories in queue"
             )
 
-            # Show products without nutrition
-            if options['no_nutrition']:
-                no_nutrition_count = Product.objects.filter(
-                    nutrition_scraped=False,
-                    is_available=True
+            # Show category statistics
+            total_categories = Category.objects.filter(is_active=True).count()
+            self.stdout.write(
+                f"Total active categories: {total_categories}"
+            )
+
+            # Apply filters if specified
+            raw_limit = options.get('limit')
+            if raw_limit is None:
+                limit = pending_count
+            else:
+                limit = raw_limit
+            if options.get('category'):
+                # Filter by category name
+                category_name = options['category']
+                filtered_count = CrawlQueue.objects.filter(
+                    queue_type='PRODUCT_LIST',
+                    status='PENDING',
+                    category__name__icontains=category_name
                 ).count()
+                
+                if filtered_count == 0:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f"No pending categories matching '{category_name}'"
+                        )
+                    )
+                    return
+                
+                limit = min(limit, filtered_count)
                 self.stdout.write(
-                    f"Products without nutrition data: {no_nutrition_count}"
+                    f"Processing {limit} categories matching '{category_name}'"
                 )
 
             # Create new crawl session
             session = CrawlSession.objects.create(
-                crawler_type='PRODUCT_DETAIL',
+                crawler_type='PRODUCT_LIST',
                 status='RUNNING',
                 started_at=timezone.now(),
-                total_items=min(
-                    pending_count,
-                    options.get('limit', pending_count)
-                )
+                total_items=min(pending_count, limit)
             )
 
             self.stdout.write(
@@ -110,65 +136,66 @@ class Command(BaseCommand):
             )
 
             # Initialize and run crawler
-            crawler = ProductDetailCrawler(session=session)
+            crawler = ProductListCrawler(session=session)
+            
+            # Apply limit if specified
+            if options.get('limit'):
+                crawler.limit = options['limit']
+            
+            # Apply category filter if specified
+            if options.get('category'):
+                crawler.category_filter = options['category']
+            
+            # Run the crawler
             crawler.run()
 
             # Report results
             session.refresh_from_db()
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"\nProduct detail crawling completed!\n"
+                    f"\nProduct list crawling completed!\n"
                     f"Status: {session.status}\n"
                     f"Duration: {session.duration}\n"
                     f"Processed: {session.processed_items}\n"
                     f"Failed: {session.failed_items}\n"
                     f"Success Rate: {session.success_rate:.1f}%\n"
-                    f"Nutrition Extracted: {crawler.nutrition_extracted}"
+                    f"Products Found: {getattr(crawler, 'products_found', 0)}"
                 )
             )
 
-            # Show statistics
+            # Show product statistics
+            from asda_scraper.models import Product
             total_products = Product.objects.count()
-            products_with_nutrition = Product.objects.filter(
-                nutrition_scraped=True
+            new_products = Product.objects.filter(
+                created_at__gte=session.started_at
             ).count()
 
             self.stdout.write(
-                f"\nOverall Statistics:\n"
+                f"\nProduct Statistics:\n"
                 f"Total Products: {total_products}\n"
-                f"With Nutrition: {products_with_nutrition} "
-                f"({products_with_nutrition / total_products * 100:.1f}%)"
+                f"New Products: {new_products}"
             )
 
-            # Show queue status
-            remaining = CrawlQueue.objects.filter(
+            # Check if detail queue needs populating
+            detail_queue_count = CrawlQueue.objects.filter(
                 queue_type='PRODUCT_DETAIL',
                 status='PENDING'
             ).count()
 
-            if remaining > 0:
+            if detail_queue_count > 0:
                 self.stdout.write(
-                    f"\nRemaining in queue: {remaining} URLs"
+                    self.style.SUCCESS(
+                        f"\n{detail_queue_count} products added to detail queue"
+                    )
                 )
 
         except CommandError:
             raise
-        except KeyboardInterrupt:
-            self.stdout.write(
-                self.style.WARNING("\nCrawler interrupted by user")
-            )
-            if 'session' in locals():
-                session.status = 'STOPPED'
-                session.completed_at = timezone.now()
-                session.save()
         except Exception as e:
-            error_msg = f"Error running product detail crawler: {str(e)}"
-            logger.error(error_msg, exc_info=True)
-            
-            if 'session' in locals():
-                session.status = 'FAILED'
-                session.completed_at = timezone.now()
-                session.error_log = str(e)
-                session.save()
-            
-            raise CommandError(error_msg)
+            logger.error(f"Unexpected error in product list crawler: {str(e)}")
+            self.stderr.write(
+                self.style.ERROR(
+                    f"Unexpected error: {str(e)}"
+                )
+            )
+            raise CommandError(str(e))

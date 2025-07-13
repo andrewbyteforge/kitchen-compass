@@ -435,7 +435,7 @@ ASDA_SCRAPER_SETTINGS = {
     'REQUEST_DELAY': (2, 5),  # Random delay between 2-5 seconds
     'TIMEOUT': 30,
     'MAX_RETRIES': 3,
-    'HEADLESS': True,
+    'HEADLESS': False,
 
     # Crawling Settings
     'MAX_CRAWL_DEPTH': 5,

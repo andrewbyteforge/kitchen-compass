@@ -21,6 +21,10 @@ from django.db import transaction
 from .base_scraper import BaseScraper
 from ..models import Product, Category, CrawlQueue
 import time
+from .base_scraper import BaseScraper
+from ..models import Product, Category, CrawlQueue
+from .utils import handle_all_popups, parse_price, parse_unit_price, extract_product_id_from_url
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +115,9 @@ class ProductListCrawler(BaseScraper):
             if not self.get_page(url):
                 raise Exception(f"Failed to load category page: {url}")
 
+            # Handle any popups that might appear
+            handle_all_popups(self.driver, self.wait)
+
             # Process all pages
             page_num = 1
             while True:
@@ -152,32 +159,73 @@ class ProductListCrawler(BaseScraper):
         products = []
 
         try:
-            # Wait for products to load
-            self.wait.until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, "[data-testid='product-tile']")
-                )
-            )
+            # Wait for the product grid to load
+            time.sleep(2)  # Give page time to fully render
+            
+            # More specific selector for actual product containers
+            # Look for elements that have both product class AND contain a link
+            product_selectors = [
+                "div.co-product:has(a[href*='/product/'])",
+                "article.co-item:has(a[href*='/product/'])",
+                "li.co-item:has(a[href*='/product/'])",
+                "[class*='product-item']:has(a[href*='/product/'])",
+                "div[class*='co-product']:has(h3)",
+            ]
+            
+            product_tiles = []
+            for selector in product_selectors:
+                try:
+                    # Use JavaScript to find elements since :has() might not work with Selenium
+                    script = f"""
+                    return Array.from(document.querySelectorAll('div.co-product')).filter(el => 
+                        el.querySelector('a[href*="/product/"]') !== null
+                    );
+                    """
+                    potential_tiles = self.driver.execute_script(script)
+                    if potential_tiles:
+                        product_tiles = potential_tiles
+                        logger.info(f"Found {len(product_tiles)} product tiles using JavaScript filter")
+                        break
+                except Exception:
+                    try:
+                        # Fallback to basic selector
+                        tiles = self.driver.find_elements(By.CSS_SELECTOR, "div.co-product")
+                        # Filter out non-product elements
+                        product_tiles = []
+                        for tile in tiles:
+                            try:
+                                # Check if it has a product link
+                                tile.find_element(By.CSS_SELECTOR, "a[href*='/product/']")
+                                product_tiles.append(tile)
+                            except NoSuchElementException:
+                                continue
+                        if product_tiles:
+                            logger.info(f"Found {len(product_tiles)} valid product tiles after filtering")
+                            break
+                    except Exception as e:
+                        logger.debug(f"Error with selector {selector}: {str(e)}")
+                        continue
 
-            # Find all product tiles
-            product_tiles = self.driver.find_elements(
-                By.CSS_SELECTOR,
-                "[data-testid='product-tile']"
-            )
+            if not product_tiles:
+                logger.warning("No products found with any known selector")
+                return products
 
-            logger.info(f"Found {len(product_tiles)} product tiles")
-
-            for tile in product_tiles:
+            logger.info(f"Processing {len(product_tiles)} product tiles")
+            
+            for i, tile in enumerate(product_tiles):
                 try:
                     product_data = self._extract_product_data(tile)
-                    if product_data:
+                    if product_data and product_data.get('name') and product_data.get('asda_id'):
                         products.append(product_data)
+                        logger.debug(f"Successfully extracted product {i+1}/{len(product_tiles)}: {product_data['name']}")
+                    else:
+                        logger.debug(f"Skipped invalid product data at position {i+1}")
                 except Exception as e:
-                    logger.warning(f"Error extracting product data: {str(e)}")
+                    logger.warning(f"Error extracting product data at position {i+1}: {str(e)}")
                     continue
 
-        except TimeoutException:
-            logger.warning("No products found on page (timeout)")
+            logger.info(f"Successfully extracted {len(products)} valid products from {len(product_tiles)} tiles")
+
         except Exception as e:
             logger.error(f"Error extracting products: {str(e)}")
 
@@ -196,50 +244,97 @@ class ProductListCrawler(BaseScraper):
         try:
             product_data = {}
 
-            # Extract product link and ID
-            link_element = tile_element.find_element(
-                By.CSS_SELECTOR,
-                "a[data-testid='product-tile-link']"
-            )
-            product_url = link_element.get_attribute('href')
-
-            if not product_url:
+            # First, get the product link which is most reliable
+            try:
+                link_element = tile_element.find_element(By.CSS_SELECTOR, "a[href*='/product/']")
+                product_url = link_element.get_attribute('href')
+                
+                if not product_url or '/product/' not in product_url:
+                    logger.debug("Invalid product URL")
+                    return None
+                    
+                product_data['url'] = product_url
+                
+                # Extract ASDA ID from URL - more robust pattern
+                # URLs are like: /product/something/1234567890
+                url_parts = product_url.rstrip('/').split('/')
+                asda_id = None
+                for part in reversed(url_parts):
+                    if part.isdigit() and len(part) >= 10:
+                        asda_id = part
+                        break
+                
+                if not asda_id:
+                    logger.debug(f"Could not extract ASDA ID from URL: {product_url}")
+                    return None
+                    
+                product_data['asda_id'] = asda_id
+                
+            except NoSuchElementException:
+                logger.debug("No product link found in tile")
                 return None
 
-            # Extract ASDA ID from URL
-            asda_id_match = re.search(r'/product/[^/]+/(\d+)', product_url)
-            if asda_id_match:
-                product_data['asda_id'] = asda_id_match.group(1)
+            # Extract product name - prioritize h3 title
+            product_name = None
+            
+            # Method 1: Look for h3 with class co-product__title
+            try:
+                title_element = tile_element.find_element(By.CSS_SELECTOR, "h3.co-product__title")
+                product_name = title_element.text.strip()
+            except NoSuchElementException:
+                pass
+            
+            # Method 2: Look for any h3 inside the tile
+            if not product_name:
+                try:
+                    title_element = tile_element.find_element(By.CSS_SELECTOR, "h3")
+                    product_name = title_element.text.strip()
+                except NoSuchElementException:
+                    pass
+            
+            # Method 3: Get text from the product link
+            if not product_name:
+                try:
+                    link_element = tile_element.find_element(By.CSS_SELECTOR, "a[href*='/product/']")
+                    product_name = link_element.text.strip()
+                except NoSuchElementException:
+                    pass
+            
+            # Method 4: Look for image alt text
+            if not product_name:
+                try:
+                    img = tile_element.find_element(By.CSS_SELECTOR, "img[alt]")
+                    alt_text = img.get_attribute('alt')
+                    if alt_text and len(alt_text) > 3 and not alt_text.lower().startswith('image'):
+                        product_name = alt_text
+                except NoSuchElementException:
+                    pass
+
+            if not product_name or len(product_name) < 3:
+                logger.debug(f"Invalid product name: {product_name}")
+                return None
+
+            # Filter out non-product text
+            invalid_names = [
+                'typically fresh for', 'frozen', 'exclusive to asda', 
+                'decanter', 'winner', 'days', 'bar-be-quick'
+            ]
+            if any(invalid in product_name.lower() for invalid in invalid_names):
+                logger.debug(f"Filtered out invalid product name: {product_name}")
+                return None
+
+            product_data['name'] = product_name
+
+            # Extract brand
+            if product_name.upper().startswith('ASDA'):
+                product_data['brand'] = 'ASDA'
             else:
-                # Try to get from data attribute
-                product_data['asda_id'] = tile_element.get_attribute('data-product-id')
-
-            if not product_data.get('asda_id'):
-                logger.warning("Could not extract ASDA ID")
-                return None
-
-            product_data['url'] = product_url
-
-            # Extract product name
-            try:
-                name_element = tile_element.find_element(
-                    By.CSS_SELECTOR,
-                    "[data-testid='product-tile-title']"
-                )
-                product_data['name'] = name_element.text.strip()
-            except NoSuchElementException:
-                logger.warning("Could not find product name")
-                return None
-
-            # Extract brand (if present)
-            try:
-                brand_element = tile_element.find_element(
-                    By.CSS_SELECTOR,
-                    "[data-testid='product-tile-brand']"
-                )
-                product_data['brand'] = brand_element.text.strip()
-            except NoSuchElementException:
-                product_data['brand'] = None
+                # Try to find brand element
+                try:
+                    brand_element = tile_element.find_element(By.CSS_SELECTOR, "[class*='brand']")
+                    product_data['brand'] = brand_element.text.strip()
+                except NoSuchElementException:
+                    product_data['brand'] = None
 
             # Extract price
             price_data = self._extract_price_data(tile_element)
@@ -247,21 +342,27 @@ class ProductListCrawler(BaseScraper):
 
             # Extract image URL
             try:
-                img_element = tile_element.find_element(
-                    By.CSS_SELECTOR,
-                    "img[data-testid='product-tile-image']"
-                )
-                product_data['image_url'] = img_element.get_attribute('src')
+                img_element = tile_element.find_element(By.CSS_SELECTOR, "img")
+                image_url = img_element.get_attribute('src')
+                if image_url and 'assets-asda.com' in image_url:
+                    product_data['image_url'] = image_url
+                else:
+                    product_data['image_url'] = None
             except NoSuchElementException:
                 product_data['image_url'] = None
 
-            # Extract description (if present)
+            # Extract volume/weight
             try:
-                desc_element = tile_element.find_element(
+                volume_element = tile_element.find_element(
                     By.CSS_SELECTOR,
-                    "[data-testid='product-tile-description']"
+                    ".co-product__volume, .co-item__volume, [class*='volume']"
                 )
-                product_data['description'] = desc_element.text.strip()
+                volume_text = volume_element.text.strip()
+                # Validate it looks like a volume/weight
+                if re.search(r'\d+(?:g|kg|ml|l|L|cl|pack|x)', volume_text, re.IGNORECASE):
+                    product_data['description'] = volume_text
+                else:
+                    product_data['description'] = None
             except NoSuchElementException:
                 product_data['description'] = None
 
@@ -279,9 +380,9 @@ class ProductListCrawler(BaseScraper):
             tile_element: Product tile element
 
         Returns:
-            Dict: Price-related data
+            Dict containing price information
         """
-        price_data = {
+        price_info = {
             'price': None,
             'price_per_unit': None,
             'on_offer': False,
@@ -289,52 +390,58 @@ class ProductListCrawler(BaseScraper):
         }
 
         try:
-            # Check for offer price first
-            try:
-                offer_element = tile_element.find_element(
-                    By.CSS_SELECTOR,
-                    "[data-testid='product-tile-offer-price']"
-                )
-                price_text = offer_element.text.strip()
-                price_data['on_offer'] = True
+            # Price selectors
+            price_selectors = [
+                ".co-product__price",
+                ".co-item__price",
+                "[data-auto-id='productPrice']",
+                "[class*='price-now']",
+                ".price-single",
+                "strong[class*='price']"
+            ]
 
-                # Get offer text
+            for selector in price_selectors:
                 try:
-                    offer_text_element = tile_element.find_element(
-                        By.CSS_SELECTOR,
-                        "[data-testid='product-tile-offer-text']"
-                    )
-                    price_data['offer_text'] = offer_text_element.text.strip()
+                    price_element = tile_element.find_element(By.CSS_SELECTOR, selector)
+                    price_text = price_element.text.strip()
+                    if price_text:
+                        price = parse_price(price_text)
+                        if price:
+                            price_info['price'] = price
+                            break
                 except NoSuchElementException:
-                    pass
+                    continue
 
-            except NoSuchElementException:
-                # No offer, get regular price
-                price_element = tile_element.find_element(
+            # Check for offer/was price
+            try:
+                was_price_element = tile_element.find_element(
                     By.CSS_SELECTOR,
-                    "[data-testid='product-tile-price']"
+                    ".co-product__price-was, .price-was, [class*='was-price']"
                 )
-                price_text = price_element.text.strip()
+                if was_price_element:
+                    price_info['on_offer'] = True
+                    price_info['offer_text'] = was_price_element.text.strip()
+            except NoSuchElementException:
+                pass
 
-            # Parse price
-            price_match = re.search(r'£(\d+\.?\d*)', price_text)
-            if price_match:
-                price_data['price'] = Decimal(price_match.group(1))
-
-            # Extract price per unit
+            # Extract unit price
             try:
                 unit_price_element = tile_element.find_element(
                     By.CSS_SELECTOR,
-                    "[data-testid='product-tile-unit-price']"
+                    ".co-product__price-per-uom, .price-per-unit, [class*='price-per']"
                 )
-                price_data['price_per_unit'] = unit_price_element.text.strip()
+                unit_text = unit_price_element.text.strip()
+                if unit_text:
+                    unit_data = parse_unit_price(unit_text)
+                    if unit_data:
+                        price_info['price_per_unit'] = unit_data['price']
             except NoSuchElementException:
                 pass
 
         except Exception as e:
-            logger.warning(f"Error extracting price data: {str(e)}")
+            logger.error(f"Error extracting price data: {str(e)}")
 
-        return price_data
+        return price_info
 
     def _save_products(self, products: List[Dict[str, Any]]) -> None:
         """
@@ -432,30 +539,57 @@ class ProductListCrawler(BaseScraper):
             bool: True if navigated to next page, False if no next page
         """
         try:
-            # Look for next page button
-            next_button = self.driver.find_element(
-                By.CSS_SELECTOR,
-                "[data-testid='pagination-next']:not([disabled])"
-            )
+            # Multiple possible selectors for next button
+            next_button_selectors = [
+                "[data-testid='pagination-next']:not([disabled])",
+                "a.co-pagination__next:not(.co-pagination__next--disabled)",
+                "button.pagination-next:not([disabled])",
+                "[aria-label='Next page']:not([disabled])",
+                "a[rel='next']",
+                ".asda-pagination__next:not(.disabled)"
+            ]
+
+            next_button = None
+            for selector in next_button_selectors:
+                try:
+                    next_button = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if next_button:
+                        break
+                except NoSuchElementException:
+                    continue
+
+            if not next_button:
+                logger.debug("No next page button found")
+                return False
+
+            # Check if button is actually clickable
+            if next_button.get_attribute('disabled') or 'disabled' in next_button.get_attribute('class', ''):
+                logger.debug("Next page button is disabled")
+                return False
 
             # Scroll to button
             self.driver.execute_script(
-                "arguments[0].scrollIntoView(true);",
+                "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
                 next_button
             )
             time.sleep(1)
 
             # Click next page
-            next_button.click()
+            try:
+                next_button.click()
+            except Exception:
+                # Try JavaScript click as fallback
+                self.driver.execute_script("arguments[0].click();", next_button)
 
             # Wait for page to load
-            time.sleep(3)  # Give time for products to load
+            time.sleep(3)
+            
+            # Handle any popups that might appear after navigation
+            from .utils import handle_all_popups
+            handle_all_popups(self.driver, self.wait)
 
             return True
 
-        except NoSuchElementException:
-            logger.debug("No next page button found")
-            return False
         except Exception as e:
             logger.warning(f"Error navigating to next page: {str(e)}")
             return False

@@ -17,6 +17,7 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 from .base_scraper import BaseScraper
 from ..models import Category, CrawlQueue
+from .utils import handle_all_popups
 
 logger = logging.getLogger(__name__)
 
@@ -76,21 +77,16 @@ class CategoryMapperCrawler(BaseScraper):
             self.handle_error(e, {'stage': 'category_mapping'})
             raise
 
+    
+
+    # Then replace the _handle_cookie_consent method with:
     def _handle_cookie_consent(self) -> None:
         """Handle cookie consent popup if present."""
-        try:
-            # Wait for cookie button and click if present
-            cookie_button = self.wait.until(
-                EC.element_to_be_clickable(
-                    (By.ID, "onetrust-accept-btn-handler")
-                ),
-                time.sleep(5)
-            )
-            cookie_button.click()
-            logger.info("Accepted cookie consent")
-            time.sleep(1)
-        except TimeoutException:
-            logger.debug("No cookie consent popup found")
+        handle_all_popups(self.driver, self.wait)
+
+
+
+
 
     def _process_main_category(self, category_url: str) -> None:
         """
