@@ -81,34 +81,58 @@ class BaseScraper(ABC):
                 False
             )
 
-            # Performance options
+            # Performance options - modified for visibility
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-gpu')
-            options.add_argument('--disable-web-security')
-            options.add_argument('--disable-features=VizDisplayCompositor')
             options.add_argument('--disable-notifications')
+            
+            # Remove problematic options that might hide the window
+            # options.add_argument('--disable-gpu')  # Commented out - can hide window
+            # options.add_argument('--disable-web-security')  # Commented out
+            # options.add_argument('--disable-features=VizDisplayCompositor')  # Commented out
 
             # Headless mode if configured
-            if self.settings.get('HEADLESS', True):
+            headless_mode = self.settings.get('HEADLESS', True)
+            if headless_mode:
                 options.add_argument('--headless=new')
+                logger.info("Running in headless mode")
+            else:
+                logger.info("Running with visible browser window")
+                
+                # Additional options for visible mode
+                options.add_argument('--start-maximized')  # Start with maximized window
+                # options.add_argument('--disable-background-timer-throttling')
+                # options.add_argument('--disable-renderer-backgrounding')
+                # options.add_argument('--disable-backgrounding-occluded-windows')
 
-            # Random window size to appear more human
+            # Window size configuration
             window_sizes = [
                 (1366, 768), (1920, 1080), (1440, 900),
                 (1536, 864), (1280, 720)
             ]
             width, height = random.choice(window_sizes)
+            
+            if not headless_mode:
+                # For visible mode, use a fixed larger size for better visibility
+                width, height = 1920, 1080
+                
             options.add_argument(f'--window-size={width},{height}')
+            logger.info(f"Setting window size to {width}x{height}")
 
             # Random user agent
-            user_agent = random.choice(self.settings.get('USER_AGENTS', []))
+            user_agents = self.settings.get('USER_AGENTS', [
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            ])
+            user_agent = random.choice(user_agents)
             options.add_argument(f'user-agent={user_agent}')
+            logger.info(f"Using user agent: {user_agent[:50]}...")
 
             # Initialize driver
+            logger.info("Initializing Chrome WebDriver...")
             self.driver = webdriver.Chrome(options=options)
 
             # Apply stealth mode
+            logger.info("Applying stealth mode...")
             stealth(
                 self.driver,
                 languages=["en-US", "en"],
@@ -120,19 +144,26 @@ class BaseScraper(ABC):
             )
 
             # Set timeouts
-            self.driver.set_page_load_timeout(
-                self.settings.get('TIMEOUT', 30)
-            )
-            self.wait = WebDriverWait(
-                self.driver,
-                self.settings.get('TIMEOUT', 30)
-            )
+            timeout_value = self.settings.get('TIMEOUT', 30)
+            self.driver.set_page_load_timeout(timeout_value)
+            self.wait = WebDriverWait(self.driver, timeout_value)
+            
+            # For visible mode, ensure window is brought to front
+            if not headless_mode:
+                try:
+                    self.driver.maximize_window()
+                    logger.info("Browser window maximized and brought to front")
+                except Exception as e:
+                    logger.warning(f"Could not maximize window: {str(e)}")
 
             logger.info("Chrome WebDriver setup completed successfully")
 
         except Exception as e:
             logger.error(f"Failed to setup Chrome WebDriver: {str(e)}")
             raise
+
+
+
 
     def teardown_driver(self) -> None:
         """Clean up WebDriver resources."""
@@ -275,12 +306,23 @@ class BaseScraper(ABC):
             try:
                 self.session.processed_items += processed
                 self.session.failed_items += failed
+                
+                # Only update the fields that actually exist in the model
                 self.session.save(update_fields=[
                     'processed_items',
                     'failed_items'
                 ])
+                
+                logger.debug(f"Updated session stats: +{processed} processed, +{failed} failed")
+                
             except Exception as e:
                 logger.error(f"Error updating session stats: {str(e)}")
+                # Fallback: try saving without update_fields
+                try:
+                    self.session.save()
+                    logger.debug("Session stats updated with fallback save")
+                except Exception as fallback_error:
+                    logger.error(f"Fallback save also failed: {str(fallback_error)}")
 
     def should_stop(self) -> bool:
         """

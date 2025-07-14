@@ -51,58 +51,102 @@ class ProductListCrawler(BaseScraper):
     def scrape(self) -> None:
         """
         Main scraping method for product listings.
-
-        Processes URLs from the PRODUCT_LIST queue.
+        
+        Enhanced to prioritize aisle links and process them immediately.
+        Processes URLs from the PRODUCT_LIST queue with smart priority handling.
         """
         try:
-            logger.info("Starting product list crawling")
+            logger.info("🚀 Starting enhanced product list crawling")
 
-            # Get pending URLs from queue
-            queue_items = CrawlQueue.objects.filter(
+            while True:
+                # Get pending URLs from queue with enhanced priority handling
+                # First, try to get high-priority aisle links
+                aisle_items = CrawlQueue.objects.filter(
+                    queue_type='PRODUCT_LIST',
+                    status='PENDING',
+                    url__contains='/aisle/'
+                ).order_by('-priority', 'created_at')[:5]  # Process aisle links first
+                
+                if aisle_items:
+                    logger.info(f"🛒 Found {len(aisle_items)} high-priority AISLE links to process")
+                    queue_items = aisle_items
+                else:
+                    # No aisle links, get other high-priority items
+                    queue_items = CrawlQueue.objects.filter(
+                        queue_type='PRODUCT_LIST',
+                        status='PENDING'
+                    ).order_by('-priority', 'created_at')[:10]  # Standard processing
+                    
+                    if not queue_items:
+                        logger.info("✅ No pending URLs in product list queue - processing complete")
+                        break
+                    
+                    logger.info(f"📋 Processing {len(queue_items)} standard priority items")
+
+                # Process the selected queue items
+                for queue_item in queue_items:
+                    try:
+                        # Mark as processing
+                        queue_item.status = 'PROCESSING'
+                        queue_item.save()
+                        
+                        # Enhanced logging for queue item processing
+                        url_type = "🛒 AISLE" if '/aisle/' in queue_item.url else "🏢 DEPT" if '/dept/' in queue_item.url else "📁 CATEGORY"
+                        logger.info(f"🔄 Processing {url_type}: {queue_item.category.name if queue_item.category else 'Unknown'}")
+                        logger.info(f"   Priority: {queue_item.priority} | URL: {queue_item.url}")
+
+                        # Process the category/aisle page
+                        self._process_category_page(queue_item)
+
+                        # Mark as completed
+                        queue_item.status = 'COMPLETED'
+                        queue_item.processed_at = timezone.now()
+                        queue_item.save()
+                        
+                        logger.info(f"✅ Completed processing: {queue_item.category.name if queue_item.category else 'Unknown'}")
+
+                    except Exception as e:
+                        logger.error(f"❌ Error processing queue item {queue_item.id}: {str(e)}")
+                        self._handle_queue_failure(queue_item, e)
+
+                # Check if we should continue (prevent infinite loops)
+                remaining_items = CrawlQueue.objects.filter(
+                    queue_type='PRODUCT_LIST',
+                    status='PENDING'
+                ).count()
+                
+                if remaining_items == 0:
+                    logger.info("🎉 All queue items processed successfully!")
+                    break
+                elif remaining_items > 1000:  # Safety check
+                    logger.warning(f"⚠️  Large queue detected ({remaining_items} items). Processing in batches.")
+                    # Continue processing in batches
+
+            # Final summary
+            total_processed = CrawlQueue.objects.filter(
                 queue_type='PRODUCT_LIST',
-                status='PENDING'
-            ).order_by('-priority', 'created_at')[:10]  # Process 10 at a time
-
-            if not queue_items:
-                logger.info("No pending URLs in product list queue")
-                return
-
-            for queue_item in queue_items:
-                try:
-                    # Mark as processing
-                    queue_item.status = 'PROCESSING'
-                    queue_item.save()
-
-                    # Process the category
-                    self._process_category_page(queue_item)
-
-                    # Mark as completed
-                    queue_item.status = 'COMPLETED'
-                    queue_item.processed_at = timezone.now()
-                    queue_item.save()
-
-                except Exception as e:
-                    logger.error(
-                        f"Error processing queue item {queue_item.id}: {str(e)}"
-                    )
-                    self._handle_queue_failure(queue_item, e)
-
-            logger.info(
-                f"Product list crawling completed. "
-                f"Found {self.products_found} products"
-            )
+                status='COMPLETED'
+            ).count()
+            
+            logger.info(f"🎯 PRODUCT LIST CRAWLING COMPLETED!")
+            logger.info(f"   Total items processed: {total_processed}")
+            logger.info(f"   Products found: {self.products_found}")
 
         except Exception as e:
-            logger.error(f"Fatal error in product list crawling: {str(e)}")
+            logger.error(f"💥 Fatal error in product list crawling: {str(e)}")
             self.handle_error(e, {'stage': 'product_list_crawling'})
             raise
 
 
-
-    # Then update the _process_category_page method:
     def _process_category_page(self, queue_item: CrawlQueue) -> None:
         """
-        Process a single category page and all its paginations.
+        Process a single category page and discover ALL types of links.
+        
+        This method:
+        1. Discovers all subcategory links (including explore departments)
+        2. Adds them to the queue for systematic crawling
+        3. Processes all products on the current page and pagination
+        4. Ensures comprehensive link discovery with fallback patterns
 
         Args:
             queue_item: The queue item being processed
@@ -111,9 +155,10 @@ class ProductListCrawler(BaseScraper):
             url = queue_item.url
             self.current_category = queue_item.category
 
-            logger.info(
-                f"Processing category: {self.current_category.name if self.current_category else 'Unknown'}"
-            )
+            logger.info("="*60)
+            logger.info(f"PROCESSING CATEGORY: {self.current_category.name if self.current_category else 'Unknown'}")
+            logger.info(f"URL: {url}")
+            logger.info("="*60)
 
             # Navigate to first page
             if not self.get_page(url):
@@ -125,59 +170,124 @@ class ProductListCrawler(BaseScraper):
             # Initialize category navigator
             navigator = CategoryNavigator(self.driver, self.wait)
             
-            # Discover and save subcategories
-            subcategories = navigator.discover_subcategories()
-            if subcategories:
+            # ENHANCED: Discover ALL types of links with comprehensive patterns
+            logger.info("🔍 DISCOVERING ALL LINK TYPES ON PAGE...")
+            all_links = navigator.discover_all_links()
+            
+            total_links_added = 0
+            
+            # Process each type of discovered links
+            link_types_processed = []
+            
+            # 1. Process subcategories (regular category links)
+            if all_links['subcategories']:
                 added = navigator.save_subcategories_to_queue(
-                    subcategories, 
+                    all_links['subcategories'], 
                     parent_category=self.current_category,
-                    priority=3  # Higher priority for subcategories
+                    priority=3  # Standard priority for subcategories
                 )
-                logger.info(f"Added {added} subcategories to queue")
+                total_links_added += added
+                link_types_processed.append(f"subcategories: {added}")
+                logger.info(f"✅ Added {added} subcategories to queue")
+            
+            # 2. Process explore sections (the "Explore departments" links - HIGH PRIORITY)
+            if all_links['explore_sections']:
+                added = navigator.save_subcategories_to_queue(
+                    all_links['explore_sections'], 
+                    parent_category=self.current_category,
+                    priority=2  # Higher priority for explore sections
+                )
+                total_links_added += added
+                link_types_processed.append(f"explore_sections: {added}")
+                logger.info(f"✅ Added {added} EXPLORE DEPARTMENTS to queue")
+            
+            # 3. Process refinement links (filters, facets)
+            if all_links['refinements']:
+                added = navigator.save_subcategories_to_queue(
+                    all_links['refinements'], 
+                    parent_category=self.current_category,
+                    priority=4  # Lower priority for refinements
+                )
+                total_links_added += added
+                link_types_processed.append(f"refinements: {added}")
+                logger.info(f"✅ Added {added} refinement links to queue")
+            
+            # 4. Process navigation links (any other navigation)
+            if all_links['navigation']:
+                added = navigator.save_subcategories_to_queue(
+                    all_links['navigation'], 
+                    parent_category=self.current_category,
+                    priority=5  # Lowest priority for navigation
+                )
+                total_links_added += added
+                link_types_processed.append(f"navigation: {added}")
+                logger.info(f"✅ Added {added} navigation links to queue")
+            
+            # Summary of link discovery
+            logger.info("🎯 LINK DISCOVERY SUMMARY:")
+            logger.info(f"   TOTAL NEW LINKS ADDED: {total_links_added}")
+            if link_types_processed:
+                logger.info(f"   BREAKDOWN: {', '.join(link_types_processed)}")
+            else:
+                logger.warning("   ⚠️  NO NEW LINKS DISCOVERED - This might be a product-only page")
             
             # Get category info for logging
             category_info = navigator.get_category_info()
-            if category_info['product_count']:
-                logger.info(f"Category contains {category_info['product_count']} products")
+            if category_info.get('product_count'):
+                logger.info(f"📦 Category contains {category_info['product_count']} products")
 
-            # Process all pages
+            # Process products on all pages
             page_num = 1
+            products_found_this_category = 0
+            
+            logger.info("🛒 STARTING PRODUCT EXTRACTION...")
+            
             while True:
-                logger.info(f"Processing page {page_num} of {url}")
+                logger.info(f"📄 Processing page {page_num} of {url}")
 
                 # Extract products from current page
                 products = self._extract_products_from_page()
 
                 if not products:
-                    logger.info("No products found on page")
+                    logger.info("❌ No products found on page")
                     # Check if this is a category hub page (only subcategories, no products)
-                    if page_num == 1 and subcategories:
-                        logger.info("This appears to be a category hub page with subcategories only")
-                        # Mark as completed since we've discovered subcategories
+                    if page_num == 1 and total_links_added > 0:
+                        logger.info("🏗️  This appears to be a CATEGORY HUB page (navigation only)")
+                        # Mark as completed since we've discovered navigation links
                         self.update_session_stats(processed=1)
+                        logger.info("✅ Category hub processing completed")
                         return
+                    # If no products and no links, we're done
                     break
 
                 # Save products
                 self._save_products(products)
+                products_found_this_category += len(products)
+                logger.info(f"💾 Saved {len(products)} products from page {page_num}")
 
                 # Check for next page
                 if not self._navigate_to_next_page():
-                    logger.info("No more pages to process")
+                    logger.info("📄 No more pages to process")
                     break
 
                 page_num += 1
 
                 # Safety limit
                 if page_num > 100:
-                    logger.warning("Reached page limit, stopping pagination")
+                    logger.warning("⚠️  Reached page limit (100), stopping pagination")
                     break
+            
+            # Final summary
+            logger.info("="*60)
+            logger.info("🎉 CATEGORY PROCESSING COMPLETE!")
+            logger.info(f"   📦 Products found: {products_found_this_category}")
+            logger.info(f"   🔗 New links discovered: {total_links_added}")
+            logger.info(f"   📄 Pages processed: {page_num}")
+            logger.info("="*60)
 
         except Exception as e:
-            logger.error(f"Error processing category page: {str(e)}")
+            logger.error(f"❌ Error processing category page: {str(e)}")
             raise
-
-
 
 
     def _extract_products_from_page(self) -> List[Dict[str, Any]]:
