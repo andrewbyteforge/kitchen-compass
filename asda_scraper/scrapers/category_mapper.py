@@ -9,6 +9,7 @@ import logging
 import time
 from typing import List, Dict, Optional, Set
 from urllib.parse import urljoin
+from colorlog import ColoredFormatter
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -19,7 +20,25 @@ from .base_scraper import BaseScraper
 from ..models import Category, CrawlQueue
 from .utils import handle_all_popups
 
+# Configure colored logger for link discovery
 logger = logging.getLogger(__name__)
+
+# Create a separate logger for link discovery with color formatting
+link_logger = logging.getLogger(f"{__name__}.links")
+link_handler = logging.StreamHandler()
+link_formatter = ColoredFormatter(
+    "%(log_color)s%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    log_colors={
+        'DEBUG': 'cyan',
+        'INFO': 'green',
+        'WARNING': 'yellow',
+        'ERROR': 'red',
+        'CRITICAL': 'red,bg_white',
+    }
+)
+link_handler.setFormatter(link_formatter)
+link_logger.addHandler(link_handler)
+link_logger.setLevel(logging.INFO)
 
 
 class CategoryMapperCrawler(BaseScraper):
@@ -39,6 +58,7 @@ class CategoryMapperCrawler(BaseScraper):
         super().__init__(*args, **kwargs)
         self.discovered_categories: Set[str] = set()
         self.category_hierarchy: Dict[str, List[Dict]] = {}
+        self.total_links_found: int = 0
 
     def scrape(self) -> None:
         """
@@ -48,6 +68,7 @@ class CategoryMapperCrawler(BaseScraper):
         """
         try:
             logger.info("Starting category mapping process")
+            link_logger.info("=== LINK DISCOVERY STARTED ===")
 
             # Navigate to ASDA groceries homepage
             if not self.get_page("https://groceries.asda.com/"):
@@ -71,22 +92,18 @@ class CategoryMapperCrawler(BaseScraper):
                 f"Category mapping completed. "
                 f"Discovered {len(self.discovered_categories)} categories"
             )
+            link_logger.info(
+                f"=== LINK DISCOVERY COMPLETED: {self.total_links_found} TOTAL LINKS FOUND ==="
+            )
 
         except Exception as e:
             logger.error(f"Fatal error in category mapping: {str(e)}")
             self.handle_error(e, {'stage': 'category_mapping'})
             raise
 
-    
-
-    # Then replace the _handle_cookie_consent method with:
     def _handle_cookie_consent(self) -> None:
         """Handle cookie consent popup if present."""
         handle_all_popups(self.driver, self.wait)
-
-
-
-
 
     def _process_main_category(self, category_url: str) -> None:
         """
@@ -97,6 +114,7 @@ class CategoryMapperCrawler(BaseScraper):
         """
         try:
             logger.info(f"Processing main category: {category_url}")
+            link_logger.info(f">>> Navigating to main category: {category_url}")
 
             # Navigate to category page
             if not self.get_page(category_url):
@@ -115,6 +133,10 @@ class CategoryMapperCrawler(BaseScraper):
                 level=0,
                 parent=None
             )
+
+            # Log the main category discovery
+            link_logger.info(f"✓ MAIN CATEGORY FOUND: {category_name} - {category_url}")
+            self.total_links_found += 1
 
             # Discover subcategories using the navigation menu
             subcategories = self._discover_subcategories()
@@ -190,8 +212,10 @@ class CategoryMapperCrawler(BaseScraper):
             # ASDA uses different class names for different category sections
             nav_sections = self.driver.find_elements(
                 By.CSS_SELECTOR,
-                "[class*='-taxo'] a, .category-navigation a"
+                "[class*='-taxo'] a, .category-navigation a, [data-testid*='category'] a"
             )
+
+            link_logger.info(f"  → Scanning for subcategory links... Found {len(nav_sections)} potential links")
 
             for nav_link in nav_sections:
                 try:
@@ -210,16 +234,18 @@ class CategoryMapperCrawler(BaseScraper):
                                 'children': []
                             }
 
-                            # Check for nested subcategories
-                            # This would require hovering or clicking to reveal
-                            # For now, we'll handle these in subsequent crawls
-
                             subcategories.append(subcategory_data)
+                            
+                            # Log each discovered subcategory link in green
+                            link_logger.info(f"  ✓ SUBCATEGORY LINK FOUND: {name} - {url}")
+                            self.total_links_found += 1
                             logger.debug(f"Discovered subcategory: {name} - {url}")
 
                 except Exception as e:
                     logger.warning(f"Error processing navigation link: {str(e)}")
                     continue
+
+            link_logger.info(f"  → Found {len(subcategories)} new subcategories on this page")
 
         except Exception as e:
             logger.error(f"Error discovering subcategories: {str(e)}")
@@ -259,6 +285,7 @@ class CategoryMapperCrawler(BaseScraper):
 
             if created:
                 logger.info(f"Created category: {name} (Level {level})")
+                link_logger.info(f"  ★ NEW CATEGORY SAVED TO DATABASE: {name}")
             else:
                 logger.debug(f"Updated category: {name} (Level {level})")
 
@@ -314,6 +341,7 @@ class CategoryMapperCrawler(BaseScraper):
                     f"Added to product list queue: {category.name} "
                     f"(Priority: {priority})"
                 )
+                link_logger.info(f"  ➜ Added to PRODUCT LIST QUEUE: {category.name}")
 
         except Exception as e:
             logger.error(f"Error adding category to queue: {str(e)}")
@@ -322,24 +350,34 @@ class CategoryMapperCrawler(BaseScraper):
         """
         Calculate queue priority for a category.
 
+        Higher priority for:
+        - Main categories (level 0)
+        - Popular categories (based on keywords)
+        - Fresh food categories
+
         Args:
             category: Category instance
 
         Returns:
-            int: Priority value (higher = more important)
+            int: Priority value (higher is better)
         """
-        priority = 0
+        priority = 50  # Base priority
 
-        # Higher level categories get lower priority
-        priority -= category.level * 10
+        # Level-based priority
+        if category.level == 0:
+            priority += 30
+        elif category.level == 1:
+            priority += 20
+        else:
+            priority += 10
 
-        # Check for priority keywords
-        priority_keywords = self.settings.get('PRIORITY_KEYWORDS', [])
-        category_name_lower = category.name.lower()
-
-        for keyword in priority_keywords:
-            if keyword.lower() in category_name_lower:
-                priority += 20
-                break
+        # Keyword-based priority
+        name_lower = category.name.lower()
+        if any(keyword in name_lower for keyword in ['fresh', 'fruit', 'veg']):
+            priority += 20
+        elif any(keyword in name_lower for keyword in ['offer', 'deal', 'save']):
+            priority += 15
+        elif any(keyword in name_lower for keyword in ['meat', 'fish', 'dairy']):
+            priority += 10
 
         return priority
