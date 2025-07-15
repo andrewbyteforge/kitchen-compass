@@ -7,15 +7,13 @@ particularly nutrition data and additional product details.
 
 import logging
 import re
-from typing import Dict, Optional, Any, List
+from typing import Dict, Optional, Any
 from decimal import Decimal
 from django.utils import timezone
 from django.db import transaction
-
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
-
+from selenium.common.exceptions import NoSuchElementException
 from .base_scraper import BaseScraper
 from ..models import Product, NutritionInfo, CrawlQueue
 from .utils import handle_all_popups
@@ -52,7 +50,7 @@ class ProductDetailCrawler(BaseScraper):
             logger.info("Starting product detail crawling")
             batch_size = 10  # Process 10 at a time for better memory management
             total_processed = 0
-            
+
             while True:
                 # Get next batch of pending URLs from queue
                 queue_items = CrawlQueue.objects.filter(
@@ -65,14 +63,14 @@ class ProductDetailCrawler(BaseScraper):
                     break
 
                 logger.info(f"Processing batch of {len(queue_items)} products")
-                
+
                 for queue_item in queue_items:
                     try:
                         # Check if we should stop (for graceful shutdown)
                         if self.session and self.session.status == 'STOPPED':
                             logger.info("Crawler stopped by user")
                             return
-                        
+
                         # Mark as processing
                         queue_item.status = 'PROCESSING'
                         queue_item.save()
@@ -84,9 +82,9 @@ class ProductDetailCrawler(BaseScraper):
                         queue_item.status = 'COMPLETED'
                         queue_item.processed_at = timezone.now()
                         queue_item.save()
-                        
+
                         total_processed += 1
-                        
+
                         # Log progress every 10 products
                         if total_processed % 10 == 0:
                             remaining = CrawlQueue.objects.filter(
@@ -103,7 +101,7 @@ class ProductDetailCrawler(BaseScraper):
                             f"Error processing queue item {queue_item.id}: {str(e)}"
                         )
                         self._handle_queue_failure(queue_item, e)
-                        
+
                 # Small delay between batches to avoid overwhelming the server
                 time.sleep(2)
 
@@ -117,15 +115,6 @@ class ProductDetailCrawler(BaseScraper):
             logger.error(f"Fatal error in product detail crawling: {str(e)}")
             self.handle_error(e, {'stage': 'product_detail_crawling'})
             raise
-
-
-
-
-
-
-
-
-
 
     def _process_product_page(self, queue_item: CrawlQueue) -> None:
         """
@@ -258,8 +247,6 @@ class ProductDetailCrawler(BaseScraper):
             logger.warning(f"Error extracting product details: {str(e)}")
 
         return details
-    
-
 
     def _parse_nutrition_value(self, value_text: str) -> Optional[Decimal]:
         """
@@ -274,7 +261,7 @@ class ProductDetailCrawler(BaseScraper):
         try:
             # Remove whitespace
             value_text = value_text.strip()
-            
+
             # Handle "less than" values (e.g., "<0.5g")
             if value_text.startswith('<'):
                 # Extract the number after '<'
@@ -282,21 +269,17 @@ class ProductDetailCrawler(BaseScraper):
                 if match:
                     # Return half of the "less than" value as approximation
                     return Decimal(match.group(1)) / 2
-            
+
             # Extract numeric value
             match = re.search(r'(\d+\.?\d*)', value_text)
             if match:
                 return Decimal(match.group(1))
-                
+
             return None
-            
+
         except Exception as e:
             logger.debug(f"Error parsing nutrition value '{value_text}': {str(e)}")
             return None
-
-
-
-
 
     def _extract_nutrition_info(self) -> Optional[Dict[str, Any]]:
         """
@@ -308,7 +291,7 @@ class ProductDetailCrawler(BaseScraper):
         try:
             # Wait a bit for page to fully load
             time.sleep(2)
-            
+
             # Find nutrition container using the actual class names from the HTML
             nutrition_container = self._find_nutrition_container()
 
@@ -345,18 +328,18 @@ class ProductDetailCrawler(BaseScraper):
                         By.CSS_SELECTOR,
                         ".pdp-description-reviews__nutrition-cell"
                     )
-                    
+
                     if len(cells) >= 2:
                         nutrient_name = cells[0].text.strip()
                         value_text = cells[1].text.strip()
-                        
+
                         # Parse the value
                         value = self._parse_nutrition_value(value_text)
-                        
+
                         if nutrient_name and value is not None:
                             # Map to our database fields
                             mapped_field = self._map_nutrient_name(nutrient_name)
-                            
+
                             if mapped_field in nutrition_data:
                                 nutrition_data[mapped_field] = value
                             else:

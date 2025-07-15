@@ -9,8 +9,8 @@ import logging
 import time
 from typing import List, Dict, Optional, Set
 from urllib.parse import urljoin
+import colorlog
 from colorlog import ColoredFormatter
-
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
@@ -235,7 +235,7 @@ class CategoryMapperCrawler(BaseScraper):
                             }
 
                             subcategories.append(subcategory_data)
-                            
+
                             # Log each discovered subcategory link in green
                             link_logger.info(f"  ✓ SUBCATEGORY LINK FOUND: {name} - {url}")
                             self.total_links_found += 1

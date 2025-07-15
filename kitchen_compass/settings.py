@@ -424,20 +424,16 @@ SUBSCRIPTION_TIERS = {
 # ===========================
 
 ASDA_SCRAPER_SETTINGS = {
-    # User Agent Settings
+    # Your existing settings...
     'USER_AGENTS': [
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
     ],
-
-    # Request Settings
-    'REQUEST_DELAY': (2, 5),  # Random delay between 2-5 seconds
+    'REQUEST_DELAY': (2, 5),
     'TIMEOUT': 30,
     'MAX_RETRIES': 3,
     'HEADLESS': False,
-
-    # Crawling Settings
     'MAX_CRAWL_DEPTH': 5,
     'DEFAULT_DELAY': 2.0,
     'MAX_PAGES_PER_SESSION': 10000,
@@ -445,8 +441,6 @@ ASDA_SCRAPER_SETTINGS = {
     'ALLOWED_DOMAINS': ['groceries.asda.com'],
     'BLOCKED_EXTENSIONS': ['.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.pdf', '.zip'],
     'PRIORITY_KEYWORDS': ['fresh', 'meat', 'dairy', 'bakery', 'fruit', 'vegetable'],
-
-    # Category URLs
     'CATEGORIES': [
         'https://groceries.asda.com/cat/fruit-veg-flowers/1215686352935',
         'https://groceries.asda.com/cat/meat-poultry-fish/1215135760597',
@@ -458,7 +452,60 @@ ASDA_SCRAPER_SETTINGS = {
         'https://groceries.asda.com/cat/drinks/1215135760614',
         'https://groceries.asda.com/cat/beer-wine-spirits/1215685911554',
         'https://groceries.asda.com/cat/world-food/1215686351451',
-    ]
+    ],
+
+    # NEW RESILIENCE SETTINGS:
+
+    # Circuit Breaker Settings
+    'CIRCUIT_BREAKER_THRESHOLD': 5,  # Failures before opening circuit
+    'CIRCUIT_BREAKER_TIMEOUT': 60,   # Seconds before attempting reset
+
+    # Rate Limiting Settings
+    'RATE_LIMIT_REQUESTS': 60,       # Max requests per time window
+    'RATE_LIMIT_WINDOW': 60,         # Time window in seconds
+
+    # Enhanced Retry Settings
+    'RETRY_BACKOFF_FACTOR': 2.0,     # Exponential backoff multiplier
+    'RETRY_MAX_DELAY': 30,           # Maximum delay between retries
+    'RETRY_JITTER': True,            # Add random jitter to retries
+
+    # Performance Settings
+    'BATCH_SIZE': 10,                # Items to process in each batch
+    'BATCH_DELAY': 2,                # Delay between batches
+    'CONCURRENT_SESSIONS': 1,         # Number of concurrent browser sessions
+
+    # Error Handling Settings
+    'SCREENSHOT_ON_ERROR': True,      # Take screenshot on errors
+    'CONTINUE_ON_ERROR': True,        # Continue processing after errors
+    'ERROR_THRESHOLD': 0.1,          # Stop if error rate exceeds 10%
+
+    # Monitoring Settings
+    'LOG_LEVEL': 'INFO',             # Logging level
+    'ENABLE_DEBUG_LOGGING': False,    # Extra verbose logging
+    'STATS_UPDATE_INTERVAL': 100,    # Update stats every N items
+
+    # Page Validation Settings
+    'VALIDATE_PAGE_LOAD': True,      # Validate pages loaded correctly
+    'MIN_PAGE_SIZE': 1000,           # Minimum page size in bytes
+    'REQUIRED_ELEMENTS': [           # Elements that must be present
+        'title',
+        'body'
+    ],
+
+    # Browser Settings
+    'WINDOW_SIZE': (1920, 1080),     # Browser window size
+    'PAGE_LOAD_STRATEGY': 'normal',   # none, eager, normal
+    'IMPLICIT_WAIT': 10,             # Implicit wait timeout
+
+    # Data Quality Settings
+    'VALIDATE_DATA': True,           # Validate scraped data
+    'CLEAN_DATA': True,              # Clean/normalize scraped data
+    'DEDUPLICATE': True,             # Remove duplicate entries
+
+    # Recovery Settings
+    'AUTO_RECOVERY': True,           # Attempt automatic recovery
+    'RECOVERY_WAIT_TIME': 300,       # Wait time before recovery attempt
+    'MAX_RECOVERY_ATTEMPTS': 3,      # Max recovery attempts
 }
 
 # ===========================

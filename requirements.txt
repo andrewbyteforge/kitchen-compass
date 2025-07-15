@@ -60,3 +60,5 @@ urllib3==2.4.0
 virtualenv==20.31.2
 zipp==3.22.0
 zstandard==0.23.0
+selenium-stealth==1.0.6
+colorlog==6.7.0

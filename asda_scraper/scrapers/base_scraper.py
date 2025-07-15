@@ -4,31 +4,28 @@ Base scraper class for ASDA website scraping.
 Provides common functionality for all scraper types including
 Selenium setup, stealth configuration, and error handling.
 """
-
+from selenium_stealth import stealth
 import logging
 import random
 import time
 import hashlib
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any, List
-from urllib.parse import urljoin, urlparse
-
+from typing import Optional, Dict, Any
+from urllib.parse import urlparse
+from ..models import CrawlSession, CrawledURL
 from django.conf import settings
 from django.utils import timezone
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
     TimeoutException,
-    NoSuchElementException,
-    WebDriverException
 )
-from selenium_stealth import stealth
+import time
+import random
+from typing import Callable, Any, Optional
+from functools import wraps
 
-from ..models import CrawlSession, CrawledURL, CrawlQueue
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +82,7 @@ class BaseScraper(ABC):
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--disable-notifications')
-            
+
             # Remove problematic options that might hide the window
             # options.add_argument('--disable-gpu')  # Commented out - can hide window
             # options.add_argument('--disable-web-security')  # Commented out
@@ -98,7 +95,7 @@ class BaseScraper(ABC):
                 logger.info("Running in headless mode")
             else:
                 logger.info("Running with visible browser window")
-                
+
                 # Additional options for visible mode
                 options.add_argument('--start-maximized')  # Start with maximized window
                 # options.add_argument('--disable-background-timer-throttling')
@@ -111,11 +108,11 @@ class BaseScraper(ABC):
                 (1536, 864), (1280, 720)
             ]
             width, height = random.choice(window_sizes)
-            
+
             if not headless_mode:
                 # For visible mode, use a fixed larger size for better visibility
                 width, height = 1920, 1080
-                
+
             options.add_argument(f'--window-size={width},{height}')
             logger.info(f"Setting window size to {width}x{height}")
 
@@ -147,7 +144,7 @@ class BaseScraper(ABC):
             timeout_value = self.settings.get('TIMEOUT', 30)
             self.driver.set_page_load_timeout(timeout_value)
             self.wait = WebDriverWait(self.driver, timeout_value)
-            
+
             # For visible mode, ensure window is brought to front
             if not headless_mode:
                 try:
@@ -161,9 +158,6 @@ class BaseScraper(ABC):
         except Exception as e:
             logger.error(f"Failed to setup Chrome WebDriver: {str(e)}")
             raise
-
-
-
 
     def teardown_driver(self) -> None:
         """Clean up WebDriver resources."""
@@ -306,15 +300,15 @@ class BaseScraper(ABC):
             try:
                 self.session.processed_items += processed
                 self.session.failed_items += failed
-                
+
                 # Only update the fields that actually exist in the model
                 self.session.save(update_fields=[
                     'processed_items',
                     'failed_items'
                 ])
-                
+
                 logger.debug(f"Updated session stats: +{processed} processed, +{failed} failed")
-                
+
             except Exception as e:
                 logger.error(f"Error updating session stats: {str(e)}")
                 # Fallback: try saving without update_fields
@@ -427,3 +421,203 @@ class BaseScraper(ABC):
         finally:
             # Always cleanup
             self.teardown_driver()
+
+    def with_retry(max_attempts: int = 3, delay: float = 1.0, backoff: float = 2.0):
+        """
+        Decorator for automatic retry with exponential backoff.
+        
+        Args:
+            max_attempts: Maximum number of retry attempts
+            delay: Initial delay between retries
+            backoff: Backoff multiplier for exponential delay
+        """
+        def decorator(func: Callable) -> Callable:
+            @wraps(func)
+            def wrapper(*args, **kwargs) -> Any:
+                last_exception = None
+                current_delay = delay
+                
+                for attempt in range(max_attempts):
+                    try:
+                        return func(*args, **kwargs)
+                    except Exception as e:
+                        last_exception = e
+                        if attempt < max_attempts - 1:
+                            logger.warning(
+                                f"Attempt {attempt + 1} failed for {func.__name__}: {str(e)}. "
+                                f"Retrying in {current_delay:.2f}s"
+                            )
+                            time.sleep(current_delay)
+                            current_delay *= backoff
+                        else:
+                            logger.error(
+                                f"All {max_attempts} attempts failed for {func.__name__}: {str(e)}"
+                            )
+                
+                raise last_exception
+            return wrapper
+        return decorator
+
+
+class CircuitBreaker:
+    """
+    Circuit breaker pattern implementation for preventing cascade failures.
+    """
+    
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60):
+        """
+        Initialize circuit breaker.
+        
+        Args:
+            failure_threshold: Number of failures before opening circuit
+            recovery_timeout: Seconds to wait before attempting recovery
+        """
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failure_count = 0
+        self.last_failure_time = None
+        self.state = 'CLOSED'  # CLOSED, OPEN, HALF_OPEN
+        
+    def call(self, func: Callable, *args, **kwargs) -> Any:
+        """
+        Call function through circuit breaker.
+        
+        Args:
+            func: Function to call
+            *args: Function arguments
+            **kwargs: Function keyword arguments
+            
+        Returns:
+            Function result
+            
+        Raises:
+            Exception: If circuit is open or function fails
+        """
+        if self.state == 'OPEN':
+            if self._should_attempt_reset():
+                self.state = 'HALF_OPEN'
+            else:
+                raise Exception(f"Circuit breaker is OPEN. Failure count: {self.failure_count}")
+        
+        try:
+            result = func(*args, **kwargs)
+            self._on_success()
+            return result
+        except Exception as e:
+            self._on_failure()
+            raise
+    
+    def _should_attempt_reset(self) -> bool:
+        """Check if enough time has passed to attempt reset."""
+        if self.last_failure_time is None:
+            return True
+        return time.time() - self.last_failure_time >= self.recovery_timeout
+    
+    def _on_success(self) -> None:
+        """Handle successful function call."""
+        self.failure_count = 0
+        self.state = 'CLOSED'
+        logger.debug("Circuit breaker reset to CLOSED state")
+    
+    def _on_failure(self) -> None:
+        """Handle failed function call."""
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+        
+        if self.failure_count >= self.failure_threshold:
+            self.state = 'OPEN'
+            logger.warning(
+                f"Circuit breaker opened after {self.failure_count} failures"
+            )
+
+
+class RateLimiter:
+    """
+    Rate limiter to prevent overwhelming the target website.
+    """
+    
+    def __init__(self, max_requests: int = 60, time_window: int = 60):
+        """
+        Initialize rate limiter.
+        
+        Args:
+            max_requests: Maximum requests allowed in time window
+            time_window: Time window in seconds
+        """
+        self.max_requests = max_requests
+        self.time_window = time_window
+        self.requests = []
+    
+    def wait_if_needed(self) -> None:
+        """Wait if rate limit would be exceeded."""
+        current_time = time.time()
+        
+        # Remove old requests outside time window
+        self.requests = [
+            req_time for req_time in self.requests
+            if current_time - req_time < self.time_window
+        ]
+        
+        # Check if we need to wait
+        if len(self.requests) >= self.max_requests:
+            oldest_request = min(self.requests)
+            wait_time = self.time_window - (current_time - oldest_request)
+            if wait_time > 0:
+                logger.info(f"Rate limit reached. Waiting {wait_time:.2f}s")
+                time.sleep(wait_time)
+        
+        # Record this request
+        self.requests.append(current_time)
+
+
+# Add these methods to BaseScraper class:
+
+def setup_resilience_components(self) -> None:
+    """
+    Setup resilience components (circuit breaker, rate limiter).
+    
+    Call this in __init__ method.
+    """
+    self.circuit_breaker = CircuitBreaker(
+        failure_threshold=self.settings.get('CIRCUIT_BREAKER_THRESHOLD', 5),
+        recovery_timeout=self.settings.get('CIRCUIT_BREAKER_TIMEOUT', 60)
+    )
+    
+    self.rate_limiter = RateLimiter(
+        max_requests=self.settings.get('RATE_LIMIT_REQUESTS', 60),
+        time_window=self.settings.get('RATE_LIMIT_WINDOW', 60)
+    )
+    
+    logger.info("Resilience components initialized")
+
+
+def safe_request(self, func: Callable, *args, **kwargs) -> Any:
+    """
+    Make request through circuit breaker and rate limiter.
+    
+    Args:
+        func: Function to call
+        *args: Function arguments
+        **kwargs: Function keyword arguments
+        
+    Returns:
+        Function result
+    """
+    # Apply rate limiting
+    self.rate_limiter.wait_if_needed()
+    
+    # Use circuit breaker
+    return self.circuit_breaker.call(func, *args, **kwargs)
+
+
+def handle_temporary_error(self, error: Exception, context: str) -> bool:
+    """
+    Handle temporary errors that might be recoverable.
+    
+    Args:
+        error: The exception that occurred
+        context: Context description
+        
+    Returns:
+        bool: True if error might be temporary, False if permanent
+"""

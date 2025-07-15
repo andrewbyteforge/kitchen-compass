@@ -70,7 +70,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='mealplan',
-            constraint=models.CheckConstraint(condition=models.Q(('end_date__gte', models.F('start_date'))), name='end_date_after_start_date'),
+            constraint=models.CheckConstraint(check=models.Q(('end_date__gte', models.F('start_date'))), name='end_date_after_start_date'),
         ),
         migrations.AddIndex(
             model_name='calendarevent',
