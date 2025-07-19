@@ -1,8 +1,18 @@
 """
-Category Mapper crawler for ASDA website.
+Enhanced CategoryMapperCrawler with comprehensive debug logging.
 
-Discovers and maps all product categories and subcategories
-by navigating through the ASDA groceries navigation menu.
+ISSUE ANALYSIS:
+The CategoryMapperCrawler.scrape() method is likely getting stuck in one of these areas:
+1. Getting the page ("https://groceries.asda.com/")
+2. Cookie consent handling
+3. Processing main categories from settings
+4. The settings might not have CATEGORIES defined
+
+KEY FIXES:
+- Add step-by-step debug logging
+- Check if CATEGORIES exist in settings
+- Fallback to discovering categories if none configured
+- Add timeout protection for all operations
 """
 
 import logging
@@ -43,7 +53,7 @@ link_logger.setLevel(logging.INFO)
 
 class CategoryMapperCrawler(BaseScraper):
     """
-    Crawler for discovering and mapping ASDA product categories.
+    Enhanced crawler for discovering and mapping ASDA product categories.
 
     This crawler:
     1. Navigates to ASDA groceries homepage
@@ -59,37 +69,86 @@ class CategoryMapperCrawler(BaseScraper):
         self.discovered_categories: Set[str] = set()
         self.category_hierarchy: Dict[str, List[Dict]] = {}
         self.total_links_found: int = 0
+        
+        logger.info("🗂️  CategoryMapperCrawler initialized")
 
     def scrape(self) -> None:
         """
-        Main scraping method for category discovery.
+        Main scraping method for category discovery with enhanced debugging.
 
         Implements the abstract scrape method from BaseScraper.
         """
         try:
-            logger.info("Starting category mapping process")
+            logger.info("🗂️  === STARTING CATEGORY MAPPING PROCESS ===")
             link_logger.info("=== LINK DISCOVERY STARTED ===")
 
-            # Navigate to ASDA groceries homepage
-            if not self.get_page("https://groceries.asda.com/"):
-                raise Exception("Failed to load ASDA homepage")
+            # STEP 1: Navigate to ASDA homepage
+            logger.info("🌐 STEP 1: Navigating to ASDA groceries homepage...")
+            homepage_url = "https://groceries.asda.com/"
+            
+            if not self.get_page(homepage_url):
+                raise Exception(f"Failed to load ASDA homepage: {homepage_url}")
+            
+            logger.info("✅ STEP 1 COMPLETE: Homepage loaded successfully")
 
-            # Accept cookies if present
+            # STEP 2: Handle cookie consent
+            logger.info("🍪 STEP 2: Handling cookie consent and popups...")
             self._handle_cookie_consent()
+            logger.info("✅ STEP 2 COMPLETE: Cookie consent handled")
 
-            # Get main categories from configuration
+            # STEP 3: Check if we have predefined categories in settings
+            logger.info("⚙️  STEP 3: Checking for predefined categories in settings...")
             main_categories = self.settings.get('CATEGORIES', [])
+            
+            if main_categories:
+                logger.info(f"📋 Found {len(main_categories)} predefined categories in settings:")
+                for i, cat_url in enumerate(main_categories, 1):
+                    logger.info(f"   {i}. {cat_url}")
+                
+                # Process predefined categories
+                for category_url in main_categories:
+                    try:
+                        logger.info(f"🔍 Processing predefined category: {category_url}")
+                        self._process_main_category(category_url)
+                        logger.info(f"✅ Successfully processed: {category_url}")
+                    except Exception as e:
+                        logger.error(f"❌ Error processing category {category_url}: {str(e)}")
+                        self.handle_error(e, {'category_url': category_url})
+                        continue
+            else:
+                logger.warning("⚠️  No predefined categories found in settings")
+                logger.info("🔍 STEP 3-ALT: Attempting to discover categories from homepage...")
+                
+                # Fallback: Try to discover categories from the homepage
+                discovered_categories = self._discover_categories_from_homepage()
+                
+                if discovered_categories:
+                    logger.info(f"✅ Discovered {len(discovered_categories)} categories from homepage")
+                    for category_url in discovered_categories:
+                        try:
+                            self._process_main_category(category_url)
+                        except Exception as e:
+                            logger.error(f"❌ Error processing discovered category {category_url}: {str(e)}")
+                            continue
+                else:
+                    logger.error("❌ No categories could be discovered from homepage")
+                    raise Exception("No categories found in settings and none could be discovered")
 
-            for category_url in main_categories:
-                try:
-                    self._process_main_category(category_url)
-                except Exception as e:
-                    logger.error(f"Error processing category {category_url}: {str(e)}")
-                    self.handle_error(e, {'category_url': category_url})
-                    continue
+            logger.info("✅ STEP 3 COMPLETE: Category processing finished")
 
+            # STEP 4: Final summary
+            logger.info("📊 === CATEGORY MAPPING SUMMARY ===")
+            logger.info(f"📊 Discovered categories: {len(self.discovered_categories)}")
+            logger.info(f"📊 Total links found: {self.total_links_found}")
+            
+            # Log discovered categories
+            if self.discovered_categories:
+                logger.info("📋 Discovered category URLs:")
+                for i, category_url in enumerate(sorted(self.discovered_categories), 1):
+                    logger.info(f"   {i:2d}. {category_url}")
+            
             logger.info(
-                f"Category mapping completed. "
+                f"🎉 Category mapping completed successfully! "
                 f"Discovered {len(self.discovered_categories)} categories"
             )
             link_logger.info(
@@ -97,13 +156,128 @@ class CategoryMapperCrawler(BaseScraper):
             )
 
         except Exception as e:
-            logger.error(f"Fatal error in category mapping: {str(e)}")
+            logger.error(f"💥 Fatal error in category mapping: {str(e)}", exc_info=True)
             self.handle_error(e, {'stage': 'category_mapping'})
             raise
 
     def _handle_cookie_consent(self) -> None:
         """Handle cookie consent popup if present."""
-        handle_all_popups(self.driver, self.wait)
+        try:
+            logger.info("🍪 Checking for popups and cookie consent...")
+            handle_all_popups(self.driver, self.wait)
+            
+            # Additional checks for ASDA-specific cookie banners
+            cookie_selectors = [
+                "button[data-testid='accept-all-cookies']",
+                "button[id*='accept']",
+                "button[id*='cookie']",
+                ".cookie-banner button",
+                "#accept-all-cookies",
+                "[data-auto-id='cookie-accept']"
+            ]
+            
+            for selector in cookie_selectors:
+                try:
+                    cookie_button = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if cookie_button.is_displayed():
+                        logger.info(f"🍪 Found cookie consent button: {selector}")
+                        cookie_button.click()
+                        time.sleep(2)  # Wait for banner to disappear
+                        logger.info("✅ Cookie consent accepted")
+                        break
+                except NoSuchElementException:
+                    continue
+            
+            logger.info("✅ Cookie consent handling completed")
+            
+        except Exception as e:
+            logger.warning(f"⚠️  Error handling cookie consent: {str(e)}")
+            # Don't fail the entire process for cookie issues
+
+    def _discover_categories_from_homepage(self) -> List[str]:
+        """
+        Discover categories directly from the homepage navigation.
+        
+        Returns:
+            List[str]: List of discovered category URLs
+        """
+        discovered_urls = []
+        
+        try:
+            logger.info("🔍 Discovering categories from homepage navigation...")
+            
+            # Common selectors for ASDA navigation
+            nav_selectors = [
+                # Main navigation
+                "nav a[href*='/dept/']",
+                "nav a[href*='/cat/']",
+                "nav a[href*='/aisle/']",
+                
+                # Menu links
+                ".main-menu a[href*='/dept/']",
+                ".navigation a[href*='/dept/']",
+                
+                # Department links
+                "a[data-testid*='department']",
+                "a[class*='department']",
+                
+                # Generic grocery links
+                "a[href*='groceries.asda.com/dept/']",
+                "a[href*='groceries.asda.com/cat/']",
+            ]
+            
+            for selector in nav_selectors:
+                try:
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    logger.info(f"🔍 Found {len(elements)} elements with selector: {selector}")
+                    
+                    for element in elements:
+                        try:
+                            href = element.get_attribute('href')
+                            text = element.text.strip()
+                            
+                            if href and self._is_valid_category_url(href):
+                                full_url = self._normalize_url(href)
+                                if full_url not in discovered_urls:
+                                    discovered_urls.append(full_url)
+                                    logger.info(f"✅ Discovered category: {text} -> {full_url}")
+                        except Exception as e:
+                            logger.debug(f"Error processing element: {str(e)}")
+                            continue
+                            
+                except Exception as e:
+                    logger.debug(f"Error with selector {selector}: {str(e)}")
+                    continue
+            
+            logger.info(f"🔍 Total categories discovered from homepage: {len(discovered_urls)}")
+            return discovered_urls
+            
+        except Exception as e:
+            logger.error(f"❌ Error discovering categories from homepage: {str(e)}")
+            return []
+
+    def _is_valid_category_url(self, url: str) -> bool:
+        """Check if URL is a valid ASDA category URL."""
+        if not url:
+            return False
+        
+        # Must be an ASDA groceries URL
+        if 'groceries.asda.com' not in url:
+            return False
+        
+        # Must be a category, department, or aisle URL
+        valid_patterns = ['/dept/', '/cat/', '/aisle/']
+        return any(pattern in url for pattern in valid_patterns)
+
+    def _normalize_url(self, url: str) -> str:
+        """Normalize URL to ensure it's absolute."""
+        if url.startswith('//'):
+            return f"https:{url}"
+        elif url.startswith('/'):
+            return f"https://groceries.asda.com{url}"
+        elif not url.startswith('http'):
+            return f"https://groceries.asda.com/{url}"
+        return url
 
     def _process_main_category(self, category_url: str) -> None:
         """
@@ -113,7 +287,7 @@ class CategoryMapperCrawler(BaseScraper):
             category_url: URL of the main category to process
         """
         try:
-            logger.info(f"Processing main category: {category_url}")
+            logger.info(f"🗂️  Processing main category: {category_url}")
             link_logger.info(f">>> Navigating to main category: {category_url}")
 
             # Navigate to category page
@@ -123,8 +297,8 @@ class CategoryMapperCrawler(BaseScraper):
             # Extract category name from page
             category_name = self._extract_category_name()
             if not category_name:
-                logger.warning(f"Could not extract category name for {category_url}")
-                category_name = "Unknown Category"
+                logger.warning(f"⚠️  Could not extract category name for {category_url}")
+                category_name = self._extract_name_from_url(category_url)
 
             # Create or update main category
             main_category = self._save_category(
@@ -137,8 +311,10 @@ class CategoryMapperCrawler(BaseScraper):
             # Log the main category discovery
             link_logger.info(f"✓ MAIN CATEGORY FOUND: {category_name} - {category_url}")
             self.total_links_found += 1
+            self.discovered_categories.add(category_url)
 
             # Discover subcategories using the navigation menu
+            logger.info(f"🔍 Discovering subcategories for: {category_name}")
             subcategories = self._discover_subcategories()
 
             for subcat_data in subcategories:
@@ -162,118 +338,141 @@ class CategoryMapperCrawler(BaseScraper):
                             )
 
                 except Exception as e:
-                    logger.error(f"Error processing subcategory: {str(e)}")
+                    logger.error(f"❌ Error processing subcategory: {str(e)}")
                     continue
 
         except Exception as e:
-            logger.error(f"Error processing main category {category_url}: {str(e)}")
+            logger.error(f"❌ Error processing main category {category_url}: {str(e)}")
             raise
 
     def _extract_category_name(self) -> Optional[str]:
         """
         Extract category name from the current page.
-
+        
         Returns:
-            Optional[str]: Category name if found, None otherwise
+            str: Category name or None if not found
         """
         try:
-            # Try to find category name in breadcrumb
-            breadcrumb = self.driver.find_element(
-                By.CSS_SELECTOR,
-                "[data-testid='breadcrumb'] li:last-child"
-            )
-            return breadcrumb.text.strip()
-        except NoSuchElementException:
-            pass
+            # Common selectors for category names
+            name_selectors = [
+                "h1",
+                ".page-title",
+                ".category-title",
+                "[data-testid='page-title']",
+                ".breadcrumb li:last-child",
+                "title"
+            ]
+            
+            for selector in name_selectors:
+                try:
+                    element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    text = element.text.strip()
+                    if text and text != "ASDA Groceries":
+                        logger.debug(f"🏷️  Extracted category name: '{text}' using selector: {selector}")
+                        return text
+                except NoSuchElementException:
+                    continue
+            
+            logger.debug("⚠️  Could not extract category name from page")
+            return None
+            
+        except Exception as e:
+            logger.warning(f"⚠️  Error extracting category name: {str(e)}")
+            return None
 
+    def _extract_name_from_url(self, url: str) -> str:
+        """Extract a category name from the URL as fallback."""
         try:
-            # Try to find category name in page title
-            title_element = self.driver.find_element(
-                By.CSS_SELECTOR,
-                "h1"
-            )
-            return title_element.text.strip()
-        except NoSuchElementException:
+            # Extract the last part of the URL path
+            parts = url.rstrip('/').split('/')
+            if parts:
+                name = parts[-1].replace('-', ' ').replace('_', ' ').title()
+                logger.debug(f"🏷️  Extracted name from URL: '{name}'")
+                return name
+        except:
             pass
+        
+        return "Unknown Category"
 
-        return None
-
-    def _discover_subcategories(self) -> List[Dict]:
+    def _discover_subcategories(self) -> List[Dict[str, str]]:
         """
-        Discover subcategories from the navigation menu.
-
+        Discover subcategories from the current category page.
+        
         Returns:
-            List[Dict]: List of subcategory data with names, URLs, and children
+            List[Dict]: List of subcategory data
         """
         subcategories = []
-
+        
         try:
-            # Find navigation menu sections
-            # ASDA uses different class names for different category sections
-            nav_sections = self.driver.find_elements(
-                By.CSS_SELECTOR,
-                "[class*='-taxo'] a, .category-navigation a, [data-testid*='category'] a"
-            )
-
-            link_logger.info(f"  → Scanning for subcategory links... Found {len(nav_sections)} potential links")
-
-            for nav_link in nav_sections:
+            # Wait a moment for page to fully load
+            time.sleep(2)
+            
+            # Look for subcategory links
+            subcat_selectors = [
+                "a[href*='/cat/']",
+                "a[href*='/aisle/']",
+                ".category-nav a",
+                ".subcategory-list a",
+                "[data-testid='category-link']"
+            ]
+            
+            for selector in subcat_selectors:
                 try:
-                    # Get link text and URL
-                    name = nav_link.text.strip()
-                    url = nav_link.get_attribute('href')
-
-                    if name and url and self.is_valid_url(url):
-                        # Check if already discovered
-                        if url not in self.discovered_categories:
-                            self.discovered_categories.add(url)
-
-                            subcategory_data = {
-                                'name': name,
-                                'url': url,
-                                'children': []
-                            }
-
-                            subcategories.append(subcategory_data)
-
-                            # Log each discovered subcategory link in green
-                            link_logger.info(f"  ✓ SUBCATEGORY LINK FOUND: {name} - {url}")
-                            self.total_links_found += 1
-                            logger.debug(f"Discovered subcategory: {name} - {url}")
-
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    logger.debug(f"🔍 Found {len(elements)} subcategory elements with: {selector}")
+                    
+                    for element in elements:
+                        try:
+                            href = element.get_attribute('href')
+                            text = element.text.strip()
+                            
+                            if href and text and self._is_valid_category_url(href):
+                                full_url = self._normalize_url(href)
+                                subcategories.append({
+                                    'name': text,
+                                    'url': full_url,
+                                    'children': []  # Could be populated later
+                                })
+                                logger.debug(f"✅ Found subcategory: {text} -> {full_url}")
+                        except Exception as e:
+                            logger.debug(f"Error processing subcategory element: {str(e)}")
+                            continue
+                            
                 except Exception as e:
-                    logger.warning(f"Error processing navigation link: {str(e)}")
+                    logger.debug(f"Error with subcategory selector {selector}: {str(e)}")
                     continue
-
-            link_logger.info(f"  → Found {len(subcategories)} new subcategories on this page")
-
+            
+            # Remove duplicates
+            seen_urls = set()
+            unique_subcategories = []
+            for subcat in subcategories:
+                if subcat['url'] not in seen_urls:
+                    seen_urls.add(subcat['url'])
+                    unique_subcategories.append(subcat)
+            
+            logger.info(f"🔍 Discovered {len(unique_subcategories)} unique subcategories")
+            return unique_subcategories
+            
         except Exception as e:
-            logger.error(f"Error discovering subcategories: {str(e)}")
+            logger.error(f"❌ Error discovering subcategories: {str(e)}")
+            return []
 
-        return subcategories
-
-    def _save_category(
-        self,
-        name: str,
-        url: str,
-        level: int,
-        parent: Optional[Category] = None
-    ) -> Category:
+    def _save_category(self, name: str, url: str, level: int, parent: Optional[Category] = None) -> Category:
         """
-        Save category to database and add to queue.
-
+        Save category to database.
+        
         Args:
             name: Category name
             url: Category URL
             level: Category level (0=main, 1=sub, 2=sub-sub)
-            parent: Parent category if applicable
-
+            parent: Parent category (if any)
+            
         Returns:
             Category: The saved category instance
         """
         try:
             # Create or update category
-            category, created = Category.objects.update_or_create(
+            category, created = Category.objects.get_or_create(
                 url=url,
                 defaults={
                     'name': name,
@@ -282,27 +481,38 @@ class CategoryMapperCrawler(BaseScraper):
                     'is_active': True
                 }
             )
-
-            if created:
-                logger.info(f"Created category: {name} (Level {level})")
-                link_logger.info(f"  ★ NEW CATEGORY SAVED TO DATABASE: {name}")
+            
+            if not created:
+                # Update existing category if needed
+                if category.name != name:
+                    category.name = name
+                if category.level != level:
+                    category.level = level
+                if category.parent != parent:
+                    category.parent = parent
+                category.save()
+                logger.debug(f"📝 Updated category: {name}")
             else:
-                logger.debug(f"Updated category: {name} (Level {level})")
-
-            # Add to product list queue
-            self._add_to_queue(category)
-
-            # Mark URL as crawled
-            self.mark_url_as_crawled(url, 'CATEGORY')
-
-            # Update session stats
-            self.update_session_stats(processed=1)
-
+                logger.info(f"📝 Created new category: {name} (Level {level})")
+            
+            # Add to crawl queue if it's a leaf category
+            if level == 0 or not parent:  # Main categories should be crawled
+                queue_item, queue_created = CrawlQueue.objects.get_or_create(
+                    url=url,
+                    queue_type='PRODUCT_LIST',
+                    defaults={
+                        'status': 'PENDING',
+                        'priority': 10 - level  # Higher priority for main categories
+                    }
+                )
+                
+                if queue_created:
+                    logger.info(f"➕ Added to crawl queue: {name}")
+            
             return category
-
+            
         except Exception as e:
-            logger.error(f"Error saving category {name}: {str(e)}")
-            self.update_session_stats(failed=1)
+            logger.error(f"❌ Error saving category {name}: {str(e)}")
             raise
 
     def _add_to_queue(self, category: Category) -> None:

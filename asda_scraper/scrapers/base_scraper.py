@@ -1,9 +1,19 @@
 """
-Enhanced base scraper class for ASDA website scraping.
+Enhanced base scraper class for ASDA website scraping with debug fixes.
 
-Provides improved error handling, resilience patterns, and monitoring
-for stable and reliable web scraping operations.
+ISSUE ANALYSIS:
+1. The run() method calls setup_driver() then scrape(), which should work
+2. The problem is likely in the CategoryMapperCrawler.scrape() method
+3. Need to add more debug logging to identify where it's getting stuck
+4. HEADLESS_MODE in settings might be preventing visible crawling
+
+KEY FIXES:
+- Add comprehensive debug logging to track execution flow
+- Fix HEADLESS setting (currently HEADLESS=False but HEADLESS_MODE controls it)
+- Add timeout checks and browser health verification
+- Improve error handling in the scrape() method
 """
+
 import logging
 import random
 import time
@@ -78,6 +88,7 @@ def with_retry(
             
             for attempt in range(max_attempts):
                 try:
+                    logger.debug(f"🔄 Attempt {attempt + 1}/{max_attempts} for {func.__name__}")
                     return func(*args, **kwargs)
                 except exceptions as e:
                     last_exception = e
@@ -91,151 +102,97 @@ def with_retry(
                             f"Attempt {attempt + 1} failed for {func.__name__}: {str(e)}. "
                             f"Retrying in {sleep_time:.2f}s"
                         )
+                        
                         time.sleep(sleep_time)
-                        current_delay = min(current_delay * backoff, 30)  # Cap at 30 seconds
+                        current_delay *= backoff
                     else:
-                        logger.error(
-                            f"All {max_attempts} attempts failed for {func.__name__}: {str(e)}"
-                        )
-            
-            raise last_exception
+                        logger.error(f"All {max_attempts} attempts failed for {func.__name__}")
+                        
+            if last_exception:
+                raise last_exception
+                
         return wrapper
     return decorator
 
 
 class CircuitBreaker:
-    """
-    Enhanced circuit breaker pattern implementation.
-    """
+    """Simple circuit breaker implementation."""
     
-    def __init__(
-        self,
-        failure_threshold: int = 5,
-        recovery_timeout: int = 60,
-        expected_exception_types: tuple = (Exception,)
-    ):
-        """
-        Initialize circuit breaker.
-        
-        Args:
-            failure_threshold: Number of failures before opening circuit
-            recovery_timeout: Seconds to wait before attempting recovery
-            expected_exception_types: Tuple of exceptions that trigger the breaker
-        """
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60, expected_exception_types: tuple = ()):
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.expected_exception_types = expected_exception_types
         self.failure_count = 0
         self.last_failure_time = None
         self.state = 'CLOSED'  # CLOSED, OPEN, HALF_OPEN
-        self.success_count = 0
-        self.last_exception = None
-        
-    def call(self, func: Callable, *args, **kwargs) -> Any:
-        """
-        Call function through circuit breaker.
-        """
+    
+    def call(self, func, *args, **kwargs):
+        """Execute function with circuit breaker protection."""
         if self.state == 'OPEN':
-            if self._should_attempt_reset():
+            if time.time() - self.last_failure_time > self.recovery_timeout:
                 self.state = 'HALF_OPEN'
-                logger.info("Circuit breaker entering HALF_OPEN state")
+                logger.info("Circuit breaker moving to HALF_OPEN state")
             else:
-                time_remaining = self.recovery_timeout - (time.time() - self.last_failure_time)
-                raise ScraperException(
-                    f"Circuit breaker is OPEN. Failure count: {self.failure_count}. "
-                    f"Retry in {time_remaining:.0f}s. Last error: {self.last_exception}"
-                )
+                raise TemporaryError("Circuit breaker is OPEN")
         
         try:
             result = func(*args, **kwargs)
             self._on_success()
             return result
         except self.expected_exception_types as e:
-            self._on_failure(e)
+            self._on_failure()
             raise
     
-    def _should_attempt_reset(self) -> bool:
-        """Check if enough time has passed to attempt reset."""
-        if self.last_failure_time is None:
-            return True
-        return time.time() - self.last_failure_time >= self.recovery_timeout
-    
-    def _on_success(self) -> None:
-        """Handle successful function call."""
-        self.success_count += 1
-        
-        # In HALF_OPEN state, close circuit after sufficient successes
-        if self.state == 'HALF_OPEN' and self.success_count >= 3:
-            self.failure_count = 0
+    def _on_success(self):
+        """Handle successful call."""
+        self.failure_count = 0
+        if self.state == 'HALF_OPEN':
             self.state = 'CLOSED'
-            self.last_exception = None
-            logger.info("Circuit breaker reset to CLOSED state")
-        elif self.state == 'CLOSED':
-            self.failure_count = max(0, self.failure_count - 1)  # Decay failure count
+            logger.info("Circuit breaker closed after successful call")
     
-    def _on_failure(self, exception: Exception) -> None:
-        """Handle failed function call."""
+    def _on_failure(self):
+        """Handle failed call."""
         self.failure_count += 1
         self.last_failure_time = time.time()
-        self.last_exception = str(exception)
-        self.success_count = 0
         
         if self.failure_count >= self.failure_threshold:
             self.state = 'OPEN'
-            logger.warning(
-                f"Circuit breaker opened after {self.failure_count} failures. "
-                f"Last error: {self.last_exception}"
-            )
+            logger.warning(f"Circuit breaker opened after {self.failure_count} failures")
 
 
 class RateLimiter:
-    """
-    Enhanced token bucket rate limiter with burst support.
-    """
+    """Rate limiter for request throttling."""
     
-    def __init__(
-        self,
-        max_requests: int = 60,
-        time_window: int = 60,
-        burst_size: int = 10
-    ):
-        """
-        Initialize rate limiter.
-        
-        Args:
-            max_requests: Maximum requests allowed in time window
-            time_window: Time window in seconds
-            burst_size: Maximum burst size allowed
-        """
+    def __init__(self, max_requests: int = 60, time_window: int = 60, burst_size: int = 10):
         self.max_requests = max_requests
         self.time_window = time_window
         self.burst_size = burst_size
         self.requests = deque()
         self.tokens = burst_size
         self.last_refill = time.time()
-        self.refill_rate = max_requests / time_window
     
-    def wait_if_needed(self) -> None:
-        """Wait if rate limit would be exceeded."""
+    def wait_if_needed(self):
+        """Block if rate limit would be exceeded."""
         current_time = time.time()
         
-        # Refill tokens based on time passed
+        # Refill tokens
         time_passed = current_time - self.last_refill
-        self.tokens = min(
-            self.burst_size,
-            self.tokens + (time_passed * self.refill_rate)
-        )
+        self.tokens = min(self.burst_size, self.tokens + time_passed * (self.burst_size / self.time_window))
         self.last_refill = current_time
         
-        # Remove old requests outside time window
-        while self.requests and current_time - self.requests[0] > self.time_window:
+        # Clean old requests
+        cutoff_time = current_time - self.time_window
+        while self.requests and self.requests[0] < cutoff_time:
             self.requests.popleft()
         
         # Check if we need to wait
-        if self.tokens < 1:
-            # Calculate wait time
-            wait_time = (1 - self.tokens) / self.refill_rate
-            logger.info(f"Rate limit reached. Waiting {wait_time:.2f}s")
+        if len(self.requests) >= self.max_requests or self.tokens < 1:
+            if self.tokens < 1:
+                wait_time = (1 - self.tokens) * (self.time_window / self.burst_size)
+            else:
+                wait_time = self.time_window - (current_time - self.requests[0])
+            
+            logger.debug(f"Rate limiting: waiting {wait_time:.2f}s")
             time.sleep(wait_time)
             self.tokens = 1
         
@@ -245,17 +202,9 @@ class RateLimiter:
 
 
 class HealthMonitor:
-    """
-    Monitor scraper health and performance metrics.
-    """
+    """Monitor scraper health and performance metrics."""
     
     def __init__(self, error_threshold: float = 0.1):
-        """
-        Initialize health monitor.
-        
-        Args:
-            error_threshold: Maximum acceptable error rate
-        """
         self.error_threshold = error_threshold
         self.stats = {
             'requests': 0,
@@ -318,14 +267,12 @@ class HealthMonitor:
                 if runtime > 0 else 0
             ),
             'error_types': self.stats['error_types'],
-            'recent_errors': list(self.recent_errors)[-10:],  # Last 10 errors
+            'recent_errors': list(self.recent_errors)[-10:],
         }
 
 
 class BaseScraper(ABC):
-    """
-    Enhanced abstract base class for ASDA scrapers with improved stability.
-    """
+    """Enhanced abstract base class for ASDA scrapers with improved stability."""
 
     def __init__(self, session: Optional[CrawlSession] = None) -> None:
         """
@@ -334,12 +281,17 @@ class BaseScraper(ABC):
         Args:
             session: Optional CrawlSession instance for tracking progress
         """
+        logger.info("🚀 Initializing BaseScraper")
+        
         self.settings = settings.ASDA_SCRAPER_SETTINGS
         self.session = session
         self.driver: Optional[webdriver.Chrome] = None
         self.wait: Optional[WebDriverWait] = None
         self.processed_urls: set = set()
         self.failed_urls: set = set()
+        
+        # DEBUG: Log current settings
+        logger.info(f"📊 Scraper settings: {json.dumps(self.settings, indent=2)}")
         
         # Initialize resilience components
         self.circuit_breaker = CircuitBreaker(
@@ -362,30 +314,27 @@ class BaseScraper(ABC):
         self.driver_restarts = 0
         self.max_driver_restarts = 3
         
-        logger.info("Enhanced scraper initialized with resilience components")
+        logger.info("✅ Enhanced scraper initialized with resilience components")
 
     @contextmanager
     def error_tracking(self, context: str):
-        """
-        Context manager for consistent error tracking.
-        
-        Args:
-            context: Description of the operation being performed
-        """
+        """Context manager for consistent error tracking."""
+        logger.debug(f"🔍 Starting operation: {context}")
         start_time = time.time()
         try:
             yield
             duration = time.time() - start_time
             self.health_monitor.record_request(True, duration)
+            logger.debug(f"✅ Completed operation: {context} (took {duration:.2f}s)")
         except Exception as e:
             duration = time.time() - start_time
             self.health_monitor.record_request(False, duration, e)
-            logger.error(f"Error in {context}: {str(e)}", exc_info=True)
+            logger.error(f"❌ Error in {context}: {str(e)}", exc_info=True)
             
             # Check if we should continue
             if not self.health_monitor.is_healthy():
                 logger.critical(
-                    f"Health check failed. Error rate too high: "
+                    f"🚨 Health check failed. Error rate too high: "
                     f"{self.health_monitor.get_stats()}"
                 )
                 if self.session:
@@ -398,16 +347,14 @@ class BaseScraper(ABC):
 
     @with_retry(max_attempts=3)
     def setup_driver(self) -> None:
-        """
-        Enhanced Chrome WebDriver setup with better error recovery.
-        """
+        """Enhanced Chrome WebDriver setup with better error recovery."""
         with self.error_tracking("driver_setup"):
             try:
                 # Clean up any existing driver
                 if self.driver:
                     self.teardown_driver()
                 
-                logger.info("Setting up Chrome WebDriver with enhanced stealth mode")
+                logger.info("🌐 Setting up Chrome WebDriver with enhanced stealth mode")
 
                 options = Options()
 
@@ -434,20 +381,31 @@ class BaseScraper(ABC):
                 options.add_argument('--start-maximized')
                 
                 # User agent rotation
-                user_agents = [
+                user_agents = self.settings.get('USER_AGENTS', [
                     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-                ]
-                options.add_argument(f'user-agent={random.choice(user_agents)}')
+                ])
+                selected_agent = random.choice(user_agents)
+                options.add_argument(f'user-agent={selected_agent}')
+                logger.info(f"🎭 Using User Agent: {selected_agent}")
                 
-                # Headless mode control
-                if self.settings.get('HEADLESS_MODE', False):
+                # CRITICAL FIX: Check the correct headless setting
+                # The settings use 'HEADLESS' not 'HEADLESS_MODE'
+                headless_mode = self.settings.get('HEADLESS', False)
+                logger.info(f"🖥️  Headless mode: {headless_mode}")
+                
+                if headless_mode:
                     options.add_argument('--headless=new')  # New headless mode
+                    logger.info("🖥️  Running in HEADLESS mode")
+                else:
+                    logger.info("🖥️  Running in VISIBLE mode (browser will be visible)")
                 
                 # Create driver
+                logger.info("🔧 Creating Chrome WebDriver instance...")
                 self.driver = webdriver.Chrome(options=options)
                 
                 # Apply stealth settings
+                logger.info("🥷 Applying stealth configuration...")
                 stealth(
                     self.driver,
                     languages=["en-GB", "en"],
@@ -460,17 +418,20 @@ class BaseScraper(ABC):
                 
                 # Configure timeouts
                 timeout_value = self.settings.get('TIMEOUT', 30)
+                logger.info(f"⏱️  Setting timeouts to {timeout_value} seconds")
                 self.driver.set_page_load_timeout(timeout_value)
                 self.driver.implicitly_wait(10)  # Add implicit wait
                 self.wait = WebDriverWait(self.driver, timeout_value)
                 
                 # Test driver is working
-                self.driver.execute_script("return navigator.userAgent")
+                logger.info("🧪 Testing driver functionality...")
+                user_agent = self.driver.execute_script("return navigator.userAgent")
+                logger.info(f"🧪 Driver test successful. User agent: {user_agent}")
                 
-                logger.info("Chrome WebDriver setup completed successfully")
+                logger.info("✅ Chrome WebDriver setup completed successfully")
                 
             except Exception as e:
-                logger.error(f"Failed to setup Chrome WebDriver: {str(e)}")
+                logger.error(f"❌ Failed to setup Chrome WebDriver: {str(e)}")
                 self.driver_restarts += 1
                 if self.driver_restarts > self.max_driver_restarts:
                     raise PermanentError(f"Driver setup failed after {self.max_driver_restarts} attempts")
@@ -480,52 +441,52 @@ class BaseScraper(ABC):
         """Enhanced cleanup of WebDriver resources."""
         try:
             if self.driver:
-                logger.info("Closing Chrome WebDriver")
+                logger.info("🧹 Closing Chrome WebDriver")
                 # Take screenshot before closing if in debug mode
                 if self.settings.get('DEBUG_MODE', False):
                     try:
-                        self.driver.save_screenshot(
-                            f"debug_final_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                        )
+                        filename = f"debug_final_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                        self.driver.save_screenshot(filename)
+                        logger.info(f"📸 Debug screenshot saved: {filename}")
                     except:
                         pass
                 
                 self.driver.quit()
                 self.driver = None
                 self.wait = None
+                logger.info("✅ Chrome WebDriver closed successfully")
         except Exception as e:
-            logger.error(f"Error closing Chrome WebDriver: {str(e)}")
+            logger.error(f"❌ Error closing Chrome WebDriver: {str(e)}")
             # Force cleanup
             self.driver = None
             self.wait = None
 
     @with_retry(max_attempts=3, exceptions=(TimeoutException, WebDriverException))
     def get_page(self, url: str) -> bool:
-        """
-        Enhanced page navigation with better error handling.
-        
-        Args:
-            url: The URL to navigate to
-            
-        Returns:
-            bool: True if page loaded successfully, False otherwise
-        """
+        """Enhanced page navigation with better error handling."""
         with self.error_tracking(f"get_page:{url}"):
             try:
                 # Rate limiting
+                logger.debug(f"🚦 Checking rate limits for {url}")
                 self.rate_limiter.wait_if_needed()
                 
                 # Circuit breaker check
                 def navigate():
-                    logger.info(f"Navigating to: {url}")
+                    logger.info(f"🌐 Navigating to: {url}")
                     self.driver.get(url)
                     
                     # Wait for page to be interactive
+                    logger.debug("⏳ Waiting for page to become interactive...")
                     self.wait.until(
                         lambda driver: driver.execute_script(
                             "return document.readyState"
                         ) in ["interactive", "complete"]
                     )
+                    
+                    # Get current URL and title for verification
+                    current_url = self.driver.current_url
+                    title = self.driver.title
+                    logger.info(f"📄 Page loaded - URL: {current_url}, Title: {title[:100]}")
                     
                     # Check for common error pages
                     if self._is_error_page():
@@ -538,15 +499,16 @@ class BaseScraper(ABC):
                 # Human-like delay
                 min_delay, max_delay = self.settings.get('REQUEST_DELAY', (2, 5))
                 delay = random.uniform(min_delay, max_delay)
-                logger.debug(f"Waiting {delay:.2f} seconds")
+                logger.debug(f"💤 Human-like delay: {delay:.2f} seconds")
                 time.sleep(delay)
                 
                 return result
                 
             except Exception as e:
+                logger.error(f"❌ Navigation failed for {url}: {str(e)}")
                 # Check if driver is still alive
                 if not self._is_driver_alive():
-                    logger.warning("Driver appears to be dead, attempting recovery")
+                    logger.warning("🚨 Driver appears to be dead, attempting recovery")
                     self.setup_driver()
                     # Retry navigation after driver recovery
                     return self.get_page(url)
@@ -582,91 +544,51 @@ class BaseScraper(ABC):
 
     @transaction.atomic
     def mark_url_as_crawled(self, url: str, url_type: str) -> None:
-        """
-        Enhanced URL tracking with database transaction safety.
-        
-        Args:
-            url: The URL that was crawled
-            url_type: Type of URL (CATEGORY, PRODUCT_LIST, etc.)
-        """
+        """Enhanced URL tracking with database transaction safety."""
         try:
             url_hash = self.get_url_hash(url)
-            
-            CrawledURL.objects.update_or_create(
+            crawled_url, created = CrawledURL.objects.get_or_create(
                 url_hash=url_hash,
                 defaults={
                     'url': url,
-                    'url_type': url_type,
-                    'crawled_at': timezone.now(),
-                    'session': self.session,
+                    'crawler_type': url_type,
+                    'times_crawled': 1
                 }
             )
-            self.processed_urls.add(url)
-            logger.debug(f"Marked as crawled: {url}")
             
+            if not created:
+                crawled_url.times_crawled += 1
+                crawled_url.last_crawled = timezone.now()
+                crawled_url.save(update_fields=['times_crawled', 'last_crawled'])
+                
+            logger.debug(f"🔖 Marked URL as crawled: {url} (crawled {crawled_url.times_crawled} times)")
+                
         except DatabaseError as e:
-            logger.error(f"Database error marking URL as crawled: {str(e)}")
-            # Don't fail the entire operation for tracking issues
+            logger.error(f"❌ Database error marking URL as crawled: {str(e)}")
+            # Don't fail the scraping for database issues
         except Exception as e:
-            logger.error(f"Error marking URL as crawled: {str(e)}")
-
-    def update_session_stats(self, processed: int = 0, failed: int = 0) -> None:
-        """
-        Enhanced session statistics update with safety checks.
-        
-        Args:
-            processed: Number of items processed
-            failed: Number of items failed
-        """
-        if not self.session:
-            return
-            
-        try:
-            with transaction.atomic():
-                # Refresh from DB to avoid race conditions
-                self.session.refresh_from_db()
-                self.session.processed_items += processed
-                self.session.failed_items += failed
-                
-                # Update health stats
-                stats = self.health_monitor.get_stats()
-                self.session.metadata = self.session.metadata or {}
-                self.session.metadata['health_stats'] = stats
-                
-                self.session.save(update_fields=[
-                    'processed_items',
-                    'failed_items',
-                    'metadata',
-                    'updated_at'
-                ])
-                
-        except Exception as e:
-            logger.error(f"Error updating session stats: {str(e)}")
+            logger.error(f"❌ Error marking URL as crawled: {str(e)}")
 
     def should_stop(self) -> bool:
-        """
-        Enhanced stop condition checking.
-        
-        Returns:
-            bool: True if crawler should stop, False otherwise
-        """
+        """Check if crawler should stop."""
         # Check session status
         if self.session:
             try:
                 self.session.refresh_from_db()
                 if self.session.status in ['STOPPED', 'FAILED']:
+                    logger.info(f"🛑 Stopping crawler due to session status: {self.session.status}")
                     return True
             except:
                 pass
         
         # Check health
         if not self.health_monitor.is_healthy():
-            logger.warning("Scraper health check indicates we should stop")
+            logger.warning("🚨 Scraper health check indicates we should stop")
             return True
         
         # Check circuit breaker
         if self.circuit_breaker.state == 'OPEN':
-            logger.warning("Circuit breaker is open, stopping scraper")
+            logger.warning("⚡ Circuit breaker is open, stopping scraper")
             return True
         
         return False
@@ -676,13 +598,7 @@ class BaseScraper(ABC):
         return hashlib.sha256(url.encode()).hexdigest()
 
     def handle_error(self, error: Exception, context: Dict[str, Any]) -> None:
-        """
-        Enhanced error handling with classification.
-        
-        Args:
-            error: The exception that occurred
-            context: Additional context about the error
-        """
+        """Enhanced error handling with classification."""
         error_message = f"Error in {self.__class__.__name__}: {str(error)}"
         logger.error(error_message, extra=context, exc_info=True)
         
@@ -705,14 +621,14 @@ class BaseScraper(ABC):
                 self.session.error_log = (current_log + new_entry)[-10000:]  # Keep last 10k chars
                 self.session.save(update_fields=['error_log', 'updated_at'])
             except Exception as e:
-                logger.error(f"Error updating session error log: {str(e)}")
+                logger.error(f"❌ Error updating session error log: {str(e)}")
         
         # Take debug screenshot if enabled
         if self.settings.get('SCREENSHOT_ON_ERROR', False) and self.driver:
             try:
                 filename = f"error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
                 self.driver.save_screenshot(filename)
-                logger.info(f"Error screenshot saved: {filename}")
+                logger.info(f"📸 Error screenshot saved: {filename}")
             except:
                 pass
 
@@ -726,36 +642,45 @@ class BaseScraper(ABC):
         pass
 
     def run(self) -> None:
-        """
-        Enhanced scraper execution with comprehensive error handling.
-        """
+        """Enhanced scraper execution with comprehensive error handling."""
         start_time = time.time()
         
         try:
-            logger.info(f"Starting {self.__class__.__name__}")
+            logger.info(f"🚀 Starting {self.__class__.__name__}")
             
             # Update session status
             if self.session:
                 self.session.status = 'RUNNING'
                 self.session.started_at = timezone.now()
                 self.session.save()
+                logger.info(f"📊 Session {self.session.id} status updated to RUNNING")
             
             # Setup driver with recovery
+            logger.info("🔧 Setting up WebDriver...")
             self.setup_driver()
             
+            # CRITICAL DEBUG: Verify driver is ready
+            if not self.driver:
+                raise PermanentError("Driver setup completed but driver is None")
+            
+            logger.info("✅ WebDriver setup complete, starting scrape process...")
+            
             # Run the actual scraping
+            logger.info("🔍 Calling scrape() method...")
             self.scrape()
+            logger.info("✅ Scrape method completed successfully")
             
             # Success - update session
             if self.session:
                 self.session.status = 'COMPLETED'
                 self.session.completed_at = timezone.now()
                 self.session.save()
+                logger.info(f"📊 Session {self.session.id} marked as COMPLETED")
             
             # Log final stats
             runtime = time.time() - start_time
             logger.info(
-                f"Completed {self.__class__.__name__} - "
+                f"🎉 Completed {self.__class__.__name__} - "
                 f"Runtime: {runtime:.2f}s, "
                 f"Processed: {len(self.processed_urls)}, "
                 f"Failed: {len(self.failed_urls)}, "
@@ -763,7 +688,7 @@ class BaseScraper(ABC):
             )
             
         except PermanentError as e:
-            logger.error(f"Permanent error in {self.__class__.__name__}: {str(e)}")
+            logger.error(f"🚨 Permanent error in {self.__class__.__name__}: {str(e)}")
             if self.session:
                 self.session.status = 'FAILED'
                 self.session.completed_at = timezone.now()
@@ -771,26 +696,28 @@ class BaseScraper(ABC):
             raise
             
         except Exception as e:
-            logger.error(f"Fatal error in {self.__class__.__name__}: {str(e)}", exc_info=True)
+            logger.error(f"💥 Fatal error in {self.__class__.__name__}: {str(e)}", exc_info=True)
             
             # Update session status
             if self.session:
                 self.session.status = 'FAILED'
                 self.session.completed_at = timezone.now()
-                self.session.metadata = self.session.metadata or {}
+                self.session.metadata = getattr(self.session, 'metadata', {}) or {}
                 self.session.metadata['fatal_error'] = {
                     'error': str(e),
                     'type': type(e).__name__,
                     'traceback': traceback.format_exc()
                 }
                 self.session.save()
+                logger.info(f"📊 Session {self.session.id} marked as FAILED")
             
             raise
             
         finally:
             # Always cleanup
+            logger.info("🧹 Starting cleanup...")
             self.teardown_driver()
             
             # Log final health report
             if hasattr(self, 'health_monitor'):
-                logger.info(f"Final health report: {self.health_monitor.get_stats()}")
+                logger.info(f"📊 Final health report: {self.health_monitor.get_stats()}")
